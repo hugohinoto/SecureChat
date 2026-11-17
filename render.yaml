@@ -13,16 +13,7 @@ services:
         value: production
       - key: NODE_VERSION
         value: 24.22.1
+      # Reuse an existing Render Postgres database.
+      # Render will prompt for this value during Blueprint setup.
       - key: DATABASE_URL
-        fromDatabase:
-          name: securechat-db
-          property: connectionString
-
-databases:
-  - name: securechat-db
-    databaseName: securechat
-    user: securechat_app
-    postgresMajorVersion: "18"
-    region: singapore
-    plan: free
-    ipAllowList: []
+        sync: false
