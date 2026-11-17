@@ -27,6 +27,12 @@ app.use((request, response, next) => {
   response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
   response.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+
+  const requestHost = request.get("host");
+  const websocketOrigin = requestHost
+    ? `${request.secure ? "wss" : "ws"}://${requestHost}`
+    : "'self'";
+
   response.setHeader(
     "Content-Security-Policy",
     [
@@ -35,7 +41,7 @@ app.use((request, response, next) => {
       "style-src 'self'",
       "img-src 'self' data:",
       "font-src 'self'",
-      "connect-src 'self' ws: wss:",
+      `connect-src 'self' ${websocketOrigin}`,
       "object-src 'none'",
       "base-uri 'self'",
       "frame-ancestors 'none'",
