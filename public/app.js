@@ -80,6 +80,8 @@ function formatTime(value) {
 }
 
 function appendMessage(message) {
+  messageList.querySelector(".welcome-card")?.remove();
+
   const wasNearBottom =
     messageList.scrollHeight - messageList.scrollTop - messageList.clientHeight < 110;
 
