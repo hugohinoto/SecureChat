@@ -78,3 +78,15 @@ GET /api/health はアプリとPostgreSQLへの接続状態を返します。
 - 鍵のバックアップ、端末追加、本人確認、失効、XSSと配信経路の保護も設計対象です。
 - 認証機能が動くことと、メッセージがE2EEで保護されることは別です。
 - 専門的なセキュリティレビューを完了するまでは、本番用途の安全性を保証しません。
+
+## 既存のRender Postgresを使う場合
+
+RenderのFree Postgresは1つのworkspaceにつき同時に1インスタンスだけ利用できます。すでにFree Postgresが存在する場合、このBlueprintでは新しいDBを作らず、その既存DBを再利用します。
+
+Blueprint作成時に `DATABASE_URL` の入力を求められたら、Render Dashboardで既存データベースを開き、Connectタブから接続文字列をコピーします。
+
+- Web ServiceとDBが同じリージョンなら、可能な限りInternal Database URLを使い、Web ServiceもDBと同じリージョンに設定してください。
+- 異なるリージョンから接続する場合はExternal Database URLを使い、TLSを必須にし、DBのIP allow listを適切に設定してください。
+- 接続文字列にはパスワードが含まれます。GitHub、チャット、ソースコードには貼らず、Render Dashboardの秘密環境変数欄だけに入力してください。
+
+この構成ではBlueprintが既存DBのデータを削除・変更することはありません。ただし、SecureChatのマイグレーションは既存DBに `users`、`sessions`、`schema_migrations` テーブルを作成します。既存DBに同名テーブルがある場合は、実行前にスキーマを確認してください。
