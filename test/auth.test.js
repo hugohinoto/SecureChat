@@ -70,7 +70,7 @@ test("sets secure session-cookie attributes and parses the token", () => {
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /SameSite=Strict/);
   assert.match(cookie, /Secure/);
-  assert.match(cookie, /Path=\\//);
+  assert.ok(cookie.includes("; Path=/;"));
   assert.equal(readSessionToken(cookie.split(";")[0], true), token);
 
   clearSessionCookie(response, true);
