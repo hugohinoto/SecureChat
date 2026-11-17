@@ -10,6 +10,7 @@ import {
   createPasswordRecord,
   deleteDatabaseSession,
   findDatabaseSession,
+  hashSessionToken,
   normalizeUserId,
   readSessionToken,
   clearSessionCookie,
@@ -74,6 +75,11 @@ app.use((request, response, next) => {
 });
 
 app.use(express.json({ limit: "16kb", strict: true }));
+
+app.use("/api", (_request, response, next) => {
+  response.setHeader("Cache-Control", "no-store");
+  next();
+});
 
 function createRateLimiter(maxAttempts, windowMs) {
   const buckets = new Map();
@@ -324,7 +330,15 @@ app.post("/api/auth/login", requireSameOrigin, loginRateLimit, async (request, r
 app.post("/api/auth/logout", requireSameOrigin, async (request, response) => {
   try {
     const token = getRequestSessionToken(request);
-    await deleteDatabaseSession(pool, token);
+    if (token) {
+      await deleteDatabaseSession(pool, token);
+      const tokenHash = hashSessionToken(token);
+      for (const client of webSocketServer.clients) {
+        if (client.sessionTokenHash === tokenHash) {
+          client.close(4001, "Session revoked");
+        }
+      }
+    }
     clearSessionCookie(response, IS_PRODUCTION);
     response.status(204).end();
   } catch {
@@ -446,15 +460,21 @@ httpServer.on("upgrade", async (request, socket, head) => {
       return;
     }
 
+    const tokenHash = hashSessionToken(token);
     webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
-      webSocketServer.emit("connection", webSocket, request, session);
+      webSocketServer.emit("connection", webSocket, request, session, tokenHash);
     });
   } catch {
     rejectUpgrade(socket, 503, "Service Unavailable");
   }
 });
 
-webSocketServer.on("connection", (socket, _request, session) => {
+webSocketServer.on("connection", (socket, _request, session, tokenHash) => {
+  socket.sessionTokenHash = tokenHash;
+  const expiresAt = new Date(session.expires_at).getTime();
+  const expiryTimer = setTimeout(() => socket.close(4001, "Session expired"), Math.max(0, expiresAt - Date.now()));
+  socket.once("close", () => clearTimeout(expiryTimer));
+
   const connectionId = randomUUID();
   const rateState = {
     windowStartedAt: Date.now(),

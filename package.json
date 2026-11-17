@@ -1,11 +1,11 @@
 {
   "name": "securechat",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "A privacy-focused chat application prototype.",
   "engines": {
-    "node": ">=26.13.1 <27"
+    "node": ">=24.22.1 <25"
   },
   "scripts": {
     "start": "node server/index.js",

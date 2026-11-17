@@ -342,9 +342,18 @@ function connect() {
     }
   });
 
-  activeSocket.addEventListener("close", () => {
+  activeSocket.addEventListener("close", (event) => {
     if (socket === activeSocket) socket = null;
     clientId = null;
+
+    if (event.code === 4001) {
+      currentUser = null;
+      shouldReconnect = false;
+      window.clearInterval(authCheckTimer);
+      setAuthMode("login");
+      showAuth("ログインセッションが終了しました。もう一度ログインしてください。");
+      return;
+    }
 
     if (shouldReconnect && currentUser) {
       setConnectionState("disconnected", "再接続待ち");

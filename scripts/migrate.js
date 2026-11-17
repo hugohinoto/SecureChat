@@ -6,11 +6,17 @@ import { pool } from "../server/db.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const migrationsDirectory = path.resolve(__dirname, "../database/migrations");
+const MIGRATION_LOCK_ID = "7302918351026";
 
 async function migrate() {
   const client = await pool.connect();
+  let lockAcquired = false;
 
   try {
+    // Prevent two app instances from applying the same migration concurrently.
+    await client.query("SELECT pg_advisory_lock($1::bigint)", [MIGRATION_LOCK_ID]);
+    lockAcquired = true;
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         name TEXT PRIMARY KEY,
@@ -19,7 +25,7 @@ async function migrate() {
     `);
 
     const files = (await readdir(migrationsDirectory))
-      .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name))
+      .filter((name) => /^\\d+_[a-z0-9_-]+\\.sql$/i.test(name))
       .sort();
 
     for (const name of files) {
@@ -52,8 +58,14 @@ async function migrate() {
 
     console.log("Database migrations complete.");
   } finally {
+    if (lockAcquired) {
+      await client
+        .query("SELECT pg_advisory_unlock($1::bigint)", [MIGRATION_LOCK_ID])
+        .catch(() => {});
+    }
+
     client.release();
-    await pool.end();
+    await pool.end().catch(() => {});
   }
 }
 
