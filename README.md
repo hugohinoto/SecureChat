@@ -62,9 +62,11 @@ npm run dev
 
 ## Renderへのデプロイ
 
-リポジトリの render.yaml はRender Blueprintです。Render DashboardでNew → BlueprintからこのGitHubリポジトリを選択し、内容を確認して適用します。Web ServiceとPostgreSQLはSingaporeリージョンに作成され、DATABASE_URL はRenderから自動的に設定されます。起動時に未適用のDBマイグレーションが実行されます。
+リポジトリの render.yaml はRender Blueprintです。Render DashboardでNew → BlueprintからこのGitHubリポジトリを選択し、内容を確認して適用します。
 
-**料金・保存期間に注意:** このBlueprintは初期テスト用にPostgres Freeプランを指定しています。RenderのFree Postgresは作成から30日で期限切れになり、猶予期間終了後にデータが削除されます。継続利用する場合は期限前に有料プランへアップグレードするか、別のPostgreSQLサービスへ移行してください。
+現在のBlueprintは新しいPostgresを自動作成しません。Free Postgresのworkspaceあたり1インスタンス制限に当たらないよう、既存データベースの接続文字列をDATABASE_URLとして入力する構成です。起動時に未適用のDBマイグレーションが実行されます。
+
+Free Web Serviceは15分間アクセスがないとスリープし、次のアクセス時に起動時間がかかる場合があります。Free Postgresは作成後30日で期限切れになり、猶予期間後にデータが削除されます。長期間使う場合はバックアップや有料プランへの移行を検討してください。
 
 ## ヘルスチェック
 
