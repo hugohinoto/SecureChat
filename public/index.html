@@ -44,13 +44,15 @@
         <button id="user-search-button" type="button">検索</button>
       </div>
       <div class="user-search-results" id="user-search-results" aria-live="polite"></div>
+      <div class="sidebar-heading"><span>ワンタイムコード招待</span></div>
+      <div class="invitation-list" id="invitation-list" aria-live="polite"><p class="sidebar-empty">進行中の招待はありません。</p></div>
       <div class="sidebar-heading"><span>連絡先</span><span class="count-pill" id="contact-count">0</span></div>
       <div class="contact-list" id="contact-list"><p class="sidebar-empty">連絡先はまだありません。</p></div>
       <div class="sidebar-heading"><span>個別チャット</span><span class="count-pill" id="conversation-count">0</span></div>
       <div class="conversation-list" id="conversation-list"><p class="sidebar-empty">チャットはまだありません。</p></div>
       <div class="sidebar-note">
         <span class="note-icon" aria-hidden="true">ⓘ</span>
-        <p>チャットを始めるには、お互いを連絡先に追加する必要があります。メッセージは端末内で暗号化され、送信から1時間後に削除されます。鍵の本人確認と前方秘匿性は未実装です。</p>
+        <p>チャット開始には双方の8桁ワンタイムコード確認が必要です。コードは5分で失効し、1回限りです。メッセージは端末内で暗号化され、送信から1時間後に削除されます。公開鍵の本人確認と前方秘匿性は未実装です。</p>
       </div>
 
       <div class="sidebar-spacer"></div>
