@@ -3,7 +3,7 @@ const el = {
   connection: $("#connection-pill"), connectionLabel: $("#connection-label"),
   list: $("#message-list"), input: $("#message-input"), send: $("#send-button"),
   count: $("#character-count"), profile: $("#profile-name"), avatar: $("#profile-avatar"),
-  logout: $("#logout-button"), toast: $("#toast"), gate: $("#auth-gate"),
+  logout: $("#logout-button"), deleteAccount: $("#delete-account-button"), toast: $("#toast"), gate: $("#auth-gate"),
   form: $("#auth-form"), title: $("#auth-title"), description: $("#auth-description"),
   error: $("#auth-error"), submit: $("#auth-submit"), user: $("#auth-user-id"),
   password: $("#auth-password"), passwordHint: $("#password-hint"),
@@ -22,6 +22,7 @@ const STORE = "identity";
 let currentUser = null, authMode = "login", toastTimer = null, authTimer = null;
 let identityPrivateKey = null, identityPublicKey = null;
 let activeConversation = null, activeKey = null, busy = false, refreshTimer = null;
+let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "";
 
 function toast(message) {
   el.toast.textContent = message;
@@ -64,6 +65,15 @@ async function saveIdentity(userId,record) {
   return new Promise((resolve,reject)=>{
     const tx=db.transaction(STORE,"readwrite");
     tx.objectStore(STORE).put(Object.assign({userId},record));
+    tx.oncomplete=()=>{db.close();resolve();};
+    tx.onerror=()=>{db.close();reject(tx.error);};
+  });
+}
+async function removeIdentity(userId) {
+  const db=await openKeyDb();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(STORE,"readwrite");
+    tx.objectStore(STORE).delete(userId);
     tx.oncomplete=()=>{db.close();resolve();};
     tx.onerror=()=>{db.close();reject(tx.error);};
   });
@@ -137,6 +147,8 @@ function appendMessage(text,senderId,createdAt,expiresAt) {
   el.list.querySelector(".welcome-card")?.remove();
   const own=senderId===currentUser.id;
   const row=document.createElement("article"); row.className=own?"message-row own":"message-row";
+  row.dataset.messageId=arguments[5]||"";
+  row.dataset.expiresAt=String(expiresAt);
   const avatar=document.createElement("div"); avatar.className="message-avatar";
   avatar.textContent=Array.from(own?currentUser.userId:activeConversation.peerUserId)[0]||"U";
   const content=document.createElement("div"); content.className="message-content";
@@ -185,7 +197,10 @@ async function signIn(user) {
   state("connected","準備完了");
   startAuthCheck();
   clearInterval(refreshTimer);
-  refreshTimer=setInterval(()=>{if(activeConversation)loadMessages().catch(()=>{});refreshSidebar().catch(()=>{});},15000);
+  refreshTimer=setInterval(()=>{
+    if(document.visibilityState==="visible" && activeConversation) loadMessages(false).catch(()=>{});
+    if(document.visibilityState==="visible") refreshSidebar().catch(()=>{});
+  },2500);
 }
 function startAuthCheck() {
   clearInterval(authTimer);
@@ -207,6 +222,22 @@ async function submitAuth(event) {
     await signIn(data.user); toast(registering?"アカウントを作成しました。":"ログインしました。");
   } catch(e) {el.error.textContent=e.message;}
   finally {el.submit.disabled=false;el.submit.textContent=authMode==="register"?"アカウントを作成":"ログイン";}
+}
+async function deleteAccount() {
+  if(!currentUser)return;
+  const userId=currentUser.userId;
+  if(!confirm("@"+userId+" のアカウントを完全に削除します。連絡先・個別チャット・暗号化メッセージも削除されます。この操作は取り消せません。続行しますか？"))return;
+  const password=prompt("本人確認のため、現在のパスワードを入力してください。");
+  if(password===null)return;
+  el.deleteAccount.disabled=true;
+  try {
+    await api("/api/auth/delete",{method:"POST",body:{password}});
+    await removeIdentity(userId);
+    currentUser=null;identityPrivateKey=null;identityPublicKey=null;activeConversation=null;activeKey=null;
+    clearInterval(authTimer);clearInterval(refreshTimer);
+    setAuthMode("login");showAuth();toast("アカウントと関連データを削除しました。");
+  } catch(e) {toast(e.message);}
+  finally {el.deleteAccount.disabled=false;}
 }
 async function logout() {
   el.logout.disabled=true;
@@ -260,6 +291,7 @@ async function openConversation(peerUserId) {
 }
 async function selectConversation(c) {
   activeConversation={id:c.id,peerUserId:c.peer_user_id};activeKey=null;
+  lastMessageCreatedAt=0;lastMessageId="";messageLoadBusy=false;
   el.chatTitle.textContent=c.peer_user_id;el.chatSubtitle.textContent="@"+c.peer_user_id+" · 1対1の個別チャット";
   el.securityTitle.textContent="暗号化チャット（試作）";
   el.securityDescription.textContent="ECDH P-256 + HKDF + AES-GCM。公開鍵の本人確認と前方秘匿性は未実装です。";
@@ -267,22 +299,39 @@ async function selectConversation(c) {
   el.composerHint.textContent="端末内で暗号化 · メッセージは1時間後に削除";
   welcome("暗号化チャット","このブラウザーで暗号化してから送信します。");
   updateSend();
-  try {await deriveKey(c.id,c.peer_user_id);await loadMessages();updateSend();}
+  try {await deriveKey(c.id,c.peer_user_id);await loadMessages(true);updateSend();}
   catch(e){toast("暗号鍵を準備できません: "+e.message);el.input.disabled=true;}
   await refreshSidebar();
 }
-async function loadMessages() {
-  if(!activeConversation)return;
-  const id=activeConversation.id,peer=activeConversation.peerUserId,key=await deriveKey(id,peer);
-  const data=await api("/api/conversations/"+id+"/messages");
-  if(!activeConversation||activeConversation.id!==id)return;
-  el.list.replaceChildren();
-  if(!data.messages.length){welcome("最初のメッセージを送ろう","メッセージは送信から1時間で削除されます。");return;}
-  for(const m of data.messages){
-    try {appendMessage(await decryptText(m,key),m.sender_user_id,m.created_at,m.expires_at);}
-    catch {appendMessage("復号できません（鍵が一致しない可能性があります）。",m.sender_user_id,m.created_at,m.expires_at);}
+async function loadMessages(fullSync=false) {
+  if(!activeConversation||messageLoadBusy)return;
+  messageLoadBusy=true;
+  const id=activeConversation.id,peer=activeConversation.peerUserId;
+  try {
+    const key=await deriveKey(id,peer);
+    const cursor=fullSync||!lastMessageCreatedAt?"":("?after="+lastMessageCreatedAt+"&afterId="+encodeURIComponent(lastMessageId));
+    const data=await api("/api/conversations/"+id+"/messages"+cursor);
+    if(!activeConversation||activeConversation.id!==id)return;
+    if(fullSync) {
+      el.list.replaceChildren();
+      lastMessageCreatedAt=0;lastMessageId="";
+    }
+    for(const m of data.messages){
+      try {appendMessage(await decryptText(m,key),m.sender_user_id,m.created_at,m.expires_at,m.id);}
+      catch {appendMessage("復号できません（鍵が一致しない可能性があります）。",m.sender_user_id,m.created_at,m.expires_at,m.id);}
+      if(m.created_at>lastMessageCreatedAt || (m.created_at===lastMessageCreatedAt && m.id>lastMessageId)) {
+        lastMessageCreatedAt=m.created_at;lastMessageId=m.id;
+      }
+    }
+    const now=Date.now();
+    el.list.querySelectorAll(".message-row").forEach(row=>{
+      if(Number(row.dataset.expiresAt)<=now)row.remove();
+    });
+    if(!el.list.querySelector(".message-row"))welcome("最初のメッセージを送ろう","メッセージは送信から1時間で削除されます。");
+    else if(data.messages.length)el.list.scrollTop=el.list.scrollHeight;
+  } finally {
+    messageLoadBusy=false;
   }
-  el.list.scrollTop=el.list.scrollHeight;
 }
 async function sendMessage() {
   if(busy||!activeConversation)return;
@@ -293,7 +342,7 @@ async function sendMessage() {
     const key=await deriveKey(activeConversation.id,activeConversation.peerUserId);
     const encrypted=await encryptText(text,key);
     await api("/api/conversations/"+activeConversation.id+"/messages",{method:"POST",body:encrypted});
-    el.input.value="";el.input.style.height="auto";await loadMessages();
+    el.input.value="";el.input.style.height="auto";await loadMessages(true);
   } catch(e){toast(e.message);}
   finally {busy=false;updateSend();el.input.focus();}
 }
@@ -301,6 +350,7 @@ el.loginTab.addEventListener("click",()=>setAuthMode("login"));
 el.registerTab.addEventListener("click",()=>setAuthMode("register"));
 el.form.addEventListener("submit",submitAuth);
 el.logout.addEventListener("click",logout);
+el.deleteAccount.addEventListener("click",deleteAccount);
 el.searchButton.addEventListener("click",searchUsers);
 el.search.addEventListener("keydown",e=>{if(e.key==="Enter")searchUsers();});
 el.input.addEventListener("input",()=>{el.input.style.height="auto";el.input.style.height=Math.min(el.input.scrollHeight,125)+"px";updateSend();});
