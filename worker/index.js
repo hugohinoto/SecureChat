@@ -343,6 +343,48 @@ async function handleApi(request, env) {
     }
   }
 
+  if (path === "/api/auth/delete" && method === "POST") {
+    if (!sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
+    if (!checkRateLimit(request, "delete-account", 3)) {
+      return json({ error: "RATE_LIMITED", message: "試行回数が多すぎます。時間をおいてください。" }, 429);
+    }
+    let session;
+    try { session = await getSession(env, readCookie(request)); }
+    catch { return json({ error: "AUTH_UNAVAILABLE" }, 503); }
+    if (!session) return json({ error: "UNAUTHENTICATED" }, 401);
+    let body;
+    try { body = await readJson(request); }
+    catch (error) { return json({ error: error.message }, 400); }
+    if (!validPassword(body?.password)) {
+      return json({ error: "PASSWORD_REQUIRED", message: "確認のため、現在のパスワードを入力してください。" }, 400);
+    }
+    try {
+      const user = await env.DB.prepare(
+        "SELECT password_salt, password_hash, password_iterations FROM users WHERE id=?"
+      ).bind(session.id).first();
+      if (!user) return json({ error: "USER_NOT_FOUND" }, 404);
+      const derived = await derivePassword(body.password, fromBase64url(user.password_salt), user.password_iterations);
+      if (!constantTimeEqual(derived, fromBase64url(user.password_hash))) {
+        return json({ error: "INVALID_CREDENTIALS", message: "パスワードが正しくありません。" }, 401);
+      }
+      const sessions = await env.DB.prepare("SELECT token_hash FROM sessions WHERE user_id=?").bind(session.id).all();
+      const room = env.CHAT_ROOM.get(env.CHAT_ROOM.idFromName("open-lounge"));
+      await Promise.all((sessions.results || []).map(({ token_hash }) =>
+        room.fetch("https://chat-room.internal/revoke", {
+          method: "POST",
+          headers: { "X-Session-Hash": token_hash }
+        })
+      ));
+      await env.DB.prepare("DELETE FROM users WHERE id=?").bind(session.id).run();
+      const response = json({ deleted: true });
+      clearSessionCookie(response, request);
+      return response;
+    } catch (error) {
+      console.error("Account deletion failed:", error.message);
+      return json({ error: "DELETE_FAILED", message: "アカウントを削除できませんでした。" }, 503);
+    }
+  }
+
   if (path === "/api/auth/logout" && method === "POST") {
     if (!sameOrigin(request)) {
       return json({ error: "ORIGIN_REJECTED", message: "このリクエストは許可されていません。" }, 403);
@@ -450,7 +492,16 @@ async function handleApi(request, env) {
       }
       if (sub === "messages" && method === "GET") {
         await env.DB.prepare("DELETE FROM encrypted_messages WHERE conversation_id=? AND expires_at<=?").bind(id, now).run();
-        const rows = await env.DB.prepare("SELECT id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at FROM encrypted_messages WHERE conversation_id=? AND expires_at>? ORDER BY created_at LIMIT 500").bind(id, now).all();
+        const afterValue = url.searchParams.get("after");
+        let rows;
+        if (afterValue !== null) {
+          const after = Number(afterValue);
+          const afterId = url.searchParams.get("afterId") || "";
+          if (!Number.isSafeInteger(after) || after < 0 || afterId.length > 64) return json({ error: "INVALID_CURSOR" }, 400);
+          rows = await env.DB.prepare("SELECT id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at FROM encrypted_messages WHERE conversation_id=? AND expires_at>? AND (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT 500").bind(id, now, after, after, afterId).all();
+        } else {
+          rows = await env.DB.prepare("SELECT id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at FROM encrypted_messages WHERE conversation_id=? AND expires_at>? ORDER BY created_at, id LIMIT 500").bind(id, now).all();
+        }
         return json({ messages: rows.results });
       }
       if (sub === "messages" && method === "POST") {
