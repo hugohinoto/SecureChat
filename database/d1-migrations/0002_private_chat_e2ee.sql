@@ -53,3 +53,13 @@ CREATE INDEX IF NOT EXISTS encrypted_messages_conversation_idx
   ON encrypted_messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS contacts_lookup_idx
   ON contacts(owner_user_id, contact_user_id);
+
+CREATE TABLE IF NOT EXISTS conversation_keys (
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key_envelope TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (conversation_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS conversation_keys_user_idx
+  ON conversation_keys(user_id, conversation_id);
