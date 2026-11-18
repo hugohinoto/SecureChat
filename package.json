@@ -1,21 +1,29 @@
 {
   "name": "securechat",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "A privacy-focused chat application prototype.",
+  "description": "A privacy-focused chat application prototype on Cloudflare Workers.",
   "engines": {
-    "node": ">=24.22.1 <25"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "db:migrate": "node scripts/migrate.js",
-    "test": "node --test"
+    "test": "node --test",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy",
+    "cf:d1:create": "wrangler d1 create securechat-db",
+    "cf:d1:migrate:local": "wrangler d1 migrations apply securechat-db --local",
+    "cf:d1:migrate:remote": "wrangler d1 migrations apply securechat-db --remote"
   },
   "dependencies": {
     "express": "^5.1.0",
     "pg": "^8.23.1",
     "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "wrangler": "^4.164.0"
   }
 }
