@@ -451,8 +451,8 @@ async function handleApi(request, env) {
 
     if (path === "/api/contact-invitations" && method === "GET") {
       const rows = await env.DB.prepare(
-        "SELECT i.id, a.user_id AS inviter_user_id, b.user_id AS invitee_user_id, i.invitee_verified_at, i.inviter_verified_at, i.inviter_code_expires_at, i.invitee_code_expires_at, i.expires_at FROM contact_invitations i JOIN users a ON a.id=i.inviter_user_id JOIN users b ON b.id=i.invitee_user_id WHERE i.expires_at>? ORDER BY i.created_at DESC LIMIT 50"
-      ).bind(now).all();
+        "SELECT i.id, a.user_id AS inviter_user_id, b.user_id AS invitee_user_id, i.invitee_verified_at, i.inviter_verified_at, i.inviter_code_expires_at, i.invitee_code_expires_at, i.expires_at FROM contact_invitations i JOIN users a ON a.id=i.inviter_user_id JOIN users b ON b.id=i.invitee_user_id WHERE i.expires_at>? AND (i.inviter_user_id=? OR i.invitee_user_id=?) ORDER BY i.created_at DESC LIMIT 50"
+      ).bind(now, me, me).all();
       return json({ invitations: rows.results });
     }
 
