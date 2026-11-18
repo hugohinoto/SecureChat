@@ -126,7 +126,7 @@ Cloudflare Workers Freeには日次リクエスト数・CPU時間の制限があ
 
 ## 通信の保護
 
-WorkerはHTTPアクセスをHTTPSへリダイレクトし、HTTPS応答にHSTSを付けます。TLSのバージョン選択はWorkerコードではなくCloudflareのエッジ設定で行われます。Cloudflare DashboardのSSL/TLS設定で、利用可能な範囲でTLS 1.3を優先し、最低TLSバージョンを適切に設定してください。
+WorkerはHTTPアクセスをHTTPSへリダイレクトし、HTTPS応答にHSTSを付けます。TLSのバージョン選択はWorkerコードではなくCloudflareのエッジ設定で行われます。Cloudflare Dashboardの「SSL/TLS → Edge Certificates」で、Minimum TLS VersionをTLS 1.2にし、TLS 1.3をOnにしてください。TLS 1.3の設定値は「on」（0-RTTを有効にしない）を選び、「zrt」は選ばないでください。TLS 1.3の有効化とMinimum TLS Versionの設定はCloudflareのエッジ側で適用されます。
 
 ## セキュリティ方針
 
