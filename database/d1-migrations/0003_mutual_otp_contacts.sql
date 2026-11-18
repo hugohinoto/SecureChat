@@ -1,3 +1,5 @@
+PRAGMA foreign_keys = ON;
+
 -- Mutual one-time-code verification for private contacts.
 -- Legacy contacts are intentionally not treated as verified; only pairs in verified_contact_pairs can chat.
 CREATE TABLE IF NOT EXISTS verified_contact_pairs (
