@@ -711,3 +711,35 @@ button { color: inherit; }
     min-height: 540px;
   }
 }
+
+
+/* Final scroll fallback: let the document scroll on every screen size. */
+html {
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+body {
+  min-height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto !important;
+}
+.app-shell {
+  height: auto !important;
+  min-height: calc(100vh - 42px);
+  align-items: start;
+}
+.sidebar {
+  max-height: none !important;
+  overflow: visible !important;
+}
+@media (max-width: 680px) {
+  .app-shell {
+    height: auto !important;
+    min-height: 100dvh;
+  }
+  .sidebar {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+}
