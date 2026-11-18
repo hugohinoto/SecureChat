@@ -19,6 +19,9 @@ Render/PostgreSQLの代わりにCloudflare内で完結する構成です。Cloud
 - Liquid Glass風のレスポンシブUI
 - Cloudflare Workers API
 - D1によるユーザー・セッション管理
+- 既存ユーザーが発行する招待コード制の新規登録（24時間有効・1回限り・コード本体は保存せずSHA-256ハッシュのみ保存）
+- 招待コードはユーザーごとに有効なものを最大5件まで発行可能
+- 5分ごとに期限切れセッション・招待・暗号化メッセージを自動削除
 - PBKDF2-HMAC-SHA-256によるパスワードハッシュ化（100,000反復、ユーザーごとのランダムソルト）
 - セッショントークンは暗号学的乱数で発行し、D1にはSHA-256ハッシュのみ保存
 - HttpOnly / SameSite=Strict Cookie（HTTPSではSecure・__Host- prefix）
@@ -66,7 +69,19 @@ npx wrangler d1 create securechat-db
 npx wrangler d1 migrations apply securechat-db --remote
 ```
 
-### 3.1 相互OTP連絡先認証の設定
+### 3.1 招待制登録のデータベース移行
+
+招待制登録を有効にするため、D1へ新しいテーブルを追加します。
+
+```bash
+npx wrangler d1 migrations apply securechat-db --remote
+```
+
+GitHub連携だけでデプロイしている場合も、Workerを更新する前にこのD1マイグレーションを適用してください。Cloudflare DashboardのD1 Consoleを使う場合は、`database/d1-migrations/0004_registration_invites.sql` の内容を実行します。
+
+ログイン後、サイドバーの「アカウント招待」からコードを発行し、新規登録する人へ共有します。登録画面でコードを入力しないとアカウントを作成できません。既存アカウントには影響しません。
+
+### 3.2 相互OTP連絡先認証の設定
 
 新しい連絡先認証には、Worker Secret `CONTACT_OTP_PEPPER` が必要です。32バイト以上のランダムな値をCloudflare DashboardのWorker「Settings → Variables and Secrets → Add → Secret」に登録してください。値をGitHubやコードに書かないでください。
 
