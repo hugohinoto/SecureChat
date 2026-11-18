@@ -9,7 +9,7 @@ const el = {
   password: $("#auth-password"), passwordHint: $("#password-hint"),
   loginTab: $("#login-tab"), registerTab: $("#register-tab"),
   search: $("#user-search-input"), searchButton: $("#user-search-button"),
-  results: $("#user-search-results"), contacts: $("#contact-list"),
+  results: $("#user-search-results"), contacts: $("#contact-list"), invitations: $("#invitation-list"),
   conversations: $("#conversation-list"), contactCount: $("#contact-count"),
   conversationCount: $("#conversation-count"), chatTitle: $("#chat-title"),
   chatSubtitle: $("#chat-subtitle"), securityTitle: $("#security-title"),
@@ -94,9 +94,19 @@ async function api(path, options={}) {
     const known={
       USER_NOT_FOUND:"そのユーザーIDは見つかりません。",
       RECIPIENT_KEY_MISSING:"相手がまだ公開鍵を登録していません。相手に一度ログインしてもらってください。",
-      MUTUAL_CONTACT_REQUIRED:"相手にもあなたを連絡先に追加してもらう必要があります。",
-      CONTACT_PERMISSION_REQUIRED:"連絡先の承認が解除されたため、このチャットは利用できません。",
+      MUTUAL_OTP_REQUIRED:"双方のワンタイムコード確認が完了していません。",
+      CONTACT_PERMISSION_REQUIRED:"OTPによる連絡先確認が解除されたため、このチャットは利用できません。",
       CONTACT_NOT_FOUND:"このユーザーは連絡先にありません。",
+      OTP_INVALID:"コードが正しくありません。",
+      OTP_EXPIRED:"コードの有効期限が切れました。相手に新しいコードを発行してもらってください。",
+      OTP_ATTEMPTS_EXCEEDED:"入力回数の上限に達しました。新しい招待からやり直してください。",
+      INVALID_OTP_FORMAT:"8桁の数字を入力してください。",
+      INVITATION_EXISTS:"この相手との招待は既に進行中です。下の招待欄を確認してください。",
+      ALREADY_CONTACT:"このユーザーは既に確認済みの連絡先です。",
+      INVITATION_NOT_ACCEPTED:"先に相手からの招待コードを確認してください。",
+      INVITATION_ALREADY_ACCEPTED:"相手は既に最初のコードを確認しています。",
+      INVITATION_NOT_FOUND:"招待が見つからないか、有効期限が切れています。",
+      OTP_NOT_CONFIGURED:"サーバー側のOTP秘密鍵が未設定です。管理者の設定が必要です。",
       CONVERSATION_NOT_FOUND:"チャットが見つかりません。"
     };
     throw new Error(known[data.error]||data.message||("通信エラー ("+response.status+")"));
@@ -257,21 +267,87 @@ function userAction(userId,label,fn) {
   const button=document.createElement("button");button.type="button";button.textContent=label;button.addEventListener("click",fn);
   row.append(name,button);return row;
 }
+function showOtpCode(container,code,expiresAt) {
+  const panel=document.createElement("div");panel.className="otp-code-panel";
+  const value=document.createElement("strong");value.className="otp-code";value.textContent=code;
+  const detail=document.createElement("span");detail.textContent="5分以内に相手へ共有してください。";
+  const copy=document.createElement("button");copy.type="button";copy.textContent="コードをコピー";
+  copy.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(code);toast("コードをコピーしました。");}catch{toast("コピーできませんでした。コードを手動で共有してください。");}});
+  panel.append(value,detail,copy);container.append(panel);
+}
 async function searchUsers() {
   const q=el.search.value.trim().toLowerCase();el.results.replaceChildren();
   if(!/^[a-z0-9_]{1,32}$/.test(q)){el.results.textContent="1文字以上のユーザーIDを入力してください。";return;}
   try {
     const data=await api("/api/users/search?q="+encodeURIComponent(q));
     if(!data.users.length){el.results.textContent="ユーザーが見つかりませんでした。";return;}
-    for(const user of data.users)el.results.append(userAction(user.userId,"追加",async()=>{
-      try {await api("/api/contacts/add",{method:"POST",body:{userId:user.userId}});toast(user.userId+"を連絡先に追加しました。");await refreshSidebar();el.results.replaceChildren();}
-      catch(e){toast(e.message);}
+    for(const user of data.users)el.results.append(userAction(user.userId,"招待コード発行",async()=>{
+      try {
+        const invite=await api("/api/contact-invitations",{method:"POST",body:{userId:user.userId}});
+        el.results.replaceChildren();
+        const row=document.createElement("div");row.className="user-result";
+        const label=document.createElement("span");label.textContent="@"+user.userId+" への招待コード";
+        row.append(label);el.results.append(row);showOtpCode(el.results,invite.code,invite.expiresAt);
+        toast("招待コードを発行しました。相手に安全な方法で共有してください。");
+        await refreshSidebar();
+      } catch(e){toast(e.message);}
     }));
   } catch(e){el.results.textContent=e.message;}
 }
+function otpInputRow(parent,placeholder,buttonText,handler) {
+  const row=document.createElement("div");row.className="otp-input-row";
+  const input=document.createElement("input");input.type="text";input.inputMode="numeric";input.autocomplete="one-time-code";input.maxLength=8;input.placeholder=placeholder;
+  input.addEventListener("input",()=>{input.value=input.value.replace(/\\D/g,"").slice(0,8);});
+  const button=document.createElement("button");button.type="button";button.textContent=buttonText;
+  button.addEventListener("click",async()=>{button.disabled=true;try{await handler(input.value);}catch(e){toast(e.message);}finally{button.disabled=false;}});
+  row.append(input,button);parent.append(row);
+}
+function renderInvitations(invitations) {
+  el.invitations.replaceChildren();
+  const incoming=invitations.filter(i=>i.invitee_user_id===currentUser.userId);
+  const outgoing=invitations.filter(i=>i.inviter_user_id===currentUser.userId);
+  if(!incoming.length&&!outgoing.length){const p=document.createElement("p");p.className="sidebar-empty";p.textContent="進行中の招待はありません。";el.invitations.append(p);return;}
+  for(const inv of incoming) {
+    const card=document.createElement("div");card.className="invitation-card";
+    const title=document.createElement("strong");title.textContent="@"+inv.inviter_user_id+" からの招待";
+    card.append(title);
+    if(!inv.invitee_verified_at) {
+      const note=document.createElement("p");note.textContent="相手から受け取った8桁コードを入力して承認します。";card.append(note);
+      otpInputRow(card,"相手の8桁コード","承認",async code=>{
+        await api("/api/contact-invitations/"+inv.id+"/accept",{method:"POST",body:{code}});
+        toast("招待を承認しました。次に確認コードを発行してください。");await refreshSidebar();
+      });
+    } else {
+      const note=document.createElement("p");note.textContent="あなたの確認コードを発行し、招待した相手へ共有してください。";card.append(note);
+      const button=document.createElement("button");button.type="button";button.className="invitation-action";button.textContent="確認コードを発行 / 再発行";
+      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/response-code",{method:"POST"});showOtpCode(card,result.code,result.expiresAt);}catch(e){toast(e.message);}finally{button.disabled=false;}});
+      card.append(button);
+    }
+    el.invitations.append(card);
+  }
+  for(const inv of outgoing) {
+    const card=document.createElement("div");card.className="invitation-card";
+    const title=document.createElement("strong");title.textContent="@"+inv.invitee_user_id+" への招待";
+    card.append(title);
+    if(!inv.invitee_verified_at) {
+      const note=document.createElement("p");note.textContent="相手が最初のコードを入力するのを待っています。";card.append(note);
+      const button=document.createElement("button");button.type="button";button.className="invitation-action";button.textContent=inv.inviter_code_expires_at>Date.now()?"コードを再発行":"期限切れ：コードを再発行";
+      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/reissue",{method:"POST"});showOtpCode(card,result.code,result.expiresAt);}catch(e){toast(e.message);}finally{button.disabled=false;}});
+      card.append(button);
+    } else {
+      const note=document.createElement("p");note.textContent="相手側の確認が完了しました。相手から受け取ったコードで最終確認します。";card.append(note);
+      otpInputRow(card,"相手の8桁コード","最終確認",async code=>{
+        const result=await api("/api/contact-invitations/"+inv.id+"/confirm",{method:"POST",body:{code}});
+        toast("@"+result.userId+"との相互確認が完了しました。");await refreshSidebar();
+      });
+    }
+    el.invitations.append(card);
+  }
+}
 async function refreshSidebar() {
-  const data=await Promise.all([api("/api/contacts"),api("/api/conversations")]);
+  const data=await Promise.all([api("/api/contacts"),api("/api/conversations"),api("/api/contact-invitations")]);
   const contacts=data[0].contacts||[],conversations=data[1].conversations||[];
+  renderInvitations(data[2].invitations||[]);
   el.contactCount.textContent=String(contacts.length);el.conversationCount.textContent=String(conversations.length);
   el.contacts.replaceChildren();el.conversations.replaceChildren();
   if(!contacts.length){const p=document.createElement("p");p.className="sidebar-empty";p.textContent="連絡先はまだありません。";el.contacts.append(p);}
