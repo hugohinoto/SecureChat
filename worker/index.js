@@ -264,6 +264,35 @@ async function handleApi(request, env) {
     }
   }
 
+  if (path === "/api/registration-invitations" && method === "POST") {
+    if (!sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
+    if (!checkRateLimit(request, "registration-invite", 3)) {
+      return json({ error: "RATE_LIMITED", message: "招待コードの発行回数が多すぎます。時間をおいてください。" }, 429);
+    }
+    let session;
+    try { session = await getSession(env, readCookie(request)); }
+    catch { return json({ error: "AUTH_UNAVAILABLE" }, 503); }
+    if (!session) return json({ error: "UNAUTHENTICATED" }, 401);
+    try {
+      const active = await env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM registration_invites WHERE created_by_user_id=? AND used_at IS NULL AND expires_at>?"
+      ).bind(session.id, Date.now()).first();
+      if ((active?.count ?? 0) >= 5) {
+        return json({ error: "INVITE_LIMIT_REACHED", message: "有効な招待コードは最大5件までです。使用または期限切れを待ってください。" }, 429);
+      }
+      const code = randomToken();
+      const now = Date.now();
+      const expiresAt = now + 24 * 60 * 60 * 1000;
+      await env.DB.prepare(
+        "INSERT INTO registration_invites (id, created_by_user_id, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)"
+      ).bind(crypto.randomUUID(), session.id, await sha256(code), expiresAt, now).run();
+      return json({ code, expiresAt }, 201);
+    } catch (error) {
+      console.error("Registration invitation failed:", error.message);
+      return json({ error: "INVITATION_UNAVAILABLE", message: "招待コードを発行できませんでした。" }, 503);
+    }
+  }
+
   if (path === "/api/auth/register" && method === "POST") {
     if (!sameOrigin(request)) {
       return json({ error: "ORIGIN_REJECTED", message: "このリクエストは許可されていません。" }, 403);
@@ -280,6 +309,10 @@ async function handleApi(request, env) {
 
     const userId = normalizeUserId(body?.userId);
     const password = body?.password;
+    const inviteCode = typeof body?.inviteCode === "string" ? body.inviteCode.trim() : "";
+    if (!/^[A-Za-z0-9_-]{40,64}$/.test(inviteCode)) {
+      return json({ error: "INVITE_CODE_REQUIRED", message: "有効な招待コードを入力してください。" }, 403);
+    }
     if (!userId) {
       return json({ error: "INVALID_USER_ID", message: "ユーザーIDは半角英小文字・数字・アンダースコアで3〜32文字にしてください。" }, 400);
     }
@@ -292,16 +325,18 @@ async function handleApi(request, env) {
       const passwordHash = await derivePassword(password, salt);
       const userUuid = crypto.randomUUID();
       const now = Date.now();
-      await env.DB.prepare(
-        "INSERT INTO users (id, user_id, password_salt, password_hash, password_iterations, created_at) VALUES (?, ?, ?, ?, ?, ?)"
-      ).bind(
-        userUuid,
-        userId,
-        base64url(salt),
-        base64url(passwordHash),
-        PASSWORD_ITERATIONS,
-        now
-      ).run();
+      const inviteHash = await sha256(inviteCode);
+      const registration = await env.DB.batch([
+        env.DB.prepare(
+          "UPDATE registration_invites SET used_at=? WHERE code_hash=? AND used_at IS NULL AND expires_at>? RETURNING id"
+        ).bind(now, inviteHash, now),
+        env.DB.prepare(
+          "INSERT INTO users (id, user_id, password_salt, password_hash, password_iterations, created_at) SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM registration_invites WHERE code_hash=? AND used_at=? AND expires_at>?)"
+        ).bind(userUuid, userId, base64url(salt), base64url(passwordHash), PASSWORD_ITERATIONS, now, inviteHash, now, now)
+      ]);
+      if (!registration[0]?.results?.length || registration[1]?.meta?.changes !== 1) {
+        return json({ error: "INVITE_CODE_INVALID", message: "招待コードが無効・使用済み・期限切れです。" }, 403);
+      }
 
       const session = await createSession(env, userUuid);
       const response = json({
@@ -690,7 +725,9 @@ export default {
     const now = Date.now();
     ctx.waitUntil(Promise.all([
       env.DB.prepare("DELETE FROM encrypted_messages WHERE expires_at <= ?").bind(now).run(),
-      env.DB.prepare("DELETE FROM contact_invitations WHERE expires_at <= ?").bind(now).run()
+      env.DB.prepare("DELETE FROM contact_invitations WHERE expires_at <= ?").bind(now).run(),
+      env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now).run(),
+      env.DB.prepare("DELETE FROM registration_invites WHERE expires_at <= ? OR (used_at IS NOT NULL AND used_at <= ?)").bind(now, now - 7 * 24 * 60 * 60 * 1000).run()
     ]));
   },
   async fetch(request, env) {
