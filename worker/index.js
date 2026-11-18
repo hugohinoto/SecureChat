@@ -741,7 +741,8 @@ export default {
       env.DB.prepare("DELETE FROM encrypted_messages WHERE expires_at <= ?").bind(now).run(),
       env.DB.prepare("DELETE FROM contact_invitations WHERE expires_at <= ?").bind(now).run(),
       env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now).run(),
-      env.DB.prepare("DELETE FROM registration_invites WHERE expires_at <= ? OR (used_at IS NOT NULL AND used_at <= ?)").bind(now, now - 7 * 24 * 60 * 60 * 1000).run()
+      env.DB.prepare("DELETE FROM registration_invites WHERE expires_at <= ? OR (used_at IS NOT NULL AND used_at <= ?)").bind(now, now - 7 * 24 * 60 * 60 * 1000).run(),
+      env.DB.prepare("DELETE FROM rate_limit_buckets WHERE expires_at <= ?").bind(now).run()
     ]));
   },
   async fetch(request, env) {
