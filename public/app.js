@@ -7,6 +7,8 @@ const el = {
   form: $("#auth-form"), title: $("#auth-title"), description: $("#auth-description"),
   error: $("#auth-error"), submit: $("#auth-submit"), user: $("#auth-user-id"),
   password: $("#auth-password"), passwordHint: $("#password-hint"),
+  inviteCode: $("#auth-invite-code"), inviteCodeField: $("#invite-code-field"),
+  registrationInvite: $("#registration-invite-result"), registrationInviteButton: $("#registration-invite-button"),
   loginTab: $("#login-tab"), registerTab: $("#register-tab"),
   search: $("#user-search-input"), searchButton: $("#user-search-button"),
   results: $("#user-search-results"), contacts: $("#contact-list"), invitations: $("#invitation-list"),
@@ -115,6 +117,9 @@ async function api(path, options={}) {
       INVITATION_ALREADY_ACCEPTED:"相手は既に最初のコードを確認しています。",
       INVITATION_NOT_FOUND:"招待が見つからないか、有効期限が切れています。",
       OTP_NOT_CONFIGURED:"サーバー側のOTP秘密鍵が未設定です。管理者の設定が必要です。",
+      INVITE_CODE_REQUIRED:"新規登録には招待コードが必要です。",
+      INVITE_CODE_INVALID:"招待コードが無効・使用済み・期限切れです。",
+      INVITE_LIMIT_REACHED:"有効な招待コードは最大5件までです。"
       CONVERSATION_NOT_FOUND:"チャットが見つかりません。"
     };
     throw new Error(known[data.error]||data.message||("通信エラー ("+response.status+")"));
@@ -198,6 +203,8 @@ function setAuthMode(mode) {
   el.password.autocomplete=registering?"new-password":"current-password";
   el.password.minLength=registering?12:0;
   el.passwordHint.textContent=registering?"12〜128文字。長くて推測されにくいパスワードを使ってください。":"パスワードは大文字・小文字を区別します。";
+  el.inviteCodeField.hidden=!registering;
+  el.inviteCode.required=registering;
   el.error.textContent="";
 }
 function showAuth(message="") { el.gate.hidden=false; el.error.textContent=message; state("disconnected","ログインが必要です"); }
@@ -241,14 +248,25 @@ async function submitAuth(event) {
   const userId=el.user.value.trim(),password=el.password.value,registering=authMode==="register";
   el.error.textContent="";
   if(!/^[a-zA-Z0-9_]{3,32}$/.test(userId)){el.error.textContent="ユーザーIDは半角英数字・アンダースコアの3〜32文字にしてください。";return;}
+  if(registering&&!el.inviteCode.value.trim()){el.error.textContent="招待コードを入力してください。";return;}
   if(registering&&Array.from(password).length<12){el.error.textContent="パスワードは12文字以上にしてください。";return;}
   if(!password||Array.from(password).length>128){el.error.textContent="パスワードを確認してください。";return;}
   el.submit.disabled=true;
   try {
-    const data=await api(registering?"/api/auth/register":"/api/auth/login",{method:"POST",body:{userId,password}});
+    const data=await api(registering?"/api/auth/register":"/api/auth/login",{method:"POST",body:registering?{userId,password,inviteCode:el.inviteCode.value.trim()}:{userId,password}});
     await signIn(data.user); toast(registering?"アカウントを作成しました。":"ログインしました。");
   } catch(e) {el.error.textContent=e.message;}
   finally {el.submit.disabled=false;el.submit.textContent=authMode==="register"?"アカウントを作成":"ログイン";}
+}
+async function issueRegistrationInvite() {
+  if(!currentUser)return;
+  el.registrationInviteButton.disabled=true;
+  try {
+    const invite=await api("/api/registration-invitations",{method:"POST",body:{}});
+    showOtpCode(el.registrationInvite,invite.code,invite.expiresAt,"","24時間以内に共有してください。コードは1回だけ使用できます。");
+    toast("アカウント招待コードを発行しました。");
+  } catch(e) {toast(e.message);}
+  finally {el.registrationInviteButton.disabled=false;}
 }
 async function deleteAccount() {
   if(!currentUser)return;
@@ -281,12 +299,12 @@ function userAction(userId,label,fn) {
   const button=document.createElement("button");button.type="button";button.textContent=label;button.addEventListener("click",fn);
   row.append(name,button);return row;
 }
-function showOtpCode(container,code,expiresAt,key="") {
+function showOtpCode(container,code,expiresAt,key="",detailText="5分以内に相手へ共有してください。") {
   if(key)displayedOtpCodes.set(key,{code,expiresAt});
   container.querySelectorAll(".otp-code-panel").forEach(panel=>panel.remove());
   const panel=document.createElement("div");panel.className="otp-code-panel";
   const value=document.createElement("strong");value.className="otp-code";value.textContent=code;
-  const detail=document.createElement("span");detail.textContent="5分以内に相手へ共有してください。";
+  const detail=document.createElement("span");detail.textContent=detailText;
   const copy=document.createElement("button");copy.type="button";copy.textContent="コードをコピー";
   copy.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(code);toast("コードをコピーしました。");}catch{toast("コピーできませんでした。コードを手動で共有してください。");}});
   panel.append(value,detail,copy);container.append(panel);
@@ -475,6 +493,7 @@ el.registerTab.addEventListener("click",()=>setAuthMode("register"));
 el.form.addEventListener("submit",submitAuth);
 el.logout.addEventListener("click",logout);
 el.deleteAccount.addEventListener("click",deleteAccount);
+el.registrationInviteButton.addEventListener("click",issueRegistrationInvite);
 el.searchButton.addEventListener("click",searchUsers);
 el.search.addEventListener("keydown",e=>{if(e.key==="Enter")searchUsers();});
 el.input.addEventListener("input",()=>{el.input.style.height="auto";el.input.style.height=Math.min(el.input.scrollHeight,125)+"px";updateSend();});
