@@ -398,8 +398,14 @@ async function handleApi(request, env) {
     if (path === "/api/keys" && method === "PUT") {
       const body = await readJson(request);
       const pub = body?.identityPublicKey;
-      if (typeof pub !== "string" || pub.length < 20 || pub.length > 4096) return json({ error: "INVALID_PUBLIC_KEY" }, 400);
-      await env.DB.prepare("INSERT INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, key_version, updated_at) VALUES (?, ?, ?, ?, 1, ?) ON CONFLICT(user_id) DO UPDATE SET identity_public_key=excluded.identity_public_key, signed_prekey=excluded.signed_prekey, signed_prekey_signature=excluded.signed_prekey_signature, key_version=user_keys.key_version+1, updated_at=excluded.updated_at").bind(me, pub, pub, "client-managed-v1", now).run();
+      if (typeof pub !== "string" || pub.length < 80 || pub.length > 128) return json({ error: "INVALID_PUBLIC_KEY" }, 400);
+      try {
+        const raw = Uint8Array.from(atob(pub), (char) => char.charCodeAt(0));
+        if (raw.length !== 65 || raw[0] !== 4) return json({ error: "INVALID_PUBLIC_KEY" }, 400);
+      } catch {
+        return json({ error: "INVALID_PUBLIC_KEY" }, 400);
+      }
+      await env.DB.prepare("INSERT INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, key_version, updated_at) VALUES (?, ?, ?, ?, 1, ?) ON CONFLICT(user_id) DO UPDATE SET identity_public_key=excluded.identity_public_key, signed_prekey=excluded.signed_prekey, signed_prekey_signature=excluded.signed_prekey_signature, key_version=user_keys.key_version+1, updated_at=excluded.updated_at").bind(me, pub, pub, "not-used-static-ecdh-v1", now).run();
       return json({ saved: true });
     }
     if (path.startsWith("/api/keys/") && method === "GET") {
@@ -411,9 +417,7 @@ async function handleApi(request, env) {
     if (path === "/api/conversations" && method === "POST") {
       const body = await readJson(request);
       const peerId = normalizeUserId(body?.recipientUserId);
-      const mine = body?.myKeyEnvelope;
-      const theirs = body?.theirKeyEnvelope;
-      if (!peerId || typeof mine !== "string" || typeof theirs !== "string" || mine.length > 8192 || theirs.length > 8192) return json({ error: "INVALID_CONVERSATION" }, 400);
+      if (!peerId) return json({ error: "INVALID_CONVERSATION" }, 400);
       const peer = await env.DB.prepare("SELECT id FROM users WHERE user_id=?").bind(peerId).first();
       if (!peer) return json({ error: "USER_NOT_FOUND" }, 404);
       if (peer.id === me) return json({ error: "SELF_CONVERSATION" }, 400);
@@ -425,9 +429,7 @@ async function handleApi(request, env) {
       await env.DB.batch([
         env.DB.prepare("INSERT INTO conversations (id, created_by, created_at, expires_in_seconds) VALUES (?, ?, ?, 3600)").bind(id, me, now),
         env.DB.prepare("INSERT INTO conversation_members (conversation_id, user_id, joined_at) VALUES (?, ?, ?)").bind(id, me, now),
-        env.DB.prepare("INSERT INTO conversation_members (conversation_id, user_id, joined_at) VALUES (?, ?, ?)").bind(id, peer.id, now),
-        env.DB.prepare("INSERT INTO conversation_keys (conversation_id, user_id, key_envelope, created_at) VALUES (?, ?, ?, ?)").bind(id, me, mine, now),
-        env.DB.prepare("INSERT INTO conversation_keys (conversation_id, user_id, key_envelope, created_at) VALUES (?, ?, ?, ?)").bind(id, peer.id, theirs, now)
+        env.DB.prepare("INSERT INTO conversation_members (conversation_id, user_id, joined_at) VALUES (?, ?, ?)").bind(id, peer.id, now)
       ]);
       return json({ conversationId: id, existing: false }, 201);
     }
