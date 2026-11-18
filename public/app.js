@@ -14,7 +14,7 @@ const el = {
   conversationCount: $("#conversation-count"), chatTitle: $("#chat-title"),
   chatSubtitle: $("#chat-subtitle"), securityTitle: $("#security-title"),
   securityDescription: $("#security-description"), securityTag: $("#security-tag"),
-  composerHint: $("#composer-hint")
+  composerHint: $("#composer-hint"), fingerprint: $("#key-fingerprint")
 };
 const MAX_MESSAGE_LENGTH = 2000;
 const DB_NAME = "securechat-local-keys";
@@ -83,6 +83,11 @@ function toB64(bytes) {
   let s=""; for(const b of bytes)s+=String.fromCharCode(b); return btoa(s);
 }
 function fromB64(s) { return Uint8Array.from(atob(s),c=>c.charCodeAt(0)); }
+async function publicKeyFingerprint(base64Key) {
+  const digest=await crypto.subtle.digest("SHA-256",fromB64(base64Key));
+  const hex=Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,"0")).join("").toUpperCase();
+  return hex.match(/.{1,4}/g).join(" ");
+}
 
 async function api(path, options={}) {
   const response=await fetch(path,{
@@ -133,6 +138,12 @@ async function ensureIdentity() {
 async function deriveKey(conversationId,peerUserId) {
   if(activeKey && activeConversation && activeConversation.id===conversationId)return activeKey;
   const peer=await api("/api/keys/"+encodeURIComponent(peerUserId));
+  const [ownFingerprint,peerFingerprint]=await Promise.all([
+    publicKeyFingerprint(identityPublicKey),
+    publicKeyFingerprint(peer.identityPublicKey)
+  ]);
+  el.fingerprint.hidden=false;
+  el.fingerprint.textContent="公開鍵指紋（SHA-256）\nあなた: "+ownFingerprint+"\n相手: "+peerFingerprint+"\n別の安全な経路で相手の画面と照合してください。指紋が変わった場合は再確認が必要です。";
   const pub=await crypto.subtle.importKey("raw",fromB64(peer.identityPublicKey),{name:"ECDH",namedCurve:"P-256"},false,[]);
   const bits=await crypto.subtle.deriveBits({name:"ECDH",public:pub},identityPrivateKey,256);
   const material=await crypto.subtle.importKey("raw",bits,"HKDF",false,["deriveKey"]);
@@ -378,6 +389,7 @@ async function refreshSidebar() {
           activeConversation=null;activeKey=null;lastMessageCreatedAt=0;lastMessageId="";
           el.chatTitle.textContent="個別チャットを選択";
           el.chatSubtitle.textContent="連絡先を選択してください";
+          el.fingerprint.hidden=true;
           welcome("連絡先を削除しました","別のユーザーを選択してチャットを始められます。");
           updateSend();
         }
@@ -405,7 +417,7 @@ async function selectConversation(c) {
   lastMessageCreatedAt=0;lastMessageId="";messageLoadBusy=false;
   el.chatTitle.textContent=c.peer_user_id;el.chatSubtitle.textContent="@"+c.peer_user_id+" · 1対1の個別チャット";
   el.securityTitle.textContent="暗号化チャット（試作）";
-  el.securityDescription.textContent="ECDH P-256 + HKDF + AES-GCM。公開鍵の本人確認と前方秘匿性は未実装です。";
+  el.securityDescription.textContent="ECDH P-256 + HKDF + AES-GCM。公開鍵指紋を別経路で照合してください。前方秘匿性は未実装です。";
   el.securityTag.textContent="E2EE PROTOTYPE";
   el.composerHint.textContent="端末内で暗号化 · メッセージは1時間後に削除";
   welcome("暗号化チャット","このブラウザーで暗号化してから送信します。");
