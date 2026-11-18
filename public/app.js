@@ -414,6 +414,7 @@ async function openConversation(peerUserId) {
 }
 async function selectConversation(c) {
   activeConversation={id:c.id,peerUserId:c.peer_user_id};activeKey=null;
+  el.fingerprint.hidden=true;
   lastMessageCreatedAt=0;lastMessageId="";messageLoadBusy=false;
   el.chatTitle.textContent=c.peer_user_id;el.chatSubtitle.textContent="@"+c.peer_user_id+" · 1対1の個別チャット";
   el.securityTitle.textContent="暗号化チャット（試作）";
