@@ -457,6 +457,7 @@ async function handleApi(request, env) {
     }
 
     if (path === "/api/contact-invitations" && method === "POST") {
+      if (!checkRateLimit(request, "contact-invite", 10)) return json({ error: "RATE_LIMITED", message: "招待の発行回数が多すぎます。時間をおいて再試行してください。" }, 429);
       let body;
       try { body = await readJson(request); } catch (error) { return json({ error: error.message }, 400); }
       const userId = normalizeUserId(body?.userId);
@@ -681,6 +682,10 @@ export default {
   },
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.protocol === "http:") {
+      url.protocol = "https:";
+      return Response.redirect(url.toString(), 308);
+    }
 
     if (url.pathname === "/ws") {
       if (request.method !== "GET" || request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
