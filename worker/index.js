@@ -678,7 +678,11 @@ async function handleApi(request, env) {
 
 export default {
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(env.DB.prepare("DELETE FROM encrypted_messages WHERE expires_at <= ?").bind(Date.now()).run());
+    const now = Date.now();
+    ctx.waitUntil(Promise.all([
+      env.DB.prepare("DELETE FROM encrypted_messages WHERE expires_at <= ?").bind(now).run(),
+      env.DB.prepare("DELETE FROM contact_invitations WHERE expires_at <= ?").bind(now).run()
+    ]));
   },
   async fetch(request, env) {
     const url = new URL(request.url);
