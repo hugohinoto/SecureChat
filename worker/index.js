@@ -175,6 +175,29 @@ async function checkRateLimit(env, request, action, maxAttempts) {
   return Number(bucket?.request_count ?? (maxAttempts + 1)) <= maxAttempts;
 }
 
+async function checkSubjectRateLimit(env, action, subject, maxAttempts) {
+  const bucketKey = await sha256("securechat-rate-limit:subject:" + action + ":" + subject);
+  const now = Date.now();
+  const resetBefore = now - AUTH_WINDOW_MS;
+  const expiresAt = now + RATE_LIMIT_RETENTION_MS;
+  const bucket = await env.DB.prepare(
+    `INSERT INTO rate_limit_buckets (bucket_key, window_started_at, request_count, expires_at)
+     VALUES (?, ?, 1, ?)
+     ON CONFLICT(bucket_key) DO UPDATE SET
+       request_count = CASE
+         WHEN rate_limit_buckets.window_started_at <= ? THEN 1
+         ELSE rate_limit_buckets.request_count + 1
+       END,
+       window_started_at = CASE
+         WHEN rate_limit_buckets.window_started_at <= ? THEN excluded.window_started_at
+         ELSE rate_limit_buckets.window_started_at
+       END,
+       expires_at = excluded.expires_at
+     RETURNING request_count`
+  ).bind(bucketKey, now, expiresAt, resetBefore, resetBefore).first();
+  return Number(bucket?.request_count ?? (maxAttempts + 1)) <= maxAttempts;
+}
+
 function securityHeaders(response, request) {
   const url = new URL(request.url);
   const wsOrigin = url.protocol === "https:" ? `wss://${url.host}` : `ws://${url.host}`;
@@ -418,6 +441,9 @@ async function handleApi(request, env) {
     const password = body?.password;
     if (!userId || !validPassword(password)) {
       return json({ error: "INVALID_CREDENTIALS", message: "ユーザーIDまたはパスワードが正しくありません。" }, 401);
+    }
+    if (!await checkSubjectRateLimit(env, "login-user", userId, 8)) {
+      return json({ error: "RATE_LIMITED", message: "このアカウントへのログイン試行が多すぎます。15分ほど待ってください。" }, 429);
     }
 
     try {
