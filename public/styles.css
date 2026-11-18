@@ -689,3 +689,25 @@ button { color: inherit; }
   flex: 0 0 auto;
   max-width: 100%;
 }
+
+
+/* Allow the full desktop workspace to scroll when sidebar content exceeds the viewport. */
+@media (min-width: 681px) {
+  body {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .app-shell {
+    height: auto;
+    min-height: min(920px, calc(100vh - 42px));
+    align-items: start;
+  }
+  .sidebar {
+    height: auto;
+    overflow: visible;
+  }
+  .chat-panel {
+    height: min(920px, calc(100vh - 42px));
+    min-height: 540px;
+  }
+}
