@@ -37,7 +37,10 @@ async function sha256(value) {
 }
 
 function createOtp() {
-  return String(crypto.getRandomValues(new Uint32Array(1))[0] % 100_000_000).padStart(8, "0");
+  const limit = Math.floor(0x1_0000_0000 / 100_000_000) * 100_000_000;
+  let value;
+  do { value = crypto.getRandomValues(new Uint32Array(1))[0]; } while (value >= limit);
+  return String(value % 100_000_000).padStart(8, "0");
 }
 
 async function otpDigest(env, invitationId, purpose, code) {
