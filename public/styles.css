@@ -647,3 +647,18 @@ button { color: inherit; }
 .otp-code { color:#c8f8e7; font:700 19px ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:3px; }
 .otp-code-panel span { flex:1 1 100%; color:#8faeaa; font-size:9px; }
 @media (max-width:900px) { .invitation-list { max-height:150px; } }
+
+
+.fingerprint-panel {
+  margin: 8px 26px 0;
+  padding: 10px 13px;
+  border: 1px solid rgba(133,174,226,.16);
+  border-radius: 11px;
+  color: #9eacc8;
+  background: rgba(7,13,27,.25);
+  font: 9px/1.8 ui-monospace,SFMono-Regular,Consolas,monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fingerprint-panel[hidden] { display:none; }
+@media (max-width:680px) { .fingerprint-panel { margin:7px 10px 0; padding:8px 10px; font-size:8px; } }
