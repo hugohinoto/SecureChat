@@ -11,7 +11,7 @@
     {
       "binding": "DB",
       "database_name": "securechat-db",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "07bf4e7d-bb37-42ae-ba42-e7a00a20cdad",
       "migrations_dir": "database/d1-migrations"
     }
   ],
