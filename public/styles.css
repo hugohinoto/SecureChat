@@ -632,3 +632,18 @@ button { color: inherit; }
   background:rgba(150,40,60,.22);
 }
 .delete-account-button:disabled { opacity:.5; cursor:wait; }
+
+
+/* Mutual one-time-code contact verification */
+.invitation-list { display:flex; flex-direction:column; gap:7px; max-height:230px; overflow:auto; }
+.invitation-card { padding:9px; border:1px solid rgba(133,174,226,.16); border-radius:11px; background:rgba(255,255,255,.035); }
+.invitation-card strong { display:block; color:#dce8ff; font-size:10px; }
+.invitation-card p { margin:5px 0 7px; color:#91a0bd; font-size:9px; line-height:1.6; }
+.otp-input-row { display:flex; gap:5px; margin-top:6px; }
+.otp-input-row input { width:0; min-width:0; flex:1; height:31px; padding:0 8px; border:1px solid rgba(186,207,255,.16); border-radius:8px; outline:0; color:#eef4ff; background:rgba(7,13,27,.45); font-size:11px; letter-spacing:1px; }
+.otp-input-row button,.invitation-action,.otp-code-panel button { min-height:31px; padding:0 8px; border:1px solid rgba(156,191,255,.2); border-radius:8px; color:#eaf2ff; background:rgba(91,117,180,.28); font-size:9px; cursor:pointer; }
+.otp-input-row button:disabled,.invitation-action:disabled { opacity:.5; cursor:wait; }
+.otp-code-panel { display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin:7px 0; padding:9px; border:1px solid rgba(117,223,184,.2); border-radius:10px; background:rgba(117,223,184,.055); }
+.otp-code { color:#c8f8e7; font:700 19px ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:3px; }
+.otp-code-panel span { flex:1 1 100%; color:#8faeaa; font-size:9px; }
+@media (max-width:900px) { .invitation-list { max-height:150px; } }
