@@ -270,6 +270,7 @@ function userAction(userId,label,fn) {
 }
 function showOtpCode(container,code,expiresAt,key="") {
   if(key)displayedOtpCodes.set(key,{code,expiresAt});
+  container.querySelectorAll(".otp-code-panel").forEach(panel=>panel.remove());
   const panel=document.createElement("div");panel.className="otp-code-panel";
   const value=document.createElement("strong");value.className="otp-code";value.textContent=code;
   const detail=document.createElement("span");detail.textContent="5分以内に相手へ共有してください。";
