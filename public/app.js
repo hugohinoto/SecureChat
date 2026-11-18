@@ -124,7 +124,9 @@ async function api(path, options={}) {
       INVITE_LIMIT_REACHED:"有効な招待コードは最大5件までです。",
       CONVERSATION_NOT_FOUND:"チャットが見つかりません。"
     };
-    throw new Error(known[data.error]||data.message||("通信エラー ("+response.status+")"));
+    const error=new Error(known[data.error]||data.message||("通信エラー ("+response.status+")"));
+    error.code=data.error||"HTTP_ERROR";
+    throw error;
   }
   return data;
 }
@@ -136,11 +138,15 @@ async function ensureIdentity() {
   } else {
     // Never generate a replacement identity if the server already has a key.
     // Doing so would silently orphan the user's existing encrypted history.
+    let serverAlreadyHasKey=false;
     try {
       await api("/api/keys/"+encodeURIComponent(currentUser.userId));
-      throw new Error("IDENTITY_KEY_RECOVERY_REQUIRED");
+      serverAlreadyHasKey=true;
     } catch(error) {
-      if(error.message!=="KEY_NOT_FOUND") throw error;
+      if(error.code!=="KEY_NOT_FOUND") throw error;
+    }
+    if(serverAlreadyHasKey) {
+      throw new Error("このアカウントには既存の暗号鍵がありますが、このブラウザーに秘密鍵がありません。新しい鍵で上書きすると過去のメッセージが読めなくなるため停止しました。元のブラウザーまたはバックアップから鍵を復元してください。");
     }
     const pair=await crypto.subtle.generateKey({name:"ECDH",namedCurve:"P-256"},false,["deriveBits"]);
     const raw=await crypto.subtle.exportKey("raw",pair.publicKey);
