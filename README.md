@@ -3,21 +3,29 @@
 プライバシーを重視したブラウザー向けチャットアプリの開発プロジェクトです。現在は認証付きの開発用プロトタイプです。
 
 > [!WARNING]
-> **まだ安全なプライベートチャットではありません。** アカウント認証とHTTPS/WSSの基盤はありますが、チャット本文はサーバーで読める平文として全ログインユーザーに中継されます。E2EE、個別チャット、公開鍵登録は未実装です。パスワード以外の機密情報や個人情報は送信しないでください。
+> **まだ安全なプライベートチャットではありません。** アカウント認証とHTTPS/WSSの基盤はありますが、チャット本文はサーバー側で読める平文として全ログインユーザーに中継されます。E2EE、個別チャット、公開鍵登録は未実装です。パスワード以外の機密情報や個人情報は送信しないでください。
+
+## Cloudflare構成（新しいデプロイ先）
+
+- **Cloudflare Workers**：HTTP APIと静的フロントエンドの配信
+- **Cloudflare Durable Objects（SQLite）**：WebSocketの共通ルーム中継
+- **Cloudflare D1**：ユーザーとセッションの保存
+- **GitHub**：ソースコード管理とデプロイ連携
+
+Render/PostgreSQLの代わりにCloudflare内で完結する構成です。CloudflareへのデプロイにはCloudflareアカウントでの初回リソース作成・Git連携が必要です。
 
 ## 現在実装済み
 
 - Liquid Glass風のレスポンシブUI
-- Node.js / Express / WebSocket
-- PostgreSQLのユーザー・セッション管理
-- ユーザーIDの新規登録とログイン
-- Node.js標準の scrypt によるパスワードハッシュ化（ユーザーごとにランダムソルト）
-- セッショントークンは暗号学的乱数で発行し、DBにはSHA-256ハッシュのみ保存
-- HttpOnly / SameSite=Strict Cookie（本番ではSecure属性付き）
-- 認証済みユーザーだけがWebSocketに接続可能
-- Originチェック、ログイン・登録の試行回数制限、基本的なセキュリティヘッダー
-- ログアウト時のセッション削除と、そのセッションで開いているWebSocketの切断
-- 起動時のDBマイグレーション
+- Cloudflare Workers API
+- D1によるユーザー・セッション管理
+- PBKDF2-HMAC-SHA-256によるパスワードハッシュ化（600,000反復、ユーザーごとのランダムソルト）
+- セッショントークンは暗号学的乱数で発行し、D1にはSHA-256ハッシュのみ保存
+- HttpOnly / SameSite=Strict Cookie（HTTPSではSecure・__Host- prefix）
+- Durable Objects WebSocket Hibernation APIによる共通ルーム
+- ログアウト時に該当セッションのWebSocketを切断
+- Originチェック、認証試行回数制限、基本的なセキュリティヘッダー
+- D1マイグレーション
 
 ## 未実装
 
@@ -29,48 +37,71 @@
 - アカウント復旧・パスワードリセット
 - 専門家によるセキュリティレビュー
 
-現在の共通テストルームは、ログインユーザー全員にメッセージを中継します。サーバー運営者が本文を読めるため、秘密の会話には使わないでください。
+## Cloudflareへの初回セットアップ
 
-## 必要環境
+### 1. 必要なもの
 
-- Node.js 24.22.1
-- npm
-- PostgreSQL 18（または互換性のあるサポート対象バージョン）
+- Cloudflareアカウント
+- Node.js 22.12以降
+- このGitHubリポジトリへのアクセス
 
-## ローカル起動
+### 2. D1データベースを作成
 
-1. PostgreSQLに securechat データベースと接続ユーザーを作成します。
-2. DATABASE_URL をローカルDBの接続文字列に設定します。
-3. 依存パッケージをインストールし、DBマイグレーションを実行します。
+ローカルPCでリポジトリを取得し、プロジェクトのルートで実行します。
 
 ```bash
 npm install
-npm run db:migrate
-npm run dev
+npx wrangler login
+npx wrangler d1 create securechat-db
 ```
 
-PowerShellでの接続文字列設定例：
+コマンド結果に表示された `database_id` をコピーし、ルートの `wrangler.jsonc` の `database_id` にある `REPLACE_WITH_D1_DATABASE_ID` を置き換えてください。database_idは秘密情報ではありません。パスワードやAPIトークンはGitHubに保存しないでください。
 
-```powershell
-$env:DATABASE_URL = "postgresql://securechat_app:YOUR_PASSWORD@localhost:5432/securechat"
-npm install
-npm run db:migrate
-npm run dev
+### 3. データベースを初期化
+
+```bash
+npx wrangler d1 migrations apply securechat-db --remote
 ```
 
-ブラウザーで http://localhost:3000 を開き、「新規登録」からアカウントを作成します。パスワードは12〜128文字です。
+### 4. ローカルで確認
 
-## Renderへのデプロイ
+```bash
+npm run cf:dev
+```
 
-リポジトリの render.yaml はRender Blueprintです。Render DashboardでNew → BlueprintからこのGitHubリポジトリを選択し、内容を確認して適用します。
+表示されたlocalhostのURLを開き、新規登録・ログイン・別ブラウザー間のWebSocketチャットを確認します。
 
-現在のBlueprintは新しいPostgresを自動作成しません。Free Postgresのworkspaceあたり1インスタンス制限に当たらないよう、既存データベースの接続文字列をDATABASE_URLとして入力する構成です。起動時に未適用のDBマイグレーションが実行されます。
+### 5. Cloudflareにデプロイ
 
-Free Web Serviceは15分間アクセスがないとスリープし、次のアクセス時に起動時間がかかる場合があります。Free Postgresは作成後30日で期限切れになり、猶予期間後にデータが削除されます。長期間使う場合はバックアップや有料プランへの移行を検討してください。
+```bash
+npm run cf:deploy
+```
+
+初回デプロイ時にDurable ObjectsのSQLite migration（v1）が適用されます。Workers & PagesのGit連携を設定すると、GitHubの指定ブランチへの更新を自動デプロイにできます。WranglerのGit連携設定を使う場合も、D1のdatabase_idとリモートマイグレーションが先に設定されていることを確認してください。
+
+## GitHub連携デプロイ
+
+Cloudflare DashboardでWorkers & Pagesから既存WorkerをGitHubリポジトリに接続し、次の値を指定します。
+
+- Repository: `hugohinoto/SecureChat`
+- Production branch: `main`
+- Build command: `npm install`
+- Deploy command: `npx wrangler deploy`
+- Root directory: リポジトリのルート
+
+`wrangler.jsonc` にD1 bindingとDurable Object bindingが定義されています。初回は必ずD1の `database_id` を実際のIDに置き換え、D1 migrationをremoteに適用してください。
+
+## ローカルの旧Node.js / Render構成
+
+`server/` と `render.yaml` は旧Render構成との比較・移行用に残しています。Cloudflareデプロイでは `worker/index.js` と `wrangler.jsonc` が使用されます。旧Render側のWeb ServiceはCloudflare移行確認が済むまで削除しないでください。
 
 ## ヘルスチェック
 
-GET /api/health はアプリとPostgreSQLへの接続状態を返します。
+`GET /api/health` はWorkerとD1の接続状態を返します。正常時は `status: "ok"`、`database: "connected"` になります。
+
+## 無料枠と制限
+
+Cloudflare Workers Freeには日次リクエスト数・CPU時間の制限があり、D1 Freeにはデータベース容量と日次読み書き上限があります。Durable Objects Freeにも日次リクエスト・実行時間の上限があります。利用量が上限に達すると、その日の処理が失敗することがあります。パスワードハッシュは600,000反復のPBKDF2を使うため、FreeプランのCPU制限に達する場合はWorkers Paidへの切り替えが必要です。上限・料金は変わるためCloudflare公式料金ページで確認してください。
 
 ## セキュリティ方針
 
@@ -80,15 +111,3 @@ GET /api/health はアプリとPostgreSQLへの接続状態を返します。
 - 鍵のバックアップ、端末追加、本人確認、失効、XSSと配信経路の保護も設計対象です。
 - 認証機能が動くことと、メッセージがE2EEで保護されることは別です。
 - 専門的なセキュリティレビューを完了するまでは、本番用途の安全性を保証しません。
-
-## 既存のRender Postgresを使う場合
-
-RenderのFree Postgresは1つのworkspaceにつき同時に1インスタンスだけ利用できます。すでにFree Postgresが存在する場合、このBlueprintでは新しいDBを作らず、その既存DBを再利用します。
-
-Blueprint作成時に `DATABASE_URL` の入力を求められたら、Render Dashboardで既存データベースを開き、Connectタブから接続文字列をコピーします。
-
-- Web ServiceとDBが同じリージョンなら、可能な限りInternal Database URLを使い、Web ServiceもDBと同じリージョンに設定してください。
-- 異なるリージョンから接続する場合はExternal Database URLを使い、TLSを必須にし、DBのIP allow listを適切に設定してください。
-- 接続文字列にはパスワードが含まれます。GitHub、チャット、ソースコードには貼らず、Render Dashboardの秘密環境変数欄だけに入力してください。
-
-この構成ではBlueprintが既存DBのデータを削除・変更することはありません。ただし、SecureChatのマイグレーションは既存DBに `users`、`sessions`、`schema_migrations` テーブルを作成します。既存DBに同名テーブルがある場合は、実行前にスキーマを確認してください。
