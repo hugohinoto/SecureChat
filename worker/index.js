@@ -611,7 +611,8 @@ async function handleApi(request, env) {
         await env.DB.prepare("UPDATE contact_invitations SET inviter_attempts=inviter_attempts+1 WHERE id=? AND inviter_attempts<5").bind(inv.id).run();
         return json({ error: "OTP_INVALID" }, 400);
       }
-      await env.DB.prepare("UPDATE contact_invitations SET invitee_verified_at=?, inviter_code_hash=NULL, expires_at=? WHERE id=? AND invitee_user_id=?").bind(now, now + 86400000, inv.id, me).run();
+      const consumed = await env.DB.prepare("UPDATE contact_invitations SET invitee_verified_at=?, inviter_code_hash=NULL, expires_at=? WHERE id=? AND invitee_user_id=? AND invitee_verified_at IS NULL AND inviter_code_hash=? AND inviter_code_expires_at>? AND inviter_attempts<5 AND expires_at>?").bind(now, now + 86400000, inv.id, me, inv.inviter_code_hash, now, now).run();
+      if (Number(consumed.meta?.changes ?? 0) !== 1) return json({ error: "INVITATION_ALREADY_VERIFIED" }, 409);
       return json({ accepted: true, invitationId: inv.id });
     }
 
@@ -645,6 +646,8 @@ async function handleApi(request, env) {
         await env.DB.prepare("UPDATE contact_invitations SET invitee_attempts=invitee_attempts+1 WHERE id=? AND invitee_attempts<5").bind(inv.id).run();
         return json({ error: "OTP_INVALID" }, 400);
       }
+      const consumed = await env.DB.prepare("UPDATE contact_invitations SET inviter_verified_at=?, invitee_code_hash=NULL WHERE id=? AND inviter_user_id=? AND inviter_verified_at IS NULL AND invitee_verified_at IS NOT NULL AND invitee_code_hash=? AND invitee_code_expires_at>? AND invitee_attempts<5 AND expires_at>?").bind(now, inv.id, me, inv.invitee_code_hash, now, now).run();
+      if (Number(consumed.meta?.changes ?? 0) !== 1) return json({ error: "INVITATION_ALREADY_VERIFIED" }, 409);
       const [pairA, pairB] = orderedPair(inv.inviter_user_id, inv.invitee_user_id);
       const oldConversations = await env.DB.prepare("SELECT c.id FROM conversations c JOIN conversation_members a ON a.conversation_id=c.id AND a.user_id=? JOIN conversation_members b ON b.conversation_id=c.id AND b.user_id=?").bind(inv.inviter_user_id, inv.invitee_user_id).all();
       await env.DB.batch([
@@ -698,7 +701,13 @@ async function handleApi(request, env) {
       } catch {
         return json({ error: "INVALID_PUBLIC_KEY" }, 400);
       }
-      await env.DB.prepare("INSERT INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, key_version, updated_at) VALUES (?, ?, ?, ?, 1, ?) ON CONFLICT(user_id) DO UPDATE SET identity_public_key=excluded.identity_public_key, signed_prekey=excluded.signed_prekey, signed_prekey_signature=excluded.signed_prekey_signature, key_version=user_keys.key_version+1, updated_at=excluded.updated_at").bind(me, pub, pub, "not-used-static-ecdh-v1", now).run();
+      // Identity keys are immutable in this prototype. Never overwrite an existing
+      // public key from a newly initialized browser: that would orphan old ciphertext.
+      await env.DB.prepare("INSERT OR IGNORE INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, key_version, updated_at) VALUES (?, ?, ?, ?, 1, ?)").bind(me, pub, pub, "not-used-static-ecdh-v1", now).run();
+      const stored = await env.DB.prepare("SELECT identity_public_key FROM user_keys WHERE user_id=?").bind(me).first();
+      if (!stored || stored.identity_public_key !== pub) {
+        return json({ error: "IDENTITY_KEY_CONFLICT", message: "既存の暗号鍵は上書きできません。元の端末の鍵を復元してください。" }, 409);
+      }
       return json({ saved: true });
     }
     if (path.startsWith("/api/keys/") && method === "GET") {
