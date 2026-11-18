@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "securechat",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-11-18",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "securechat-db",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "database/d1-migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CHAT_ROOM",
+        "class_name": "ChatRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ChatRoom"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
