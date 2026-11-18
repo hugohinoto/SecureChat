@@ -4,7 +4,7 @@ const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PASSWORD_ITERATIONS = 100_000;
 const MAX_MESSAGE_LENGTH = 2_000;
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
-const authAttempts = new Map();
+const RATE_LIMIT_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 const encoder = new TextEncoder();
 
@@ -150,22 +150,29 @@ async function createSession(env, userId) {
   return { token, tokenHash };
 }
 
-function checkRateLimit(request, action, maxAttempts) {
+async function checkRateLimit(env, request, action, maxAttempts) {
   const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-  const key = `${action}:${ip}`;
+  // Store only a one-way digest, never the visitor's raw IP address.
+  const bucketKey = await sha256("securechat-rate-limit:" + action + ":" + ip);
   const now = Date.now();
-  let bucket = authAttempts.get(key);
-  if (!bucket || now - bucket.startedAt >= AUTH_WINDOW_MS) {
-    bucket = { startedAt: now, count: 0 };
-    authAttempts.set(key, bucket);
-  }
-  bucket.count += 1;
-  if (authAttempts.size > 5_000) {
-    for (const [entry, value] of authAttempts) {
-      if (now - value.startedAt >= AUTH_WINDOW_MS) authAttempts.delete(entry);
-    }
-  }
-  return bucket.count <= maxAttempts;
+  const resetBefore = now - AUTH_WINDOW_MS;
+  const expiresAt = now + RATE_LIMIT_RETENTION_MS;
+  const bucket = await env.DB.prepare(
+    `INSERT INTO rate_limit_buckets (bucket_key, window_started_at, request_count, expires_at)
+     VALUES (?, ?, 1, ?)
+     ON CONFLICT(bucket_key) DO UPDATE SET
+       request_count = CASE
+         WHEN rate_limit_buckets.window_started_at <= ? THEN 1
+         ELSE rate_limit_buckets.request_count + 1
+       END,
+       window_started_at = CASE
+         WHEN rate_limit_buckets.window_started_at <= ? THEN excluded.window_started_at
+         ELSE rate_limit_buckets.window_started_at
+       END,
+       expires_at = excluded.expires_at
+     RETURNING request_count`
+  ).bind(bucketKey, now, expiresAt, resetBefore, resetBefore).first();
+  return Number(bucket?.request_count ?? (maxAttempts + 1)) <= maxAttempts;
 }
 
 function securityHeaders(response, request) {
@@ -266,7 +273,7 @@ async function handleApi(request, env) {
 
   if (path === "/api/registration-invitations" && method === "POST") {
     if (!sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
-    if (!checkRateLimit(request, "registration-invite", 3)) {
+    if (!await checkRateLimit(env, request, "registration-invite", 3)) {
       return json({ error: "RATE_LIMITED", message: "招待コードの発行回数が多すぎます。時間をおいてください。" }, 429);
     }
     let session;
@@ -297,7 +304,7 @@ async function handleApi(request, env) {
     if (!sameOrigin(request)) {
       return json({ error: "ORIGIN_REJECTED", message: "このリクエストは許可されていません。" }, 403);
     }
-    if (!checkRateLimit(request, "register", 4)) {
+    if (!await checkRateLimit(env, request, "register", 4)) {
       return json({ error: "RATE_LIMITED", message: "試行回数が多すぎます。時間をおいて再試行してください。" }, 429);
     }
 
@@ -365,7 +372,7 @@ async function handleApi(request, env) {
     if (!sameOrigin(request)) {
       return json({ error: "ORIGIN_REJECTED", message: "このリクエストは許可されていません。" }, 403);
     }
-    if (!checkRateLimit(request, "login", 10)) {
+    if (!await checkRateLimit(env, request, "login", 10)) {
       return json({ error: "RATE_LIMITED", message: "試行回数が多すぎます。時間をおいて再試行してください。" }, 429);
     }
 
@@ -413,7 +420,7 @@ async function handleApi(request, env) {
 
   if (path === "/api/auth/delete" && method === "POST") {
     if (!sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
-    if (!checkRateLimit(request, "delete-account", 3)) {
+    if (!await checkRateLimit(env, request, "delete-account", 3)) {
       return json({ error: "RATE_LIMITED", message: "試行回数が多すぎます。時間をおいてください。" }, 429);
     }
     let session;
@@ -508,7 +515,7 @@ async function handleApi(request, env) {
     }
 
     if (path === "/api/contact-invitations" && method === "POST") {
-      if (!checkRateLimit(request, "contact-invite", 10)) return json({ error: "RATE_LIMITED", message: "招待の発行回数が多すぎます。時間をおいて再試行してください。" }, 429);
+      if (!await checkRateLimit(env, request, "contact-invite", 10)) return json({ error: "RATE_LIMITED", message: "招待の発行回数が多すぎます。時間をおいて再試行してください。" }, 429);
       let body;
       try { body = await readJson(request); } catch (error) { return json({ error: error.message }, 400); }
       const userId = normalizeUserId(body?.userId);
