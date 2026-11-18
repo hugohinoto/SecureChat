@@ -119,7 +119,7 @@ async function api(path, options={}) {
       OTP_NOT_CONFIGURED:"サーバー側のOTP秘密鍵が未設定です。管理者の設定が必要です。",
       INVITE_CODE_REQUIRED:"新規登録には招待コードが必要です。",
       INVITE_CODE_INVALID:"招待コードが無効・使用済み・期限切れです。",
-      INVITE_LIMIT_REACHED:"有効な招待コードは最大5件までです。"
+      INVITE_LIMIT_REACHED:"有効な招待コードは最大5件までです。",
       CONVERSATION_NOT_FOUND:"チャットが見つかりません。"
     };
     throw new Error(known[data.error]||data.message||("通信エラー ("+response.status+")"));
