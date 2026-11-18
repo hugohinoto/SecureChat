@@ -3,7 +3,7 @@
 プライバシーを重視したブラウザー向けチャットアプリの開発プロジェクトです。現在は認証付きの開発用プロトタイプです。
 
 > [!WARNING]
-> **まだ安全なプライベートチャットではありません。** アカウント認証とHTTPS/WSSの基盤はありますが、チャット本文はサーバー側で読める平文として全ログインユーザーに中継されます。E2EE、個別チャット、公開鍵登録は未実装です。パスワード以外の機密情報や個人情報は送信しないでください。
+> **セキュリティ検証前の試作版です。** 個別チャットはブラウザー内でECDH P-256 + HKDF + AES-GCMを使う試作暗号化を行いますが、公開鍵の本人確認・署名済みPreKey・前方秘匿性は未実装です。OTPによる相互連絡先確認は追加されていますが、これは暗号鍵の真正性を保証しません。機密情報・個人情報の送信には使用しないでください。
 
 ## Cloudflare構成（新しいデプロイ先）
 
@@ -19,20 +19,23 @@ Render/PostgreSQLの代わりにCloudflare内で完結する構成です。Cloud
 - Liquid Glass風のレスポンシブUI
 - Cloudflare Workers API
 - D1によるユーザー・セッション管理
-- PBKDF2-HMAC-SHA-256によるパスワードハッシュ化（600,000反復、ユーザーごとのランダムソルト）
+- PBKDF2-HMAC-SHA-256によるパスワードハッシュ化（100,000反復、ユーザーごとのランダムソルト）
 - セッショントークンは暗号学的乱数で発行し、D1にはSHA-256ハッシュのみ保存
 - HttpOnly / SameSite=Strict Cookie（HTTPSではSecure・__Host- prefix）
 - Durable Objects WebSocket Hibernation APIによる共通ルーム
 - ログアウト時に該当セッションのWebSocketを切断
 - Originチェック、認証試行回数制限、基本的なセキュリティヘッダー
 - D1マイグレーション
+- 8桁OTPを使った相互連絡先確認（各コード5分有効・1回限り・最大5回試行）
+- OTPはサーバー側のHMAC秘密鍵でハッシュ化し、D1にはコードそのものを保存しない
+- HTTPSへのリダイレクトとHSTS
 
 ## 未実装
 
-- エンドツーエンド暗号化（E2EE）
+- 検証済みライブラリを使った本番品質のE2EE（現在は試作暗号方式）
 - Signal Protocol / PQXDH / Double Ratchet
-- 端末ID・公開鍵・PreKey Bundleの登録と検証
-- 1対1のプライベートチャット
+- 公開鍵の本人確認、署名済みPreKey Bundleの検証、前方秘匿性
+- 端末追加・鍵ローテーション・安全な鍵バックアップ
 - 暗号化ファイル送信
 - アカウント復旧・パスワードリセット
 - 専門家によるセキュリティレビュー
@@ -62,6 +65,24 @@ npx wrangler d1 create securechat-db
 ```bash
 npx wrangler d1 migrations apply securechat-db --remote
 ```
+
+### 3.1 相互OTP連絡先認証の設定
+
+新しい連絡先認証には、Worker Secret `CONTACT_OTP_PEPPER` が必要です。32バイト以上のランダムな値をCloudflare DashboardのWorker「Settings → Variables and Secrets → Add → Secret」に登録してください。値をGitHubやコードに書かないでください。
+
+Node.jsがあるPCでは、次のコマンドで秘密値を生成してWranglerへ登録できます。
+
+```powershell
+node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))" | npx wrangler secret put CONTACT_OTP_PEPPER
+```
+
+D1の新しいスキーマを適用します。
+
+```bash
+npx wrangler d1 migrations apply securechat-db --remote
+```
+
+手動でD1 Consoleを操作している場合は、`database/d1-migrations/0003_mutual_otp_contacts.sql` の内容を一度だけ実行してください。既存の連絡先はOTP確認済みとは見なされず、新しい招待手順が必要です。既存の会話はOTP確認が終わるまで表示・利用できず、確認完了時にその相手との古い会話は削除されます。
 
 ### 4. ローカルで確認
 
@@ -102,6 +123,10 @@ Cloudflare DashboardでWorkers & Pagesから既存WorkerをGitHubリポジトリ
 ## 無料枠と制限
 
 Cloudflare Workers Freeには日次リクエスト数・CPU時間の制限があり、D1 Freeにはデータベース容量と日次読み書き上限があります。Durable Objects Freeにも日次リクエスト・実行時間の上限があります。利用量が上限に達すると、その日の処理が失敗することがあります。パスワードハッシュは600,000反復のPBKDF2を使うため、FreeプランのCPU制限に達する場合はWorkers Paidへの切り替えが必要です。上限・料金は変わるためCloudflare公式料金ページで確認してください。
+
+## 通信の保護
+
+WorkerはHTTPアクセスをHTTPSへリダイレクトし、HTTPS応答にHSTSを付けます。TLSのバージョン選択はWorkerコードではなくCloudflareのエッジ設定で行われます。Cloudflare DashboardのSSL/TLS設定で、利用可能な範囲でTLS 1.3を優先し、最低TLSバージョンを適切に設定してください。
 
 ## セキュリティ方針
 
