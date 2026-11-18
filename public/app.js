@@ -94,6 +94,9 @@ async function api(path, options={}) {
     const known={
       USER_NOT_FOUND:"そのユーザーIDは見つかりません。",
       RECIPIENT_KEY_MISSING:"相手がまだ公開鍵を登録していません。相手に一度ログインしてもらってください。",
+      MUTUAL_CONTACT_REQUIRED:"相手にもあなたを連絡先に追加してもらう必要があります。",
+      CONTACT_PERMISSION_REQUIRED:"連絡先の承認が解除されたため、このチャットは利用できません。",
+      CONTACT_NOT_FOUND:"このユーザーは連絡先にありません。",
       CONVERSATION_NOT_FOUND:"チャットが見つかりません。"
     };
     throw new Error(known[data.error]||data.message||("通信エラー ("+response.status+")"));
@@ -199,8 +202,8 @@ async function signIn(user) {
   clearInterval(refreshTimer);
   refreshTimer=setInterval(()=>{
     if(document.visibilityState==="visible" && activeConversation) loadMessages(false).catch(()=>{});
-    if(document.visibilityState==="visible" && ++sidebarRefreshTick % 4 === 0) refreshSidebar().catch(()=>{});
-  },2500);
+    if(document.visibilityState==="visible" && ++sidebarRefreshTick % 5 === 0) refreshSidebar().catch(()=>{});
+  },1000);
 }
 function startAuthCheck() {
   clearInterval(authTimer);
@@ -273,8 +276,29 @@ async function refreshSidebar() {
   el.contacts.replaceChildren();el.conversations.replaceChildren();
   if(!contacts.length){const p=document.createElement("p");p.className="sidebar-empty";p.textContent="連絡先はまだありません。";el.contacts.append(p);}
   for(const c of contacts){
-    const b=document.createElement("button");b.type="button";b.className="sidebar-user-button";b.textContent=c.userId;
-    b.addEventListener("click",()=>openConversation(c.userId));el.contacts.append(b);
+    const row=document.createElement("div");row.className="contact-row";
+    const open=document.createElement("button");open.type="button";open.className="sidebar-user-button";open.textContent=c.userId;
+    open.addEventListener("click",()=>openConversation(c.userId));
+    const remove=document.createElement("button");remove.type="button";remove.className="contact-remove";remove.textContent="削除";
+    remove.title="@"+c.userId+"を連絡先から削除";
+    remove.setAttribute("aria-label",c.userId+"を連絡先から削除");
+    remove.addEventListener("click",async()=>{
+      if(!confirm("@"+c.userId+"を連絡先から削除しますか？この相手との個別チャットと保存中のメッセージも削除されます。"))return;
+      remove.disabled=true;
+      try {
+        await api("/api/contacts/"+encodeURIComponent(c.userId),{method:"DELETE"});
+        if(activeConversation?.peerUserId===c.userId){
+          activeConversation=null;activeKey=null;lastMessageCreatedAt=0;lastMessageId="";
+          el.chatTitle.textContent="個別チャットを選択";
+          el.chatSubtitle.textContent="連絡先を選択してください";
+          welcome("連絡先を削除しました","別のユーザーを選択してチャットを始められます。");
+          updateSend();
+        }
+        await refreshSidebar();
+        toast("@"+c.userId+"を削除しました。");
+      } catch(error) {toast(error.message);remove.disabled=false;}
+    });
+    row.append(open,remove);el.contacts.append(row);
   }
   if(!conversations.length){const p=document.createElement("p");p.className="sidebar-empty";p.textContent="チャットはまだありません。";el.conversations.append(p);}
   for(const c of conversations){
@@ -356,6 +380,16 @@ el.search.addEventListener("keydown",e=>{if(e.key==="Enter")searchUsers();});
 el.input.addEventListener("input",()=>{el.input.style.height="auto";el.input.style.height=Math.min(el.input.scrollHeight,125)+"px";updateSend();});
 el.input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendMessage();}});
 el.send.addEventListener("click",sendMessage);
+window.addEventListener("focus",()=>{
+  if(!currentUser)return;
+  if(activeConversation)loadMessages(false).catch(()=>{});
+  refreshSidebar().catch(()=>{});
+});
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState!=="visible"||!currentUser)return;
+  if(activeConversation)loadMessages(false).catch(()=>{});
+  refreshSidebar().catch(()=>{});
+});
 
 async function bootstrap() {
   setAuthMode("login");state("connecting","認証確認中");
