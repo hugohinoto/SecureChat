@@ -477,12 +477,12 @@ async function handleApi(request, env) {
       return json({ invitationId: id, code, expiresAt: now + 300000 }, 201);
     }
 
-    const invitationAccept = path.match(/^\\/api\\/contact-invitations\\/([a-f0-9-]+)\\/accept$/i);
+    const invitationAccept = path.match(/^\/api\/contact-invitations\/([a-f0-9-]+)\\/accept$/i);
     if (invitationAccept && method === "POST") {
       let body;
       try { body = await readJson(request); } catch (error) { return json({ error: error.message }, 400); }
       const code = typeof body?.code === "string" ? body.code.trim() : "";
-      if (!/^\\d{8}$/.test(code)) return json({ error: "INVALID_OTP_FORMAT" }, 400);
+      if (!/^\d{8}$/.test(code)) return json({ error: "INVALID_OTP_FORMAT" }, 400);
       const inv = await env.DB.prepare("SELECT * FROM contact_invitations WHERE id=? AND invitee_user_id=?").bind(invitationAccept[1], me).first();
       if (!inv || inv.expires_at <= now) return json({ error: "INVITATION_NOT_FOUND" }, 404);
       if (inv.invitee_verified_at) return json({ error: "INVITATION_ALREADY_VERIFIED" }, 409);
@@ -498,7 +498,7 @@ async function handleApi(request, env) {
       return json({ accepted: true, invitationId: inv.id });
     }
 
-    const responseCodeMatch = path.match(/^\\/api\\/contact-invitations\\/([a-f0-9-]+)\\/response-code$/i);
+    const responseCodeMatch = path.match(/^\/api\/contact-invitations\/([a-f0-9-]+)\\/response-code$/i);
     if (responseCodeMatch && method === "POST") {
       const inv = await env.DB.prepare("SELECT * FROM contact_invitations WHERE id=? AND invitee_user_id=?").bind(responseCodeMatch[1], me).first();
       if (!inv || inv.expires_at <= now) return json({ error: "INVITATION_NOT_FOUND" }, 404);
@@ -511,12 +511,12 @@ async function handleApi(request, env) {
       return json({ code, expiresAt: now + 300000 });
     }
 
-    const invitationConfirm = path.match(/^\\/api\\/contact-invitations\\/([a-f0-9-]+)\\/confirm$/i);
+    const invitationConfirm = path.match(/^\/api\/contact-invitations\/([a-f0-9-]+)\\/confirm$/i);
     if (invitationConfirm && method === "POST") {
       let body;
       try { body = await readJson(request); } catch (error) { return json({ error: error.message }, 400); }
       const code = typeof body?.code === "string" ? body.code.trim() : "";
-      if (!/^\\d{8}$/.test(code)) return json({ error: "INVALID_OTP_FORMAT" }, 400);
+      if (!/^\d{8}$/.test(code)) return json({ error: "INVALID_OTP_FORMAT" }, 400);
       const inv = await env.DB.prepare("SELECT * FROM contact_invitations WHERE id=? AND inviter_user_id=?").bind(invitationConfirm[1], me).first();
       if (!inv || inv.expires_at <= now) return json({ error: "INVITATION_NOT_FOUND" }, 404);
       if (!inv.invitee_verified_at) return json({ error: "INVITATION_NOT_ACCEPTED" }, 403);
@@ -541,7 +541,7 @@ async function handleApi(request, env) {
       return json({ verified: true, userId: peer?.user_id || "" });
     }
 
-    const reissueMatch = path.match(/^\\/api\\/contact-invitations\\/([a-f0-9-]+)\\/reissue$/i);
+    const reissueMatch = path.match(/^\/api\/contact-invitations\/([a-f0-9-]+)\\/reissue$/i);
     if (reissueMatch && method === "POST") {
       const inv = await env.DB.prepare("SELECT * FROM contact_invitations WHERE id=? AND inviter_user_id=?").bind(reissueMatch[1], me).first();
       if (!inv || inv.expires_at <= now) return json({ error: "INVITATION_NOT_FOUND" }, 404);
