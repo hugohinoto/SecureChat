@@ -12,18 +12,23 @@
     "dev": "node --watch server/index.js",
     "db:migrate": "node scripts/migrate.js",
     "test": "node --test",
-    "cf:dev": "wrangler dev",
-    "cf:deploy": "wrangler deploy",
+    "cf:dev": "npm run build:e2ee && wrangler dev",
+    "cf:deploy": "npm run build:e2ee && wrangler deploy",
     "cf:d1:create": "wrangler d1 create securechat-db",
     "cf:d1:migrate:local": "wrangler d1 migrations apply securechat-db --local",
-    "cf:d1:migrate:remote": "wrangler d1 migrations apply securechat-db --remote"
+    "cf:d1:migrate:remote": "wrangler d1 migrations apply securechat-db --remote",
+    "build:e2ee": "esbuild src/e2ee/browser-entry.js --bundle --platform=browser --format=iife --global-name=SecureChatE2EE --target=es2022 --outfile=public/vendor/securechat-e2ee.js",
+    "check:e2ee": "node --check src/e2ee/browser-entry.js"
   },
   "dependencies": {
     "express": "^5.1.0",
     "pg": "^8.23.1",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "@open-e2ee/signal-protocol-sdk": "14.7.0",
+    "idb": "^8.0.3"
   },
   "devDependencies": {
-    "wrangler": "^4.164.0"
+    "wrangler": "^4.164.0",
+    "esbuild": "0.28.2"
   }
 }

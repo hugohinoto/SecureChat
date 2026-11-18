@@ -175,6 +175,29 @@ async function checkRateLimit(env, request, action, maxAttempts) {
   return Number(bucket?.request_count ?? (maxAttempts + 1)) <= maxAttempts;
 }
 
+async function checkSubjectRateLimit(env, action, subject, maxAttempts) {
+  const bucketKey = await sha256("securechat-rate-limit:subject:" + action + ":" + subject);
+  const now = Date.now();
+  const resetBefore = now - AUTH_WINDOW_MS;
+  const expiresAt = now + RATE_LIMIT_RETENTION_MS;
+  const bucket = await env.DB.prepare(
+    `INSERT INTO rate_limit_buckets (bucket_key, window_started_at, request_count, expires_at)
+     VALUES (?, ?, 1, ?)
+     ON CONFLICT(bucket_key) DO UPDATE SET
+       request_count = CASE
+         WHEN rate_limit_buckets.window_started_at <= ? THEN 1
+         ELSE rate_limit_buckets.request_count + 1
+       END,
+       window_started_at = CASE
+         WHEN rate_limit_buckets.window_started_at <= ? THEN excluded.window_started_at
+         ELSE rate_limit_buckets.window_started_at
+       END,
+       expires_at = excluded.expires_at
+     RETURNING request_count`
+  ).bind(bucketKey, now, expiresAt, resetBefore, resetBefore).first();
+  return Number(bucket?.request_count ?? (maxAttempts + 1)) <= maxAttempts;
+}
+
 function securityHeaders(response, request) {
   const url = new URL(request.url);
   const wsOrigin = url.protocol === "https:" ? `wss://${url.host}` : `ws://${url.host}`;
@@ -221,10 +244,42 @@ function sameOrigin(request) {
 }
 
 async function readJson(request) {
-  const length = Number(request.headers.get("Content-Length") ?? 0);
-  if (length > 16 * 1024) throw new Error("REQUEST_TOO_LARGE");
+  const maxBytes = 16 * 1024;
+  const lengthHeader = request.headers.get("Content-Length");
+  if (lengthHeader !== null) {
+    const length = Number(lengthHeader);
+    if (!Number.isSafeInteger(length) || length < 0) throw new Error("INVALID_CONTENT_LENGTH");
+    if (length > maxBytes) throw new Error("REQUEST_TOO_LARGE");
+  }
+
+  if (!request.body) throw new Error("INVALID_JSON");
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
   try {
-    return await request.json();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error("REQUEST_TOO_LARGE");
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error?.message === "REQUEST_TOO_LARGE") throw error;
+    throw new Error("INVALID_JSON");
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
     throw new Error("INVALID_JSON");
   }
@@ -386,6 +441,9 @@ async function handleApi(request, env) {
     const password = body?.password;
     if (!userId || !validPassword(password)) {
       return json({ error: "INVALID_CREDENTIALS", message: "ユーザーIDまたはパスワードが正しくありません。" }, 401);
+    }
+    if (!await checkSubjectRateLimit(env, "login-user", userId, 8)) {
+      return json({ error: "RATE_LIMITED", message: "このアカウントへのログイン試行が多すぎます。15分ほど待ってください。" }, 429);
     }
 
     try {
@@ -553,7 +611,8 @@ async function handleApi(request, env) {
         await env.DB.prepare("UPDATE contact_invitations SET inviter_attempts=inviter_attempts+1 WHERE id=? AND inviter_attempts<5").bind(inv.id).run();
         return json({ error: "OTP_INVALID" }, 400);
       }
-      await env.DB.prepare("UPDATE contact_invitations SET invitee_verified_at=?, inviter_code_hash=NULL, expires_at=? WHERE id=? AND invitee_user_id=?").bind(now, now + 86400000, inv.id, me).run();
+      const consumed = await env.DB.prepare("UPDATE contact_invitations SET invitee_verified_at=?, inviter_code_hash=NULL, expires_at=? WHERE id=? AND invitee_user_id=? AND invitee_verified_at IS NULL AND inviter_code_hash=? AND inviter_code_expires_at>? AND inviter_attempts<5 AND expires_at>?").bind(now, now + 86400000, inv.id, me, inv.inviter_code_hash, now, now).run();
+      if (Number(consumed.meta?.changes ?? 0) !== 1) return json({ error: "INVITATION_ALREADY_VERIFIED" }, 409);
       return json({ accepted: true, invitationId: inv.id });
     }
 
@@ -587,6 +646,8 @@ async function handleApi(request, env) {
         await env.DB.prepare("UPDATE contact_invitations SET invitee_attempts=invitee_attempts+1 WHERE id=? AND invitee_attempts<5").bind(inv.id).run();
         return json({ error: "OTP_INVALID" }, 400);
       }
+      const consumed = await env.DB.prepare("UPDATE contact_invitations SET inviter_verified_at=?, invitee_code_hash=NULL WHERE id=? AND inviter_user_id=? AND inviter_verified_at IS NULL AND invitee_verified_at IS NOT NULL AND invitee_code_hash=? AND invitee_code_expires_at>? AND invitee_attempts<5 AND expires_at>?").bind(now, inv.id, me, inv.invitee_code_hash, now, now).run();
+      if (Number(consumed.meta?.changes ?? 0) !== 1) return json({ error: "INVITATION_ALREADY_VERIFIED" }, 409);
       const [pairA, pairB] = orderedPair(inv.inviter_user_id, inv.invitee_user_id);
       const oldConversations = await env.DB.prepare("SELECT c.id FROM conversations c JOIN conversation_members a ON a.conversation_id=c.id AND a.user_id=? JOIN conversation_members b ON b.conversation_id=c.id AND b.user_id=?").bind(inv.inviter_user_id, inv.invitee_user_id).all();
       await env.DB.batch([
@@ -640,7 +701,13 @@ async function handleApi(request, env) {
       } catch {
         return json({ error: "INVALID_PUBLIC_KEY" }, 400);
       }
-      await env.DB.prepare("INSERT INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, key_version, updated_at) VALUES (?, ?, ?, ?, 1, ?) ON CONFLICT(user_id) DO UPDATE SET identity_public_key=excluded.identity_public_key, signed_prekey=excluded.signed_prekey, signed_prekey_signature=excluded.signed_prekey_signature, key_version=user_keys.key_version+1, updated_at=excluded.updated_at").bind(me, pub, pub, "not-used-static-ecdh-v1", now).run();
+      // Identity keys are immutable in this prototype. Never overwrite an existing
+      // public key from a newly initialized browser: that would orphan old ciphertext.
+      await env.DB.prepare("INSERT OR IGNORE INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, key_version, updated_at) VALUES (?, ?, ?, ?, 1, ?)").bind(me, pub, pub, "not-used-static-ecdh-v1", now).run();
+      const stored = await env.DB.prepare("SELECT identity_public_key FROM user_keys WHERE user_id=?").bind(me).first();
+      if (!stored || stored.identity_public_key !== pub) {
+        return json({ error: "IDENTITY_KEY_CONFLICT", message: "既存の暗号鍵は上書きできません。元の端末の鍵を復元してください。" }, 409);
+      }
       return json({ saved: true });
     }
     if (path.startsWith("/api/keys/") && method === "GET") {
