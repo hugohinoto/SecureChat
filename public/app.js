@@ -168,9 +168,20 @@ async function checkSession() {
   return r.json();
 }
 async function signIn(user) {
-  currentUser=user; el.profile.textContent=user.userId; el.avatar.textContent=Array.from(user.userId)[0]||"U";
-  el.gate.hidden=true; el.form.reset();
-  await ensureIdentity(); await refreshSidebar();
+  currentUser=user;
+  try {
+    await ensureIdentity();
+    await refreshSidebar();
+  } catch (error) {
+    currentUser=null;
+    identityPrivateKey=null;
+    identityPublicKey=null;
+    throw error;
+  }
+  el.profile.textContent=user.userId;
+  el.avatar.textContent=Array.from(user.userId)[0]||"U";
+  el.gate.hidden=true;
+  el.form.reset();
   state("connected","準備完了");
   startAuthCheck();
   clearInterval(refreshTimer);
