@@ -696,12 +696,10 @@ export default {
     }
 
     if (url.pathname === "/ws") {
-      if (request.method !== "GET" || request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
-        return new Response("WebSocket upgrade required", { status: 426 });
-      }
-      const id = env.CHAT_ROOM.idFromName("open-lounge");
-      const stub = env.CHAT_ROOM.get(id);
-      return stub.fetch(request);
+      return securityHeaders(
+        json({ error: "WEBSOCKET_DISABLED", message: "この旧式WebSocket経路は無効です。" }, 404),
+        request
+      );
     }
 
     if (url.pathname.startsWith("/api/")) {
