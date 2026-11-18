@@ -27,7 +27,8 @@ Render/PostgreSQLの代わりにCloudflare内で完結する構成です。Cloud
 - HttpOnly / SameSite=Strict Cookie（HTTPSではSecure・__Host- prefix）
 - Durable Objects WebSocket Hibernation APIによる共通ルーム
 - ログアウト時に該当セッションのWebSocketを切断
-- Originチェック、認証試行回数制限、基本的なセキュリティヘッダー
+- Originチェック、D1共有ストレージによる永続・原子的なIP単位レート制限（15分窓）、基本的なセキュリティヘッダー
+- レート制限キーはIPアドレスのSHA-256ダイジェストで保存し、生IPはD1へ保存しない（期限切れカウンターは定期削除）
 - D1マイグレーション
 - 8桁OTPを使った相互連絡先確認（各コード5分有効・1回限り・最大5回試行）
 - OTPはサーバー側のHMAC秘密鍵でハッシュ化し、D1にはコードそのものを保存しない
@@ -36,6 +37,7 @@ Render/PostgreSQLの代わりにCloudflare内で完結する構成です。Cloud
 ## 未実装
 
 - 検証済みライブラリを使った本番品質のE2EE（現在は試作暗号方式）
+- Turnstile等の対話型チャレンジ（現在のボット対策はD1共有レート制限と招待制）
 - Signal Protocol / PQXDH / Double Ratchet
 - 公開鍵の本人確認、署名済みPreKey Bundleの検証、前方秘匿性
 - 端末追加・鍵ローテーション・安全な鍵バックアップ
@@ -81,7 +83,17 @@ GitHub連携だけでデプロイしている場合も、Workerを更新する�
 
 ログイン後、サイドバーの「アカウント招待」からコードを発行し、新規登録する人へ共有します。登録画面でコードを入力しないとアカウントを作成できません。既存アカウントには影響しません。
 
-### 3.2 相互OTP連絡先認証の設定
+### 3.2 永続レート制限のデータベース移行
+
+認証・登録・招待発行のレート制限をWorkerメモリではなくD1で共有するため、`database/d1-migrations/0005_persistent_rate_limits.sql` を適用してください。Wranglerを使う場合は次を実行します。
+
+```bash
+npx wrangler d1 migrations apply securechat-db --remote
+```
+
+Cloudflare DashboardのD1 Consoleを使う場合は、同ファイルのSQLを一度だけ実行します。これを適用する前に新しいWorkerが動くと、レート制限テーブルがないためAPIがエラーになります。
+
+### 3.3 相互OTP連絡先認証の設定
 
 新しい連絡先認証には、Worker Secret `CONTACT_OTP_PEPPER` が必要です。32バイト以上のランダムな値をCloudflare DashboardのWorker「Settings → Variables and Secrets → Add → Secret」に登録してください。値をGitHubやコードに書かないでください。
 
