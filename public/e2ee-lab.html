@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>SecureChat E2EE v2 導入テスト</title>
+  <style>
+    body{font:16px system-ui,sans-serif;max-width:760px;margin:48px auto;padding:0 20px;background:#0b1020;color:#eef2ff}
+    main{background:#151d33;border:1px solid #33415f;border-radius:16px;padding:24px}
+    input,button{font:inherit;padding:10px;border-radius:8px;border:1px solid #64748b}
+    input{background:#0b1020;color:#fff;max-width:100%}button{cursor:pointer;background:#2563eb;color:white}
+    pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#0b1020;padding:14px;border-radius:8px}
+    .warning{color:#fbbf24}
+  </style>
+  <script src="/vendor/securechat-e2ee.js" defer></script>
+  <script defer>
+    window.addEventListener("DOMContentLoaded", () => {
+      const button = document.querySelector("#start");
+      const output = document.querySelector("#output");
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        output.textContent = "SDKを初期化しています…";
+        try {
+          const userId = document.querySelector("#user-id").value.trim();
+          const client = await SecureChatE2EE.openSecureChatE2EE(userId);
+          output.textContent = JSON.stringify({
+            status: "initialized",
+            localClientCreated: Boolean(client),
+            ...SecureChatE2EE.getSecureChatE2EEStatus()
+          }, null, 2);
+        } catch (error) {
+          output.textContent = "初期化失敗: " + (error?.message || String(error));
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+  </script>
+</head>
+<body>
+  <main>
+    <h1>SecureChat E2EE v2 導入テスト</h1>
+    <p class="warning">検証専用ページです。既存のチャットや本番メッセージには接続しません。</p>
+    <p>アカウントIDを入力して、ブラウザ内の暗号プロトコルクライアントとローカル保存領域を初期化します。</p>
+    <p><label for="user-id">テスト用ユーザーID</label></p>
+    <input id="user-id" maxlength="64" autocomplete="off" placeholder="例: test-user-1">
+    <button id="start" type="button">SDKを初期化</button>
+    <h2>結果</h2>
+    <pre id="output">未実行</pre>
+    <p>この段階では中継サーバーが未接続のため、別のユーザーへの送信はできません。</p>
+  </main>
+</body>
+</html>
