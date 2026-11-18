@@ -320,12 +320,19 @@ async function handleApi(request, env) {
       return json({ error: "INVALID_PASSWORD", message: "パスワードは12〜128文字で入力してください。" }, 400);
     }
 
+    const inviteHash = await sha256(inviteCode);
+    const validInvite = await env.DB.prepare(
+      "SELECT 1 AS ok FROM registration_invites WHERE code_hash=? AND used_at IS NULL AND expires_at>? LIMIT 1"
+    ).bind(inviteHash, Date.now()).first();
+    if (!validInvite) {
+      return json({ error: "INVITE_CODE_INVALID", message: "招待コードが無効・使用済み・期限切れです。" }, 403);
+    }
+
     try {
       const salt = crypto.getRandomValues(new Uint8Array(16));
       const passwordHash = await derivePassword(password, salt);
       const userUuid = crypto.randomUUID();
       const now = Date.now();
-      const inviteHash = await sha256(inviteCode);
       const registration = await env.DB.batch([
         env.DB.prepare(
           "UPDATE registration_invites SET used_at=? WHERE code_hash=? AND used_at IS NULL AND expires_at>? RETURNING id"
