@@ -23,6 +23,7 @@ let currentUser = null, authMode = "login", toastTimer = null, authTimer = null;
 let identityPrivateKey = null, identityPublicKey = null;
 let activeConversation = null, activeKey = null, busy = false, refreshTimer = null;
 let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", sidebarRefreshTick = 0;
+const displayedOtpCodes = new Map();
 
 function toast(message) {
   el.toast.textContent = message;
@@ -267,7 +268,8 @@ function userAction(userId,label,fn) {
   const button=document.createElement("button");button.type="button";button.textContent=label;button.addEventListener("click",fn);
   row.append(name,button);return row;
 }
-function showOtpCode(container,code,expiresAt) {
+function showOtpCode(container,code,expiresAt,key="") {
+  if(key)displayedOtpCodes.set(key,{code,expiresAt});
   const panel=document.createElement("div");panel.className="otp-code-panel";
   const value=document.createElement("strong");value.className="otp-code";value.textContent=code;
   const detail=document.createElement("span");detail.textContent="5分以内に相手へ共有してください。";
@@ -294,15 +296,16 @@ async function searchUsers() {
     }));
   } catch(e){el.results.textContent=e.message;}
 }
-function otpInputRow(parent,placeholder,buttonText,handler) {
+function otpInputRow(parent,placeholder,buttonText,handler,fieldKey) {
   const row=document.createElement("div");row.className="otp-input-row";
-  const input=document.createElement("input");input.type="text";input.inputMode="numeric";input.autocomplete="one-time-code";input.maxLength=8;input.placeholder=placeholder;
+  const input=document.createElement("input");input.type="text";input.inputMode="numeric";input.autocomplete="one-time-code";input.maxLength=8;input.placeholder=placeholder;input.dataset.invitationField=fieldKey;
   input.addEventListener("input",()=>{input.value=input.value.replace(/\D/g,"").slice(0,8);});
   const button=document.createElement("button");button.type="button";button.textContent=buttonText;
   button.addEventListener("click",async()=>{button.disabled=true;try{await handler(input.value);}catch(e){toast(e.message);}finally{button.disabled=false;}});
   row.append(input,button);parent.append(row);
 }
 function renderInvitations(invitations) {
+  const preservedInputs=new Map(Array.from(el.invitations.querySelectorAll("input[data-invitation-field]")).map(input=>[input.dataset.invitationField,input.value]));
   el.invitations.replaceChildren();
   const incoming=invitations.filter(i=>i.invitee_user_id===currentUser.userId);
   const outgoing=invitations.filter(i=>i.inviter_user_id===currentUser.userId);
@@ -316,12 +319,13 @@ function renderInvitations(invitations) {
       otpInputRow(card,"相手の8桁コード","承認",async code=>{
         await api("/api/contact-invitations/"+inv.id+"/accept",{method:"POST",body:{code}});
         toast("招待を承認しました。次に確認コードを発行してください。");await refreshSidebar();
-      });
+      },"accept:"+inv.id);
     } else {
       const note=document.createElement("p");note.textContent="あなたの確認コードを発行し、招待した相手へ共有してください。";card.append(note);
       const button=document.createElement("button");button.type="button";button.className="invitation-action";button.textContent="確認コードを発行 / 再発行";
-      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/response-code",{method:"POST"});showOtpCode(card,result.code,result.expiresAt);}catch(e){toast(e.message);}finally{button.disabled=false;}});
+      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/response-code",{method:"POST"});showOtpCode(card,result.code,result.expiresAt,"incoming:"+inv.id);}catch(e){toast(e.message);}finally{button.disabled=false;}});
       card.append(button);
+      const savedCode=displayedOtpCodes.get("incoming:"+inv.id);if(savedCode)showOtpCode(card,savedCode.code,savedCode.expiresAt);
     }
     el.invitations.append(card);
   }
@@ -332,16 +336,19 @@ function renderInvitations(invitations) {
     if(!inv.invitee_verified_at) {
       const note=document.createElement("p");note.textContent="相手が最初のコードを入力するのを待っています。";card.append(note);
       const button=document.createElement("button");button.type="button";button.className="invitation-action";button.textContent=inv.inviter_code_expires_at>Date.now()?"コードを再発行":"期限切れ：コードを再発行";
-      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/reissue",{method:"POST"});showOtpCode(card,result.code,result.expiresAt);}catch(e){toast(e.message);}finally{button.disabled=false;}});
+      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/reissue",{method:"POST"});showOtpCode(card,result.code,result.expiresAt,"outgoing:"+inv.id);}catch(e){toast(e.message);}finally{button.disabled=false;}});
       card.append(button);
     } else {
       const note=document.createElement("p");note.textContent="相手側の確認が完了しました。相手から受け取ったコードで最終確認します。";card.append(note);
       otpInputRow(card,"相手の8桁コード","最終確認",async code=>{
         const result=await api("/api/contact-invitations/"+inv.id+"/confirm",{method:"POST",body:{code}});
         toast("@"+result.userId+"との相互確認が完了しました。");await refreshSidebar();
-      });
+      },"confirm:"+inv.id);
     }
     el.invitations.append(card);
+  }
+  for(const input of el.invitations.querySelectorAll("input[data-invitation-field]")) {
+    if(preservedInputs.has(input.dataset.invitationField))input.value=preservedInputs.get(input.dataset.invitationField);
   }
 }
 async function refreshSidebar() {
