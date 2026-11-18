@@ -1,0 +1,15 @@
+{
+  "name": "securechat-forward-secrecy-lab",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "test": "node --env-file=.env.local quickstart.mts"
+  },
+  "dependencies": {
+    "@open-e2ee/signal-protocol-sdk": "14.7.0",
+    "idb": "^8.0.3"
+  }
+}
