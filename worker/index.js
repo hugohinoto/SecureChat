@@ -365,10 +365,107 @@ async function handleApi(request, env) {
     }
   }
 
+
+  // Authenticated private-chat API. Only ciphertext is accepted as message content.
+  if (path.startsWith("/api/") && (path === "/api/users/search" || path === "/api/contacts" || path === "/api/contacts/add" || path === "/api/keys" || path.startsWith("/api/keys/") || path === "/api/conversations" || path.startsWith("/api/conversations/"))) {
+    if (method !== "GET" && !sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
+    let session;
+    try { session = await getSession(env, readCookie(request)); } catch { return json({ error: "AUTH_UNAVAILABLE" }, 503); }
+    if (!session) return json({ error: "UNAUTHENTICATED" }, 401);
+    const me = session.id;
+    const now = Date.now();
+
+    if (path === "/api/users/search" && method === "GET") {
+      const q = (url.searchParams.get("q") || "").trim().toLowerCase();
+      if (!/^[a-z0-9_]{1,32}$/.test(q)) return json({ users: [] });
+      const rows = await env.DB.prepare("SELECT user_id FROM users WHERE user_id LIKE ? AND id <> ? ORDER BY user_id LIMIT 20").bind(q + "%", me).all();
+      return json({ users: rows.results.map((r) => ({ userId: r.user_id })) });
+    }
+    if (path === "/api/contacts" && method === "GET") {
+      const rows = await env.DB.prepare("SELECT u.user_id FROM contacts c JOIN users u ON u.id=c.contact_user_id WHERE c.owner_user_id=? ORDER BY u.user_id").bind(me).all();
+      return json({ contacts: rows.results.map((r) => ({ userId: r.user_id })) });
+    }
+    if (path === "/api/contacts/add" && method === "POST") {
+      const body = await readJson(request);
+      const userId = normalizeUserId(body?.userId);
+      if (!userId) return json({ error: "INVALID_USER_ID" }, 400);
+      const target = await env.DB.prepare("SELECT id FROM users WHERE user_id=?").bind(userId).first();
+      if (!target) return json({ error: "USER_NOT_FOUND" }, 404);
+      if (target.id === me) return json({ error: "SELF_CONTACT" }, 400);
+      await env.DB.prepare("INSERT OR IGNORE INTO contacts (owner_user_id, contact_user_id, created_at) VALUES (?, ?, ?)").bind(me, target.id, now).run();
+      return json({ added: true, userId });
+    }
+    if (path === "/api/keys" && method === "PUT") {
+      const body = await readJson(request);
+      const pub = body?.identityPublicKey;
+      if (typeof pub !== "string" || pub.length < 20 || pub.length > 4096) return json({ error: "INVALID_PUBLIC_KEY" }, 400);
+      await env.DB.prepare("INSERT INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, key_version, updated_at) VALUES (?, ?, ?, ?, 1, ?) ON CONFLICT(user_id) DO UPDATE SET identity_public_key=excluded.identity_public_key, signed_prekey=excluded.signed_prekey, signed_prekey_signature=excluded.signed_prekey_signature, key_version=user_keys.key_version+1, updated_at=excluded.updated_at").bind(me, pub, pub, "client-managed-v1", now).run();
+      return json({ saved: true });
+    }
+    if (path.startsWith("/api/keys/") && method === "GET") {
+      const userId = normalizeUserId(decodeURIComponent(path.slice("/api/keys/".length)));
+      if (!userId) return json({ error: "INVALID_USER_ID" }, 400);
+      const key = await env.DB.prepare("SELECT k.identity_public_key FROM user_keys k JOIN users u ON u.id=k.user_id WHERE u.user_id=?").bind(userId).first();
+      return key ? json({ userId, identityPublicKey: key.identity_public_key }) : json({ error: "KEY_NOT_FOUND" }, 404);
+    }
+    if (path === "/api/conversations" && method === "POST") {
+      const body = await readJson(request);
+      const peerId = normalizeUserId(body?.recipientUserId);
+      const mine = body?.myKeyEnvelope;
+      const theirs = body?.theirKeyEnvelope;
+      if (!peerId || typeof mine !== "string" || typeof theirs !== "string" || mine.length > 8192 || theirs.length > 8192) return json({ error: "INVALID_CONVERSATION" }, 400);
+      const peer = await env.DB.prepare("SELECT id FROM users WHERE user_id=?").bind(peerId).first();
+      if (!peer) return json({ error: "USER_NOT_FOUND" }, 404);
+      if (peer.id === me) return json({ error: "SELF_CONVERSATION" }, 400);
+      const peerKey = await env.DB.prepare("SELECT user_id FROM user_keys WHERE user_id=?").bind(peer.id).first();
+      if (!peerKey) return json({ error: "RECIPIENT_KEY_MISSING" }, 409);
+      const existing = await env.DB.prepare("SELECT c.id FROM conversations c JOIN conversation_members a ON a.conversation_id=c.id AND a.user_id=? JOIN conversation_members b ON b.conversation_id=c.id AND b.user_id=? LIMIT 1").bind(me, peer.id).first();
+      if (existing) return json({ conversationId: existing.id, existing: true });
+      const id = crypto.randomUUID();
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO conversations (id, created_by, created_at, expires_in_seconds) VALUES (?, ?, ?, 3600)").bind(id, me, now),
+        env.DB.prepare("INSERT INTO conversation_members (conversation_id, user_id, joined_at) VALUES (?, ?, ?)").bind(id, me, now),
+        env.DB.prepare("INSERT INTO conversation_members (conversation_id, user_id, joined_at) VALUES (?, ?, ?)").bind(id, peer.id, now),
+        env.DB.prepare("INSERT INTO conversation_keys (conversation_id, user_id, key_envelope, created_at) VALUES (?, ?, ?, ?)").bind(id, me, mine, now),
+        env.DB.prepare("INSERT INTO conversation_keys (conversation_id, user_id, key_envelope, created_at) VALUES (?, ?, ?, ?)").bind(id, peer.id, theirs, now)
+      ]);
+      return json({ conversationId: id, existing: false }, 201);
+    }
+    if (path === "/api/conversations" && method === "GET") {
+      const rows = await env.DB.prepare("SELECT c.id, u.user_id AS peer_user_id, c.created_at FROM conversations c JOIN conversation_members mine ON mine.conversation_id=c.id AND mine.user_id=? JOIN conversation_members peer ON peer.conversation_id=c.id AND peer.user_id<>? JOIN users u ON u.id=peer.user_id ORDER BY c.created_at DESC").bind(me, me).all();
+      return json({ conversations: rows.results });
+    }
+    const match = path.match(/^\/api\/conversations\/([a-f0-9-]+)(?:\/(messages|key))?$/i);
+    if (match) {
+      const id = match[1], sub = match[2] || "";
+      const member = await env.DB.prepare("SELECT 1 AS ok FROM conversation_members WHERE conversation_id=? AND user_id=?").bind(id, me).first();
+      if (!member) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
+      if (sub === "key" && method === "GET") {
+        const row = await env.DB.prepare("SELECT key_envelope FROM conversation_keys WHERE conversation_id=? AND user_id=?").bind(id, me).first();
+        return row ? json({ keyEnvelope: row.key_envelope }) : json({ error: "KEY_ENVELOPE_NOT_FOUND" }, 404);
+      }
+      if (sub === "messages" && method === "GET") {
+        await env.DB.prepare("DELETE FROM encrypted_messages WHERE conversation_id=? AND expires_at<=?").bind(id, now).run();
+        const rows = await env.DB.prepare("SELECT id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at FROM encrypted_messages WHERE conversation_id=? AND expires_at>? ORDER BY created_at LIMIT 500").bind(id, now).all();
+        return json({ messages: rows.results });
+      }
+      if (sub === "messages" && method === "POST") {
+        const body = await readJson(request);
+        if (typeof body?.ciphertext !== "string" || body.ciphertext.length < 1 || body.ciphertext.length > 12000 || typeof body?.nonce !== "string" || body.nonce.length > 128 || body.algorithm !== "AES-GCM-256") return json({ error: "CIPHERTEXT_REQUIRED" }, 400);
+        const msgId = crypto.randomUUID(), expires = now + 3600000;
+        await env.DB.prepare("INSERT INTO encrypted_messages (id, conversation_id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at) VALUES (?, ?, ?, ?, ?, 'AES-GCM-256', ?, ?)").bind(msgId, id, me, body.ciphertext, body.nonce, now, expires).run();
+        return json({ id: msgId, createdAt: now, expiresAt: expires }, 201);
+      }
+    }
+  }
+
   return json({ error: "NOT_FOUND", path }, 404);
 }
 
 export default {
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(env.DB.prepare("DELETE FROM encrypted_messages WHERE expires_at <= ?").bind(Date.now()).run());
+  },
   async fetch(request, env) {
     const url = new URL(request.url);
 
