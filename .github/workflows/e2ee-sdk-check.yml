@@ -1,0 +1,26 @@
+name: E2EE SDK integration checks
+
+on:
+  push:
+    branches:
+      - security/e2ee-local-cloudflare-evaluation
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  browser-sdk-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install
+      - name: Check E2EE bootstrap syntax
+        run: npm run check:e2ee
+      - name: Build browser SDK bundle
+        run: npm run build:e2ee
+      - name: Run existing tests
+        run: npm test
