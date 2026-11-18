@@ -441,7 +441,7 @@ async function handleApi(request, env) {
       await env.DB.prepare("INSERT OR IGNORE INTO contacts (owner_user_id, contact_user_id, created_at) VALUES (?, ?, ?)").bind(me, target.id, now).run();
       return json({ added: true, userId });
     }
-    const removeContactMatch = path.match(/^\\/api\\/contacts\\/([a-z0-9_]{3,32})$/);
+    const removeContactMatch = path.match(new RegExp("^/api/contacts/([a-z0-9_]{3,32})$"));
     if (removeContactMatch && method === "DELETE") {
       const userId = normalizeUserId(removeContactMatch[1]);
       const target = await env.DB.prepare("SELECT id FROM users WHERE user_id=?").bind(userId).first();
