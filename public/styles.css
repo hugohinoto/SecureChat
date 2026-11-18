@@ -610,3 +610,17 @@ button { color: inherit; }
   .profile-card { margin-top:12px; }
   .chat-panel { height:calc(66dvh - 16px); min-height:390px; }
 }
+
+
+.delete-account-button {
+  width:100%; margin-top:8px; padding:8px 10px;
+  border:1px solid rgba(255,116,133,.24); border-radius:10px;
+  color:#ff9aa8; background:rgba(112,30,49,.12);
+  font:inherit; font-size:10px; cursor:pointer;
+  transition:background .18s ease,border-color .18s ease;
+}
+.delete-account-button:hover {
+  border-color:rgba(255,116,133,.48);
+  background:rgba(150,40,60,.22);
+}
+.delete-account-button:disabled { opacity:.5; cursor:wait; }
