@@ -38,22 +38,19 @@
         <span class="workspace-dot" aria-hidden="true"></span>
       </div>
 
-      <div class="sidebar-heading">
-        <span>チャット</span>
-        <span class="count-pill">01</span>
+      <div class="sidebar-heading"><span>ユーザーを検索</span></div>
+      <div class="user-search">
+        <input id="user-search-input" type="text" maxlength="32" placeholder="ユーザーIDを入力" autocomplete="off">
+        <button id="user-search-button" type="button">検索</button>
       </div>
-      <button class="room-card active" type="button" aria-current="page">
-        <span class="room-avatar">#</span>
-        <span class="room-copy">
-          <strong>オープンラウンジ</strong>
-          <small>共通テストルーム</small>
-        </span>
-        <span class="room-indicator" aria-hidden="true"></span>
-      </button>
-
+      <div class="user-search-results" id="user-search-results" aria-live="polite"></div>
+      <div class="sidebar-heading"><span>連絡先</span><span class="count-pill" id="contact-count">0</span></div>
+      <div class="contact-list" id="contact-list"><p class="sidebar-empty">連絡先はまだありません。</p></div>
+      <div class="sidebar-heading"><span>個別チャット</span><span class="count-pill" id="conversation-count">0</span></div>
+      <div class="conversation-list" id="conversation-list"><p class="sidebar-empty">チャットはまだありません。</p></div>
       <div class="sidebar-note">
         <span class="note-icon" aria-hidden="true">ⓘ</span>
-        <p>ログイン中の全ユーザーが参加する共通テストルームです。個別チャットはまだありません。</p>
+        <p>メッセージは端末内で暗号化され、送信から1時間後に削除されます。鍵の検証と前方秘匿性は未実装の試作方式です。</p>
       </div>
 
       <div class="sidebar-spacer"></div>
@@ -77,8 +74,8 @@
         <div class="room-title-wrap">
           <div class="room-title-avatar">#</div>
           <div>
-            <h1>オープンラウンジ</h1>
-            <p>ログインユーザー共通 <span class="title-separator">·</span> メッセージは保存されません</p>
+            <h1 id="chat-title">個別チャットを選択</h1>
+            <p id="chat-subtitle">ユーザーを検索するか、連絡先を選択してください</p>
           </div>
         </div>
         <div class="header-actions">
@@ -93,10 +90,10 @@
       <section class="security-banner" aria-label="重要なお知らせ">
         <div class="security-symbol" aria-hidden="true">!</div>
         <div class="security-copy">
-          <strong>暗号化はまだ実装されていません</strong>
-          <span>メッセージ本文はサーバーを経由して平文で中継されます。パスワードや個人情報など、秘密の内容は送信しないでください。</span>
+          <strong id="security-title">試作版の暗号化</strong>
+          <span id="security-description">会話ごとのECDH鍵を使ってブラウザー内で暗号化します。鍵の本人確認・前方秘匿性はまだありません。</span>
         </div>
-        <span class="banner-tag">NOT E2EE</span>
+        <span class="banner-tag" id="security-tag">PROTOTYPE</span>
       </section>
 
       <div class="timeline" id="message-list" aria-live="polite" aria-relevant="additions">
@@ -109,7 +106,7 @@
             </svg>
           </div>
           <h2>会話のための、静かな場所。</h2>
-          <p>SecureChatの開発用ルームです。認証機能を追加しました。E2EEが完成するまでは秘密の内容を送信しないでください。</p>
+          <p>連絡先を追加して、1対1の暗号化チャットを始めましょう。メッセージは送信から1時間で削除されます。</p>
           <div class="welcome-meta">
             <span class="welcome-line"></span>
             <span>ここから会話を始めましょう</span>
@@ -121,7 +118,7 @@
       <footer class="composer-area">
         <div class="composer-hint">
           <span class="hint-dot"></span>
-          <span>共通テストルーム — 送信内容は暗号化されません</span>
+          <span id="composer-hint">個別チャットを選択すると送信できます</span>
         </div>
         <div class="composer">
           <textarea id="message-input" rows="1" maxlength="2000" placeholder="メッセージを入力…" aria-label="メッセージを入力" disabled></textarea>
@@ -138,7 +135,7 @@
             </div>
           </div>
         </div>
-        <div class="footer-caption">SecureChat Lab <span>·</span> 開発中のため、まだ安全な通信には使用できません</div>
+        <div class="footer-caption">SecureChat <span>·</span> 試作暗号方式・鍵の本人確認は未実装</div>
       </footer>
     </section>
   </main>
