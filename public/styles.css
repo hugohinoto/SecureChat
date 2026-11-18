@@ -584,6 +584,14 @@ button { color: inherit; }
 .user-result span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .user-result button { min-height:26px; }
 .contact-list,.conversation-list { display:flex; flex-direction:column; gap:4px; max-height:145px; overflow:auto; }
+.contact-row { display:flex; align-items:center; gap:5px; min-width:0; }
+.contact-row .sidebar-user-button { flex:1; min-width:0; }
+.contact-remove {
+  flex:0 0 auto; min-height:30px; padding:0 8px; border:1px solid rgba(237,142,155,.18);
+  border-radius:9px; color:#e6a2ac; background:rgba(237,142,155,.055); font-size:9px; cursor:pointer;
+}
+.contact-remove:hover { border-color:rgba(237,142,155,.38); background:rgba(237,142,155,.12); }
+.contact-remove:disabled { opacity:.5; cursor:wait; }
 .sidebar-user-button {
   width:100%; padding:9px 10px; border:1px solid transparent; border-radius:10px;
   color:#dce7fb; text-align:left; background:transparent; font-size:10px; cursor:pointer;
