@@ -216,9 +216,11 @@ async function handleApi(request, env) {
         status: "ok",
         database: "connected",
         authentication: true,
+        clientSideEncryption: true,
         endToEndEncryption: false,
-        messagePersistence: false,
-        mode: "Cloudflare Workers prototype"
+        messagePersistence: true,
+        messageRetentionSeconds: 3600,
+        mode: "Client-encrypted private-chat prototype; identity verification and forward secrecy are not implemented"
       });
     } catch {
       return json({ status: "unavailable", database: "unavailable" }, 503);
@@ -452,8 +454,26 @@ async function handleApi(request, env) {
         return json({ messages: rows.results });
       }
       if (sub === "messages" && method === "POST") {
-        const body = await readJson(request);
-        if (typeof body?.ciphertext !== "string" || body.ciphertext.length < 1 || body.ciphertext.length > 12000 || typeof body?.nonce !== "string" || body.nonce.length > 128 || body.algorithm !== "AES-GCM-256") return json({ error: "CIPHERTEXT_REQUIRED" }, 400);
+        let body;
+        try { body = await readJson(request); }
+        catch (error) { return json({ error: error.message }, 400); }
+        if (typeof body?.ciphertext !== "string" ||
+            body.ciphertext.length < 24 || body.ciphertext.length > 12000 ||
+            !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(body.ciphertext) ||
+            typeof body?.nonce !== "string" ||
+            body.algorithm !== "AES-GCM-256") {
+          return json({ error: "CIPHERTEXT_REQUIRED" }, 400);
+        }
+        let cipherBytes, nonceBytes;
+        try {
+          cipherBytes = Uint8Array.from(atob(body.ciphertext), (char) => char.charCodeAt(0));
+          nonceBytes = Uint8Array.from(atob(body.nonce), (char) => char.charCodeAt(0));
+        } catch {
+          return json({ error: "INVALID_CIPHERTEXT_ENCODING" }, 400);
+        }
+        if (cipherBytes.length < 16 || cipherBytes.length > 9000 || nonceBytes.length !== 12) {
+          return json({ error: "INVALID_CIPHERTEXT_SIZE" }, 400);
+        }
         const msgId = crypto.randomUUID(), expires = now + 3600000;
         await env.DB.prepare("INSERT INTO encrypted_messages (id, conversation_id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at) VALUES (?, ?, ?, ?, ?, 'AES-GCM-256', ?, ?)").bind(msgId, id, me, body.ciphertext, body.nonce, now, expires).run();
         return json({ id: msgId, createdAt: now, expiresAt: expires }, 201);
