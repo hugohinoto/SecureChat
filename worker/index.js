@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
-const PASSWORD_ITERATIONS = 600_000;
+const PASSWORD_ITERATIONS = 100_000;
 const MAX_MESSAGE_LENGTH = 2_000;
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const authAttempts = new Map();
