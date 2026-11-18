@@ -7,7 +7,6 @@ const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const authAttempts = new Map();
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 function json(data, status = 200, headers = {}) {
   return Response.json(data, {
@@ -430,9 +429,11 @@ export class ChatRoom extends DurableObject {
       clientId,
       userId: session.user_id,
       tokenHash,
+      expiresAt: session.expires_at,
       windowStartedAt: Date.now(),
       messageCount: 0
     });
+    await this.scheduleNextExpiry();
     server.send(JSON.stringify({
       type: "server:hello",
       clientId,
@@ -447,6 +448,10 @@ export class ChatRoom extends DurableObject {
     const attachment = socket.deserializeAttachment();
     if (!attachment) {
       socket.close(1011, "Connection state missing");
+      return;
+    }
+    if (Date.now() >= attachment.expiresAt) {
+      socket.close(4001, "Session expired");
       return;
     }
 
@@ -520,8 +525,31 @@ export class ChatRoom extends DurableObject {
     }
   }
 
-  webSocketClose(socket) {
+  async webSocketClose(socket) {
     try { socket.close(); } catch { /* The runtime may already have closed it. */ }
+    await this.scheduleNextExpiry();
+  }
+
+  async alarm() {
+    const now = Date.now();
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = socket.deserializeAttachment();
+      if (attachment && now >= attachment.expiresAt) {
+        socket.close(4001, "Session expired");
+      }
+    }
+    await this.scheduleNextExpiry();
+  }
+
+  async scheduleNextExpiry() {
+    const expiries = this.ctx.getWebSockets()
+      .map((socket) => socket.deserializeAttachment()?.expiresAt)
+      .filter((value) => Number.isFinite(value) && value > Date.now());
+    if (expiries.length === 0) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    await this.ctx.storage.setAlarm(Math.min(...expiries));
   }
 
   webSocketError(socket) {
