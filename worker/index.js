@@ -240,6 +240,7 @@ async function handleApi(request, env) {
         messagePersistence: true,
         messageRetentionSeconds: 3600,
         contactVerification: "mutual-one-time-code",
+        contactVerificationConfigured: typeof env.CONTACT_OTP_PEPPER === "string" && env.CONTACT_OTP_PEPPER.length >= 32,
         mode: "Client-encrypted private-chat prototype; public-key identity verification and forward secrecy are not implemented"
       });
     } catch {
