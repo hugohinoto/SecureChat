@@ -297,7 +297,7 @@ async function searchUsers() {
 function otpInputRow(parent,placeholder,buttonText,handler) {
   const row=document.createElement("div");row.className="otp-input-row";
   const input=document.createElement("input");input.type="text";input.inputMode="numeric";input.autocomplete="one-time-code";input.maxLength=8;input.placeholder=placeholder;
-  input.addEventListener("input",()=>{input.value=input.value.replace(/\\D/g,"").slice(0,8);});
+  input.addEventListener("input",()=>{input.value=input.value.replace(/\D/g,"").slice(0,8);});
   const button=document.createElement("button");button.type="button";button.textContent=buttonText;
   button.addEventListener("click",async()=>{button.disabled=true;try{await handler(input.value);}catch(e){toast(e.message);}finally{button.disabled=false;}});
   row.append(input,button);parent.append(row);
