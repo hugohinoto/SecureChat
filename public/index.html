@@ -44,6 +44,11 @@
         <button id="user-search-button" type="button">検索</button>
       </div>
       <div class="user-search-results" id="user-search-results" aria-live="polite"></div>
+      <div class="sidebar-heading"><span>アカウント招待</span></div>
+      <div class="user-search-results" id="registration-invite-result">
+        <button class="registration-invite-button" id="registration-invite-button" type="button">新しい招待コードを発行</button>
+        <p class="sidebar-empty">コードは24時間有効・1回限りです。有効なコードは最大5件まで発行できます。</p>
+      </div>
       <div class="sidebar-heading"><span>ワンタイムコード招待</span></div>
       <div class="invitation-list" id="invitation-list" aria-live="polite"><p class="sidebar-empty">進行中の招待はありません。</p></div>
       <div class="sidebar-heading"><span>連絡先</span><span class="count-pill" id="contact-count">0</span></div>
@@ -170,6 +175,12 @@
         <label class="auth-label" for="auth-password">パスワード</label>
         <input class="auth-input" id="auth-password" name="password" type="password" required maxlength="128" autocomplete="current-password" placeholder="パスワードを入力">
         <div class="auth-field-hint" id="password-hint">登録時は12文字以上にしてください。</div>
+
+        <div id="invite-code-field" hidden>
+          <label class="auth-label" for="auth-invite-code">招待コード</label>
+          <input class="auth-input" id="auth-invite-code" name="inviteCode" type="text" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="受け取った招待コードを入力">
+          <div class="auth-field-hint">既存ユーザーから受け取ったコードが必要です。</div>
+        </div>
 
         <p class="auth-error" id="auth-error" role="alert" aria-live="polite"></p>
         <button class="auth-submit" id="auth-submit" type="submit">ログイン</button>
