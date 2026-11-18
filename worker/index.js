@@ -494,7 +494,7 @@ async function handleApi(request, env) {
         await env.DB.prepare("UPDATE contact_invitations SET inviter_attempts=inviter_attempts+1 WHERE id=? AND inviter_attempts<5").bind(inv.id).run();
         return json({ error: "OTP_INVALID" }, 400);
       }
-      await env.DB.prepare("UPDATE contact_invitations SET invitee_verified_at=?, inviter_code_hash=NULL WHERE id=? AND invitee_user_id=?").bind(now, inv.id, me).run();
+      await env.DB.prepare("UPDATE contact_invitations SET invitee_verified_at=?, inviter_code_hash=NULL, expires_at=? WHERE id=? AND invitee_user_id=?").bind(now, now + 86400000, inv.id, me).run();
       return json({ accepted: true, invitationId: inv.id });
     }
 
@@ -507,7 +507,7 @@ async function handleApi(request, env) {
       let code, digest;
       try { code = createOtp(); digest = await otpDigest(env, inv.id, "invitee", code); }
       catch { return json({ error: "OTP_NOT_CONFIGURED" }, 503); }
-      await env.DB.prepare("UPDATE contact_invitations SET invitee_code_hash=?, invitee_code_expires_at=?, invitee_attempts=0 WHERE id=? AND invitee_user_id=?").bind(digest, now + 300000, inv.id, me).run();
+      await env.DB.prepare("UPDATE contact_invitations SET invitee_code_hash=?, invitee_code_expires_at=?, invitee_attempts=0, expires_at=? WHERE id=? AND invitee_user_id=?").bind(digest, now + 300000, now + 86400000, inv.id, me).run();
       return json({ code, expiresAt: now + 300000 });
     }
 
