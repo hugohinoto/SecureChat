@@ -99,6 +99,8 @@ async function api(path, options={}) {
       CONTACT_PERMISSION_REQUIRED:"OTPによる連絡先確認が解除されたため、このチャットは利用できません。",
       CONTACT_NOT_FOUND:"このユーザーは連絡先にありません。",
       OTP_INVALID:"コードが正しくありません。",
+      OTP_NOT_CONFIGURED:"サーバー側のOTP秘密鍵が未設定です。Cloudflare WorkerのSecretにCONTACT_OTP_PEPPERを登録してください。",
+      INVITATION_ALREADY_ACCEPTED:"相手は既に最初のコードを確認しています。",
       OTP_EXPIRED:"コードの有効期限が切れました。相手に新しいコードを発行してもらってください。",
       OTP_ATTEMPTS_EXCEEDED:"入力回数の上限に達しました。新しい招待からやり直してください。",
       INVALID_OTP_FORMAT:"8桁の数字を入力してください。",
