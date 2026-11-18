@@ -22,7 +22,7 @@ const STORE = "identity";
 let currentUser = null, authMode = "login", toastTimer = null, authTimer = null;
 let identityPrivateKey = null, identityPublicKey = null;
 let activeConversation = null, activeKey = null, busy = false, refreshTimer = null;
-let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "";
+let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", sidebarRefreshTick = 0;
 
 function toast(message) {
   el.toast.textContent = message;
@@ -143,11 +143,11 @@ function welcome(title,description) {
   const p=document.createElement("p"); p.textContent=description;
   card.append(h,p); el.list.append(card);
 }
-function appendMessage(text,senderId,createdAt,expiresAt) {
+function appendMessage(text,senderId,createdAt,expiresAt,messageId="") {
   el.list.querySelector(".welcome-card")?.remove();
   const own=senderId===currentUser.id;
   const row=document.createElement("article"); row.className=own?"message-row own":"message-row";
-  row.dataset.messageId=arguments[5]||"";
+  row.dataset.messageId=messageId;
   row.dataset.expiresAt=String(expiresAt);
   const avatar=document.createElement("div"); avatar.className="message-avatar";
   avatar.textContent=Array.from(own?currentUser.userId:activeConversation.peerUserId)[0]||"U";
@@ -199,7 +199,7 @@ async function signIn(user) {
   clearInterval(refreshTimer);
   refreshTimer=setInterval(()=>{
     if(document.visibilityState==="visible" && activeConversation) loadMessages(false).catch(()=>{});
-    if(document.visibilityState==="visible") refreshSidebar().catch(()=>{});
+    if(document.visibilityState==="visible" && ++sidebarRefreshTick % 4 === 0) refreshSidebar().catch(()=>{});
   },2500);
 }
 function startAuthCheck() {
