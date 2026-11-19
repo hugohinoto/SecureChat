@@ -132,7 +132,7 @@ async function getSession(env, token) {
   if (!token || token.length > 128) return null;
   const tokenHash = await sha256(token);
   return env.DB.prepare(
-    `SELECT users.id, users.user_id, sessions.expires_at
+    `SELECT users.id, users.user_id, users.is_admin, sessions.created_at, sessions.expires_at
        FROM sessions
        JOIN users ON users.id = sessions.user_id
       WHERE sessions.token_hash = ? AND sessions.expires_at > ?
@@ -230,10 +230,168 @@ async function readJson(request) {
   }
 }
 
+async function writeAdminAudit(env, session, action, targetUserId = null, details = {}) {
+  await env.DB.prepare(
+    "INSERT INTO admin_audit_logs (id, admin_user_id, action, target_user_id, details_json, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+  ).bind(crypto.randomUUID(), session.id, action, targetUserId, JSON.stringify(details).slice(0, 4000), Date.now()).run();
+}
+
 async function handleApi(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
+
+  if (path.startsWith("/api/admin/")) {
+    if (method !== "GET" && !sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
+    let admin;
+    try { admin = await getSession(env, readCookie(request)); }
+    catch { return json({ error: "AUTH_UNAVAILABLE" }, 503); }
+    if (!admin) return json({ error: "UNAUTHENTICATED" }, 401);
+    if (Number(admin.is_admin) !== 1) return json({ error: "ADMIN_REQUIRED" }, 403);
+    if (Date.now() - Number(admin.created_at) > 15 * 60 * 1000) {
+      return json({ error: "ADMIN_REAUTH_REQUIRED", message: "管理者操作には直近15分以内のログインが必要です。ログアウトして再ログインしてください。" }, 428);
+    }
+    if (method !== "GET" && !await checkRateLimit(env, request, "admin-write", 30)) {
+      return json({ error: "RATE_LIMITED" }, 429);
+    }
+
+    try {
+      if (path === "/api/admin/overview" && method === "GET") {
+        const now = Date.now();
+        const [users, admins, sessions, messages, invitations, announcements, audit] = await Promise.all([
+          env.DB.prepare("SELECT COUNT(*) AS count FROM users").first(),
+          env.DB.prepare("SELECT COUNT(*) AS count FROM users WHERE is_admin=1").first(),
+          env.DB.prepare("SELECT COUNT(*) AS count FROM sessions WHERE expires_at>?").bind(now).first(),
+          env.DB.prepare("SELECT COUNT(*) AS count FROM encrypted_messages WHERE expires_at>?").bind(now).first(),
+          env.DB.prepare("SELECT COUNT(*) AS count FROM contact_invitations WHERE expires_at>?").bind(now).first(),
+          env.DB.prepare("SELECT COUNT(*) AS count FROM announcements WHERE published=1").first(),
+          env.DB.prepare("SELECT COUNT(*) AS count FROM admin_audit_logs WHERE created_at>?").bind(now - 24 * 60 * 60 * 1000).first()
+        ]);
+        return json({
+          database: "connected",
+          users: Number(users?.count || 0),
+          administrators: Number(admins?.count || 0),
+          activeSessions: Number(sessions?.count || 0),
+          activeMessages: Number(messages?.count || 0),
+          pendingInvitations: Number(invitations?.count || 0),
+          publishedAnnouncements: Number(announcements?.count || 0),
+          adminActions24h: Number(audit?.count || 0),
+          checkedAt: now,
+          workerErrors: "Cloudflare Observabilityで確認してください。Workerログはこの管理APIからは取得できません。"
+        });
+      }
+
+      if (path === "/api/admin/users" && method === "GET") {
+        const q = (url.searchParams.get("q") || "").trim().toLowerCase().slice(0, 32);
+        const page = Math.max(0, Math.min(1000, Number.parseInt(url.searchParams.get("page") || "0", 10) || 0));
+        const filter = /^[a-z0-9_]{1,32}$/.test(q) ? q : "";
+        const count = await env.DB.prepare(
+          filter ? "SELECT COUNT(*) AS count FROM users WHERE user_id LIKE ?" : "SELECT COUNT(*) AS count FROM users"
+        ).bind(...(filter ? [filter + "%"] : [])).first();
+        const rows = await env.DB.prepare(
+          filter
+            ? "SELECT id, user_id, is_admin, created_at, last_login_at FROM users WHERE user_id LIKE ? ORDER BY created_at DESC LIMIT 50 OFFSET ?"
+            : "SELECT id, user_id, is_admin, created_at, last_login_at FROM users ORDER BY created_at DESC LIMIT 50 OFFSET ?"
+        ).bind(...(filter ? [filter + "%", page * 50] : [page * 50])).all();
+        return json({ users: rows.results || [], total: Number(count?.count || 0), page, pageSize: 50 });
+      }
+
+      if (path === "/api/admin/users/delete" && method === "POST") {
+        let body;
+        try { body = await readJson(request); } catch (error) { return json({ error: error.message }, 400); }
+        const targetId = typeof body?.userId === "string" ? body.userId : "";
+        const confirmation = typeof body?.confirmUserId === "string" ? body.confirmUserId.trim().toLowerCase() : "";
+        if (!targetId || targetId.length > 64) return json({ error: "INVALID_USER" }, 400);
+        const target = await env.DB.prepare("SELECT id, user_id, is_admin FROM users WHERE id=?").bind(targetId).first();
+        if (!target) return json({ error: "USER_NOT_FOUND" }, 404);
+        if (target.id === admin.id) return json({ error: "CANNOT_DELETE_SELF", message: "ログイン中の管理者自身は削除できません。" }, 403);
+        if (Number(target.is_admin) === 1) return json({ error: "ADMIN_ACCOUNT_PROTECTED", message: "管理者アカウントの削除は管理者パスキー機能の実装後に行えます。" }, 403);
+        if (confirmation !== target.user_id) return json({ error: "CONFIRMATION_MISMATCH", message: "確認用ユーザーIDが一致しません。" }, 400);
+
+        const sessions = await env.DB.prepare("SELECT token_hash FROM sessions WHERE user_id=?").bind(target.id).all();
+        const room = env.CHAT_ROOM.get(env.CHAT_ROOM.idFromName("open-lounge"));
+        await Promise.allSettled((sessions.results || []).map(({ token_hash }) =>
+          room.fetch("https://chat-room.internal/revoke", {
+            method: "POST",
+            headers: { "X-Session-Hash": token_hash }
+          })
+        ));
+        await writeAdminAudit(env, admin, "user.delete", target.id, { userId: target.user_id });
+        await env.DB.prepare("DELETE FROM users WHERE id=? AND is_admin=0").bind(target.id).run();
+        return json({ deleted: true, userId: target.user_id });
+      }
+
+      if (path === "/api/admin/announcements" && method === "GET") {
+        const rows = await env.DB.prepare(
+          "SELECT id, title, body, published, created_at, updated_at, published_at FROM announcements ORDER BY created_at DESC LIMIT 100"
+        ).all();
+        return json({ announcements: rows.results || [] });
+      }
+
+      if (path === "/api/admin/announcements" && method === "POST") {
+        let body;
+        try { body = await readJson(request); } catch (error) { return json({ error: error.message }, 400); }
+        const title = typeof body?.title === "string" ? body.title.trim() : "";
+        const content = typeof body?.body === "string" ? body.body.trim() : "";
+        const published = body?.published === true ? 1 : 0;
+        if (!title || title.length > 100 || !content || content.length > 3000) {
+          return json({ error: "INVALID_ANNOUNCEMENT", message: "タイトルは1〜100文字、本文は1〜3000文字で入力してください。" }, 400);
+        }
+        const now = Date.now(), id = crypto.randomUUID();
+        await env.DB.prepare(
+          "INSERT INTO announcements (id, title, body, published, created_by_user_id, created_at, updated_at, published_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ).bind(id, title, content, published, admin.id, now, now, published ? now : null).run();
+        await writeAdminAudit(env, admin, published ? "announcement.publish" : "announcement.create", id, { title });
+        return json({ created: true, id }, 201);
+      }
+
+      const announcementMatch = path.match(/^\/api\/admin\/announcements\/([a-f0-9-]+)$/i);
+      if (announcementMatch && method === "PUT") {
+        let body;
+        try { body = await readJson(request); } catch (error) { return json({ error: error.message }, 400); }
+        const title = typeof body?.title === "string" ? body.title.trim() : "";
+        const content = typeof body?.body === "string" ? body.body.trim() : "";
+        const published = body?.published === true ? 1 : 0;
+        if (!title || title.length > 100 || !content || content.length > 3000) return json({ error: "INVALID_ANNOUNCEMENT" }, 400);
+        const now = Date.now();
+        const result = await env.DB.prepare(
+          "UPDATE announcements SET title=?, body=?, published=?, updated_at=?, published_at=CASE WHEN ?=1 AND published_at IS NULL THEN ? WHEN ?=0 THEN NULL ELSE published_at END WHERE id=?"
+        ).bind(title, content, published, now, published, now, published, announcementMatch[1]).run();
+        if (!result.meta?.changes) return json({ error: "ANNOUNCEMENT_NOT_FOUND" }, 404);
+        await writeAdminAudit(env, admin, published ? "announcement.update_publish" : "announcement.update", announcementMatch[1], { title });
+        return json({ updated: true });
+      }
+
+      if (announcementMatch && method === "DELETE") {
+        const result = await env.DB.prepare("DELETE FROM announcements WHERE id=?").bind(announcementMatch[1]).run();
+        if (!result.meta?.changes) return json({ error: "ANNOUNCEMENT_NOT_FOUND" }, 404);
+        await writeAdminAudit(env, admin, "announcement.delete", announcementMatch[1]);
+        return json({ deleted: true });
+      }
+
+      if (path === "/api/admin/audit-logs" && method === "GET") {
+        const rows = await env.DB.prepare(
+          "SELECT l.id, l.action, l.target_user_id, l.details_json, l.created_at, u.user_id AS admin_user_id FROM admin_audit_logs l LEFT JOIN users u ON u.id=l.admin_user_id ORDER BY l.created_at DESC LIMIT 100"
+        ).all();
+        return json({ logs: rows.results || [] });
+      }
+      return json({ error: "NOT_FOUND" }, 404);
+    } catch (error) {
+      console.error("Admin API failed:", error.message);
+      return json({ error: "ADMIN_OPERATION_FAILED", message: "管理操作を完了できませんでした。" }, 503);
+    }
+  }
+
+  if (path === "/api/announcements" && method === "GET") {
+    try {
+      const rows = await env.DB.prepare(
+        "SELECT id, title, body, published_at FROM announcements WHERE published=1 ORDER BY published_at DESC LIMIT 20"
+      ).all();
+      return json({ announcements: rows.results || [] });
+    } catch {
+      return json({ error: "ANNOUNCEMENTS_UNAVAILABLE" }, 503);
+    }
+  }
 
   if (path === "/api/health" && method === "GET") {
     try {
