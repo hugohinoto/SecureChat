@@ -891,18 +891,31 @@ async function handleApi(request, env) {
       if (!mutualContacts) return json({ error: "MUTUAL_OTP_REQUIRED", message: "双方のワンタイムコード確認が完了した相手とだけチャットできます。" }, 403);
       const peerKey = await env.DB.prepare("SELECT user_id FROM user_keys WHERE user_id=?").bind(peer.id).first();
       if (!peerKey) return json({ error: "RECIPIENT_KEY_MISSING" }, 409);
-      const existing = await env.DB.prepare("SELECT c.id FROM conversations c JOIN conversation_members a ON a.conversation_id=c.id AND a.user_id=? JOIN conversation_members b ON b.conversation_id=c.id AND b.user_id=? LIMIT 1").bind(me, peer.id).first();
-      if (existing) return json({ conversationId: existing.id, existing: true });
+
+      // The pair table is the database-level uniqueness gate. The batch is atomic:
+      // concurrent requests may stage candidates, but only one pair mapping survives.
+      const existing = await env.DB.prepare(
+        "SELECT conversation_id FROM conversation_pairs WHERE user_a_id=? AND user_b_id=?"
+      ).bind(pairA, pairB).first();
+      if (existing) return json({ conversationId: existing.conversation_id, existing: true });
+
       const id = crypto.randomUUID();
       await env.DB.batch([
         env.DB.prepare("INSERT INTO conversations (id, created_by, created_at, expires_in_seconds) VALUES (?, ?, ?, 3600)").bind(id, me, now),
         env.DB.prepare("INSERT INTO conversation_members (conversation_id, user_id, joined_at) VALUES (?, ?, ?)").bind(id, me, now),
-        env.DB.prepare("INSERT INTO conversation_members (conversation_id, user_id, joined_at) VALUES (?, ?, ?)").bind(id, peer.id, now)
+        env.DB.prepare("INSERT INTO conversation_members (conversation_id, user_id, joined_at) VALUES (?, ?, ?)").bind(id, peer.id, now),
+        env.DB.prepare("INSERT OR IGNORE INTO conversation_pairs (user_a_id, user_b_id, conversation_id, created_at) VALUES (?, ?, ?, ?)").bind(pairA, pairB, id, now),
+        env.DB.prepare("DELETE FROM conversations WHERE id=? AND NOT EXISTS (SELECT 1 FROM conversation_pairs WHERE user_a_id=? AND user_b_id=? AND conversation_id=?)").bind(id, pairA, pairB, id)
       ]);
-      return json({ conversationId: id, existing: false }, 201);
+      const canonical = await env.DB.prepare(
+        "SELECT conversation_id FROM conversation_pairs WHERE user_a_id=? AND user_b_id=?"
+      ).bind(pairA, pairB).first();
+      if (!canonical) return json({ error: "CONVERSATION_CREATE_FAILED" }, 503);
+      const created = canonical.conversation_id === id;
+      return json({ conversationId: canonical.conversation_id, existing: !created }, created ? 201 : 200);
     }
     if (path === "/api/conversations" && method === "GET") {
-      const rows = await env.DB.prepare("SELECT c.id, u.user_id AS peer_user_id, c.created_at FROM conversations c JOIN conversation_members mine ON mine.conversation_id=c.id AND mine.user_id=? JOIN conversation_members peer ON peer.conversation_id=c.id AND peer.user_id<>? JOIN users u ON u.id=peer.user_id JOIN verified_contact_pairs p ON p.user_a_id=CASE WHEN mine.user_id<peer.user_id THEN mine.user_id ELSE peer.user_id END AND p.user_b_id=CASE WHEN mine.user_id<peer.user_id THEN peer.user_id ELSE mine.user_id END ORDER BY c.created_at DESC").bind(me, me).all();
+      const rows = await env.DB.prepare("SELECT c.id, u.user_id AS peer_user_id, c.created_at FROM conversations c JOIN conversation_pairs cp ON cp.conversation_id=c.id JOIN conversation_members mine ON mine.conversation_id=c.id AND mine.user_id=? JOIN conversation_members peer ON peer.conversation_id=c.id AND peer.user_id<>? JOIN users u ON u.id=peer.user_id JOIN verified_contact_pairs p ON p.user_a_id=CASE WHEN mine.user_id<peer.user_id THEN mine.user_id ELSE peer.user_id END AND p.user_b_id=CASE WHEN mine.user_id<peer.user_id THEN peer.user_id ELSE mine.user_id END ORDER BY c.created_at DESC").bind(me, me).all();
       return json({ conversations: rows.results });
     }
     const match = path.match(/^\/api\/conversations\/([a-f0-9-]+)(?:\/(messages|key))?$/i);
