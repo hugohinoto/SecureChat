@@ -25,7 +25,7 @@ async function checkSecurity(env) {
   checks.push({ id: "otp-key", label: "OTP秘密値", status: otpReady ? "ok" : "error", detail: otpReady ? "CONTACT_OTP_PEPPERを確認しました。" : "CONTACT_OTP_PEPPERが未設定、または短すぎます。" });
   checks.push({ id: "key-rotation", label: "暗号鍵のローテーション", status: keyReady && keyStatus.configuredVersions.length >= 2 ? "ok" : keyReady ? "warning" : "error", detail: keyReady ? "現行鍵 v" + keyStatus.activeVersion + "。登録済み鍵世代: " + keyStatus.configuredVersions.join(", ") + "。Cronで旧世代データを段階的に再暗号化します。移行完了前に旧鍵を削除しないでください。" : "現行鍵が未設定です。APP_DATA_ENCRYPTION_KEY（旧v1）またはAPP_DATA_ENCRYPTION_KEY_V" + keyStatus.activeVersion + "を設定してください。" });
   try {
-    const [oldNotices, oldLogs, unsignedKeys, reportCount] = await Promise.all([
+    const [oldNotices, oldLogs, unsignedKeys, reportCount, oldReports] = await Promise.all([
       env.DB.prepare("SELECT COUNT(*) AS count FROM announcements WHERE encryption_version=0 OR title_ciphertext IS NULL OR body_ciphertext IS NULL OR title_ciphertext NOT LIKE ? OR body_ciphertext NOT LIKE ?").bind("enc:v" + keyStatus.activeVersion + ":%", "enc:v" + keyStatus.activeVersion + ":%").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM admin_audit_logs WHERE details_json NOT LIKE ?").bind("enc:v" + keyStatus.activeVersion + ":%").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM user_keys WHERE signed_prekey_signature='not-used-static-ecdh-v1'").first(),
