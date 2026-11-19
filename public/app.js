@@ -12,7 +12,7 @@ const el = {
   loginTab: $("#login-tab"), registerTab: $("#register-tab"),
   search: $("#user-search-input"), searchButton: $("#user-search-button"),
   results: $("#user-search-results"), contacts: $("#contact-list"), invitations: $("#invitation-list"),
-  conversations: $("#conversation-list"), contactCount: $("#contact-count"),
+  conversations: $("#conversation-list"), adminLink: $("#admin-link"), announcements: $("#public-announcements"), announcementsList: $("#public-announcements-list"), contactCount: $("#contact-count"),
   conversationCount: $("#conversation-count"), chatTitle: $("#chat-title"),
   chatSubtitle: $("#chat-subtitle"), securityTitle: $("#security-title"),
   securityDescription: $("#security-description"), securityTag: $("#security-tag"),
@@ -213,8 +213,28 @@ async function checkSession() {
   if(!r.ok)throw new Error("認証状態を確認できませんでした。");
   return r.json();
 }
+async function loadPublicAnnouncements() {
+  if(!el.announcements || !el.announcementsList) return;
+  try {
+    const data=await api("/api/announcements");
+    el.announcementsList.replaceChildren();
+    for(const item of data.announcements||[]) {
+      const article=document.createElement("article");
+      article.className="public-announcement";
+      const title=document.createElement("strong");title.textContent=item.title;
+      const body=document.createElement("p");body.textContent=item.body;
+      const stamp=document.createElement("time");stamp.textContent=new Intl.DateTimeFormat("ja-JP",{dateStyle:"medium",timeStyle:"short"}).format(new Date(item.published_at));
+      article.append(title,body,stamp);el.announcementsList.append(article);
+    }
+    el.announcements.hidden=!(data.announcements||[]).length;
+  } catch { el.announcements.hidden=true; }
+}
 async function signIn(user) {
+  const sessionState=await checkSession();
+  user.isAdmin=!!sessionState.user?.isAdmin;
   currentUser=user;
+  if(el.adminLink)el.adminLink.hidden=!user.isAdmin;
+  await loadPublicAnnouncements();
   try {
     await ensureIdentity();
     await refreshSidebar();
