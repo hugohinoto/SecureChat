@@ -83,7 +83,7 @@ async function loadBugReports(){
 }
 function csvCell(value){
  const text=String(value??"");
- const safe=/^[\\s]*[=+@\\-]/.test(text)?"'"+text:text;
+ const safe=/^[\s]*[=+@\-]/.test(text)?"'"+text:text;
  return '"'+safe.replace(/"/g,'""')+'"';
 }
 function exportSecurityCsv(){
@@ -92,7 +92,7 @@ function exportSecurityCsv(){
  for(const item of lastSecurityCheck.checks){
   rows.push([new Date(lastSecurityCheck.checkedAt).toISOString(),lastSecurityCheck.overall,item.id,item.label,item.status,item.detail]);
  }
- const csv="\\uFEFF"+rows.map(row=>row.map(csvCell).join(",")).join("\\r\\n");
+ const csv="\uFEFF"+rows.map(row=>row.map(csvCell).join(",")).join("\r\n");
  const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
  const url=URL.createObjectURL(blob),link=document.createElement("a");
  link.href=url;link.download="securechat-security-check-"+new Date(lastSecurityCheck.checkedAt).toISOString().replace(/[:.]/g,"-")+".csv";
