@@ -1,4 +1,4 @@
-import { encryptStored, decryptStored, encryptAnnouncement, decodeAnnouncement } from "./data-crypto.js";
+import { encryptStored, decryptStored, encryptAnnouncement, decodeAnnouncement, dataKeyStatus } from "./data-crypto.js";
 const DEFAULT_NOTICE_HOURS = 48, MAX_NOTICE_HOURS = 720, encoder = new TextEncoder();
 function json(data, status = 200) { return Response.json(data, { status, headers: { "Cache-Control": "no-store" } }); }
 function expiryHours(value, fallback = DEFAULT_NOTICE_HOURS) {
@@ -16,16 +16,18 @@ async function adminAuth(request, env, deps) {
   return admin;
 }
 async function checkSecurity(env) {
-  const checks = [], keyReady = typeof env.APP_DATA_ENCRYPTION_KEY === "string" && encoder.encode(env.APP_DATA_ENCRYPTION_KEY).byteLength >= 32;
+  const checks = [];
+  let keyStatus; try { keyStatus = dataKeyStatus(env); } catch { keyStatus = { activeVersion: 0, configuredVersions: [], activeKeyReady: false }; }
+  const keyReady = keyStatus.activeKeyReady;
   const otpReady = typeof env.CONTACT_OTP_PEPPER === "string" && env.CONTACT_OTP_PEPPER.length >= 32;
   checks.push({ id: "db", label: "D1接続", status: "ok", detail: "管理画面からの診断クエリが成功しました。" });
   checks.push({ id: "data-key", label: "保存データ暗号鍵", status: keyReady ? "ok" : "error", detail: keyReady ? "APP_DATA_ENCRYPTION_KEYを確認しました。" : "APP_DATA_ENCRYPTION_KEYが未設定、または32バイト未満です。" });
   checks.push({ id: "otp-key", label: "OTP秘密値", status: otpReady ? "ok" : "error", detail: otpReady ? "CONTACT_OTP_PEPPERを確認しました。" : "CONTACT_OTP_PEPPERが未設定、または短すぎます。" });
-  checks.push({ id: "key-rotation", label: "暗号鍵のローテーション", status: "warning", detail: "現在はAPP_DATA_ENCRYPTION_KEYの単一世代です。再暗号化移行を実装するまでは、この値を変更しないでください。鍵を失うと保存データを復号できません。" });
+  checks.push({ id: "key-rotation", label: "暗号鍵のローテーション", status: keyReady && keyStatus.configuredVersions.length >= 2 ? "ok" : keyReady ? "warning" : "error", detail: keyReady ? "現行鍵 v" + keyStatus.activeVersion + "。登録済み鍵世代: " + keyStatus.configuredVersions.join(", ") + "。Cronで旧世代データを段階的に再暗号化します。移行完了前に旧鍵を削除しないでください。" : "現行鍵が未設定です。APP_DATA_ENCRYPTION_KEY（旧v1）またはAPP_DATA_ENCRYPTION_KEY_V" + keyStatus.activeVersion + "を設定してください。" });
   try {
     const [oldNotices, oldLogs, unsignedKeys, reportCount] = await Promise.all([
       env.DB.prepare("SELECT COUNT(*) AS count FROM announcements WHERE encryption_version=0 OR title_ciphertext IS NULL OR body_ciphertext IS NULL").first(),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM admin_audit_logs WHERE details_json NOT LIKE 'enc:v1:%'").first(),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM admin_audit_logs WHERE details_json NOT LIKE ?").bind("enc:v" + keyStatus.activeVersion + ":%").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM user_keys WHERE signed_prekey_signature='not-used-static-ecdh-v1'").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM bug_reports").first()
     ]);
