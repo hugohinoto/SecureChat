@@ -147,7 +147,7 @@ async function ensureIdentity() {
     signingPublicKey=toB64(new Uint8Array(await crypto.subtle.exportKey("raw",signingPair.publicKey)));
   }
   identitySigningPublicKey=signingPublicKey;
-  await saveIdentity(currentUser.userId,{privateKey:identityPrivateKey,publicKey:identityPublicKey,signingPrivateKey,signingPublicKey});
+  await saveIdentity(currentUser.userId,{privateKey:identityPrivateKey,publicKey:identityPublicKey,signingPrivateKey,signingPublicKey,peerPins:saved?.peerPins||{}});
   const signature=await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},signingPrivateKey,identityProofMessage(currentUser.userId,identityPublicKey));
   await api("/api/keys",{method:"PUT",body:{
     identityPublicKey,
@@ -162,6 +162,15 @@ async function deriveKey(conversationId,peerUserId) {
   const signingKey=await crypto.subtle.importKey("raw",fromB64(peer.identitySigningPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]);
   const proofValid=await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"},signingKey,fromB64(peer.identityKeySignature),identityProofMessage(peerUserId,peer.identityPublicKey));
   if(!proofValid) throw new Error("相手の公開鍵署名を検証できません。安全のため接続を中止しました。");
+  const ownRecord=await storedIdentity(currentUser.userId);
+  const peerPins=ownRecord?.peerPins||{};
+  if(peerPins[peerUserId] && peerPins[peerUserId]!==peer.identitySigningPublicKey) {
+    throw new Error("相手の署名鍵が以前の登録から変更されています。別経路で指紋を確認するまで接続を中止しました。");
+  }
+  if(!peerPins[peerUserId]) {
+    peerPins[peerUserId]=peer.identitySigningPublicKey;
+    await saveIdentity(currentUser.userId,{...ownRecord,peerPins});
+  }
   const [ownFingerprint,peerFingerprint]=await Promise.all([
     publicKeyFingerprint(identitySigningPublicKey),
     publicKeyFingerprint(peer.identitySigningPublicKey)
@@ -270,6 +279,7 @@ async function signIn(user) {
     currentUser=null;
     identityPrivateKey=null;
     identityPublicKey=null;
+    identitySigningPublicKey=null;
     throw error;
   }
   el.profile.textContent=user.userId;
@@ -357,7 +367,7 @@ async function logout() {
   el.logout.disabled=true;
   try {
     await api("/api/auth/logout",{method:"POST"});
-    currentUser=null;identityPrivateKey=null;identityPublicKey=null;activeConversation=null;activeKey=null;
+    currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;
     clearInterval(authTimer);clearInterval(refreshTimer);setAuthMode("login");showAuth();toast("ログアウトしました。");
   } catch(e) {toast(e.message);}
   finally {el.logout.disabled=false;}
