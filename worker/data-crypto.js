@@ -66,6 +66,12 @@ export async function decodeAnnouncement(env, row) {
   };
 }
 export async function migrateSensitiveRows(env, now = Date.now()) {
+  try {
+    await env.DB.prepare("DELETE FROM announcements WHERE published=1 AND ((expires_at IS NOT NULL AND expires_at<=?) OR (expires_at IS NULL AND published_at IS NOT NULL AND published_at<=?))")
+      .bind(now, now - DEFAULT_NOTICE_HOURS * 3600000).run();
+  } catch {
+    // The expiry columns are added by migration 0008; older deployments may not have them yet.
+  }
   if (typeof env.APP_DATA_ENCRYPTION_KEY !== "string" || encoder.encode(env.APP_DATA_ENCRYPTION_KEY).byteLength < MIN_KEY_BYTES) return { skipped: true };
   let announcements = 0, auditLogs = 0;
   try {
