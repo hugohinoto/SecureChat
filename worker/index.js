@@ -275,7 +275,7 @@ async function handleApi(request, env) {
           env.DB.prepare("SELECT COUNT(*) AS count FROM sessions WHERE expires_at>?").bind(now).first(),
           env.DB.prepare("SELECT COUNT(*) AS count FROM encrypted_messages WHERE expires_at>?").bind(now).first(),
           env.DB.prepare("SELECT COUNT(*) AS count FROM contact_invitations WHERE expires_at>?").bind(now).first(),
-          env.DB.prepare("SELECT COUNT(*) AS count FROM announcements WHERE published=1").first(),
+          env.DB.prepare("SELECT COUNT(*) AS count FROM announcements WHERE published=1 AND (expires_at>? OR (expires_at IS NULL AND published_at>?))").bind(now, now - 48 * 60 * 60 * 1000).first(),
           env.DB.prepare("SELECT COUNT(*) AS count FROM admin_audit_logs WHERE created_at>?").bind(now - 24 * 60 * 60 * 1000).first()
         ]);
         return json({
