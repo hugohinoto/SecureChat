@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { handleAdminFeatures } from "./admin-features.js";
 import { encryptStored, migrateSensitiveRows } from "./data-crypto.js";
+import { verifyIdentityKeyProof } from "./identity-keys.js";
 
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PASSWORD_ITERATIONS = 100_000;
@@ -844,23 +845,39 @@ async function handleApi(request, env) {
       return json({ removed: true, userId, conversationsRemoved: rows.results.length });
     }
     if (path === "/api/keys" && method === "PUT") {
-      const body = await readJson(request);
-      const pub = body?.identityPublicKey;
-      if (typeof pub !== "string" || pub.length < 80 || pub.length > 128) return json({ error: "INVALID_PUBLIC_KEY" }, 400);
-      try {
-        const raw = Uint8Array.from(atob(pub), (char) => char.charCodeAt(0));
-        if (raw.length !== 65 || raw[0] !== 4) return json({ error: "INVALID_PUBLIC_KEY" }, 400);
-      } catch {
-        return json({ error: "INVALID_PUBLIC_KEY" }, 400);
+      let body;
+      try { body = await readJson(request); } catch { return json({ error: "INVALID_JSON" }, 400); }
+      const pub = body?.identityPublicKey, signingPub = body?.identitySigningPublicKey, signature = body?.identityKeySignature;
+      if (typeof pub !== "string" || pub.length < 80 || pub.length > 128 ||
+          typeof signingPub !== "string" || signingPub.length < 80 || signingPub.length > 128 ||
+          typeof signature !== "string" || signature.length < 80 || signature.length > 128) {
+        return json({ error: "IDENTITY_KEY_PROOF_REQUIRED", message: "署名付き公開鍵が必要です。アプリを更新して再ログインしてください。" }, 400);
       }
-      await env.DB.prepare("INSERT INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, key_version, updated_at) VALUES (?, ?, ?, ?, 1, ?) ON CONFLICT(user_id) DO UPDATE SET identity_public_key=excluded.identity_public_key, signed_prekey=excluded.signed_prekey, signed_prekey_signature=excluded.signed_prekey_signature, key_version=user_keys.key_version+1, updated_at=excluded.updated_at").bind(me, pub, pub, "not-used-static-ecdh-v1", now).run();
+      const validProof = await verifyIdentityKeyProof({
+        userId: session.user_id,
+        identityPublicKey: pub,
+        identitySigningPublicKey: signingPub,
+        identityKeySignature: signature
+      });
+      if (!validProof) return json({ error: "IDENTITY_KEY_PROOF_INVALID" }, 400);
+      await env.DB.prepare(
+        "INSERT INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, identity_signing_public_key, identity_key_signature, key_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?) ON CONFLICT(user_id) DO UPDATE SET identity_public_key=excluded.identity_public_key, signed_prekey=excluded.signed_prekey, signed_prekey_signature=excluded.signed_prekey_signature, identity_signing_public_key=excluded.identity_signing_public_key, identity_key_signature=excluded.identity_key_signature, key_version=user_keys.key_version+1, updated_at=excluded.updated_at"
+      ).bind(me, pub, pub, "legacy-placeholder-not-used", signingPub, signature, now).run();
       return json({ saved: true });
     }
     if (path.startsWith("/api/keys/") && method === "GET") {
       const userId = normalizeUserId(decodeURIComponent(path.slice("/api/keys/".length)));
       if (!userId) return json({ error: "INVALID_USER_ID" }, 400);
-      const key = await env.DB.prepare("SELECT k.identity_public_key FROM user_keys k JOIN users u ON u.id=k.user_id WHERE u.user_id=?").bind(userId).first();
-      return key ? json({ userId, identityPublicKey: key.identity_public_key }) : json({ error: "KEY_NOT_FOUND" }, 404);
+      const key = await env.DB.prepare(
+        "SELECT k.identity_public_key, k.identity_signing_public_key, k.identity_key_signature, k.key_version FROM user_keys k JOIN users u ON u.id=k.user_id WHERE u.user_id=?"
+      ).bind(userId).first();
+      return key ? json({
+        userId,
+        identityPublicKey: key.identity_public_key,
+        identitySigningPublicKey: key.identity_signing_public_key,
+        identityKeySignature: key.identity_key_signature,
+        keyVersion: Number(key.key_version)
+      }) : json({ error: "KEY_NOT_FOUND" }, 404);
     }
     if (path === "/api/conversations" && method === "POST") {
       const body = await readJson(request);
