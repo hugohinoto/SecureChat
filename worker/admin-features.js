@@ -29,14 +29,15 @@ async function checkSecurity(env) {
       env.DB.prepare("SELECT COUNT(*) AS count FROM announcements WHERE encryption_version=0 OR title_ciphertext IS NULL OR body_ciphertext IS NULL OR title_ciphertext NOT LIKE ? OR body_ciphertext NOT LIKE ?").bind("enc:v" + keyStatus.activeVersion + ":%", "enc:v" + keyStatus.activeVersion + ":%").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM admin_audit_logs WHERE details_json NOT LIKE ?").bind("enc:v" + keyStatus.activeVersion + ":%").first(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM user_keys WHERE signed_prekey_signature='not-used-static-ecdh-v1'").first(),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM bug_reports").first()
+      env.DB.prepare("SELECT COUNT(*) AS count FROM bug_reports").first(),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM bug_reports WHERE encrypted_payload NOT LIKE ?").bind("enc:v" + keyStatus.activeVersion + ":%").first()
     ]);
-    const n = Number(oldNotices?.count || 0), l = Number(oldLogs?.count || 0), k = Number(unsignedKeys?.count || 0);
+    const n = Number(oldNotices?.count || 0), l = Number(oldLogs?.count || 0), k = Number(unsignedKeys?.count || 0), oldReportCount = Number(oldReports?.count || 0);
     checks.push({ id: "notice-data", label: "お知らせの暗号化", status: n === 0 ? "ok" : "warning", detail: n === 0 ? "移行対象の平文お知らせはありません。" : "未移行のお知らせが" + n + "件あります。" });
     checks.push({ id: "audit-data", label: "監査ログ詳細の暗号化", status: l === 0 ? "ok" : "warning", detail: l === 0 ? "監査ログ詳細は暗号化済みです。" : "旧形式の監査ログが" + l + "件あります。" });
     checks.push({ id: "key-auth", label: "公開鍵の本人確認", status: "critical", detail: k ? "署名されていない公開鍵が" + k + "件あります。署名欄は固定のダミー値です。" : "公開鍵の署名・本人確認プロトコルは未実装です。" });
     checks.push({ id: "forward-secrecy", label: "前方秘匿性", status: "critical", detail: "Double Ratchet等の鍵更新・前方秘匿性は未実装です。" });
-    checks.push({ id: "reports", label: "バグ報告保存", status: "ok", detail: "暗号化された報告は" + Number(reportCount?.count || 0) + "件です。" });
+    checks.push({ id: "reports", label: "バグ報告保存", status: oldReportCount === 0 ? "ok" : "warning", detail: "報告総数 " + Number(reportCount?.count || 0) + "件、現行鍵への移行待ち " + oldReportCount + "件です。" });
   } catch {
     checks.push({ id: "schema", label: "追加D1スキーマ", status: "error", detail: "0008_admin_security_reports.sqlが未適用、または必要なテーブルにアクセスできません。" });
   }
