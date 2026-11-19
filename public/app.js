@@ -593,7 +593,7 @@ async function sendMessage() {
     const encrypted=await encryptText(text,key);
     await api("/api/conversations/"+activeConversation.id+"/messages",{method:"POST",body:encrypted});
     el.input.value="";el.input.style.height="auto";await loadMessages(true);
-  } catch(e){toast(e.message);}
+  } catch(e){showError(e);}
   finally {busy=false;updateSend();el.input.focus();}
 }
 el.loginTab.addEventListener("click",()=>setAuthMode("login"));
