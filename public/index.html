@@ -74,6 +74,7 @@
           </svg>
         </button>
       </div>
+      <a class="admin-link" id="admin-link" href="/admin" hidden>管理者コンソール</a>
       <button class="delete-account-button" id="delete-account-button" type="button">アカウントを削除</button>
     </aside>
 
@@ -102,6 +103,10 @@
           <span id="security-description">会話ごとにブラウザー内で暗号化します。公開鍵指紋は別経路で照合してください。前方秘匿性は未実装です。</span>
         </div>
         <span class="banner-tag" id="security-tag">PROTOTYPE</span>
+      </section>
+      <section class="public-announcements" id="public-announcements" hidden aria-label="運営からのお知らせ">
+        <div class="public-announcements-heading">運営からのお知らせ</div>
+        <div id="public-announcements-list"></div>
       </section>
       <div class="fingerprint-panel" id="key-fingerprint" hidden></div>
 
@@ -192,6 +197,25 @@
       </div>
     </div>
   </section>
-\n  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+\n  <section class="auth-gate" id="password-change-gate" role="dialog" aria-modal="true" aria-labelledby="password-change-title" hidden>
+    <div class="auth-card glass-panel">
+      <div class="auth-brand-mark" aria-hidden="true">🔐</div>
+      <div class="auth-eyebrow">ADMINISTRATOR SECURITY</div>
+      <h2 id="password-change-title">管理者パスワードの変更</h2>
+      <p class="auth-description">管理者パスワードは90日ごとに変更が必要です。新しいパスワードを設定するまで管理機能は利用できません。</p>
+      <form id="password-change-form" novalidate>
+        <label class="auth-label" for="current-admin-password">現在のパスワード</label>
+        <input class="auth-input" id="current-admin-password" type="password" autocomplete="current-password" required maxlength="128">
+        <label class="auth-label" for="new-admin-password">新しいパスワード</label>
+        <input class="auth-input" id="new-admin-password" type="password" autocomplete="new-password" required minlength="12" maxlength="128">
+        <div class="auth-field-hint">12〜128文字。現在のパスワードとは異なるものを設定してください。</div>
+        <label class="auth-label" for="confirm-admin-password">新しいパスワード（確認）</label>
+        <input class="auth-input" id="confirm-admin-password" type="password" autocomplete="new-password" required minlength="12" maxlength="128">
+        <p class="auth-error" id="password-change-error" role="alert" aria-live="polite"></p>
+        <button class="auth-submit" id="password-change-submit" type="submit">パスワードを変更</button>
+      </form>
+    </div>
+  </section>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

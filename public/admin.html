@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1020">
+<title>SecureChat 管理者コンソール</title>
+<link rel="stylesheet" href="/admin.css">
+<script src="/admin.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">SECURECHAT <span>ADMIN CONSOLE</span></a>
+  <div class="top-actions"><span id="admin-identity">認証確認中</span><a href="/">チャットへ戻る</a><button id="logout" type="button">ログアウト</button></div>
+</header>
+<main class="layout">
+  <section class="intro">
+    <div><p class="eyebrow">SECURITY OPERATIONS</p><h1>管理者コンソール</h1><p>管理者権限でのみ利用できる運用管理画面です。</p></div>
+    <div class="secure-pill"><i></i> SERVER-SIDE AUTHORIZATION</div>
+  </section>
+  <div id="notice" class="notice" role="status">管理者権限を確認しています…</div>
+  <section id="console" hidden>
+    <section class="stats" id="stats">
+      <article class="stat"><span>登録ユーザー</span><strong id="stat-users">—</strong></article>
+      <article class="stat"><span>管理者</span><strong id="stat-admins">—</strong></article>
+      <article class="stat"><span>有効セッション</span><strong id="stat-sessions">—</strong></article>
+      <article class="stat"><span>保存中メッセージ</span><strong id="stat-messages">—</strong></article>
+      <article class="stat"><span>進行中の招待</span><strong id="stat-invites">—</strong></article>
+      <article class="stat"><span>過去24時間の管理操作</span><strong id="stat-actions">—</strong></article>
+    </section>
+    <section class="panel">
+      <div class="panel-heading"><div><p class="eyebrow">ANNOUNCEMENTS</p><h2>お知らせ発信</h2></div><span class="muted">公開した内容はログインユーザーに表示されます</span></div>
+      <form id="announcement-form" class="announcement-form">
+        <label>タイトル<input id="announcement-title" maxlength="100" required placeholder="例：メンテナンスのお知らせ"></label>
+        <label>本文<textarea id="announcement-body" rows="4" maxlength="3000" required placeholder="お知らせ内容を入力してください"></textarea></label>
+        <label class="check"><input id="announcement-publish" type="checkbox" checked> 作成と同時に公開する</label>
+        <button class="primary" type="submit">お知らせを作成</button>
+      </form>
+      <div id="announcements" class="item-list"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-heading"><div><p class="eyebrow">USER DIRECTORY</p><h2>ユーザー管理</h2></div><span class="muted">削除は取り消せません。管理者アカウントは保護されます。</span></div>
+      <form id="user-search" class="search-row"><input id="user-query" maxlength="32" placeholder="ユーザーIDの先頭で検索"><button type="submit">検索</button><button type="button" id="user-reset" class="secondary">リセット</button></form>
+      <div class="table-wrap"><table><thead><tr><th>ユーザーID</th><th>権限</th><th>登録日時</th><th>最終ログイン</th><th>操作</th></tr></thead><tbody id="users"></tbody></table></div>
+      <div class="pager"><button id="prev-page" class="secondary" type="button">前へ</button><span id="page-label">—</span><button id="next-page" class="secondary" type="button">次へ</button></div>
+    </section>
+    <section class="panel">
+      <div class="panel-heading"><div><p class="eyebrow">ADMIN AUDIT TRAIL</p><h2>管理操作ログ</h2></div><button id="refresh-logs" class="secondary" type="button">更新</button></div>
+      <div class="table-wrap"><table><thead><tr><th>日時</th><th>管理者</th><th>操作</th><th>対象</th><th>詳細</th></tr></thead><tbody id="logs"></tbody></table></div>
+    </section>
+    <section class="panel note-panel">
+      <h2>運用上の注意</h2>
+      <p id="worker-note">Workerの例外ログはCloudflareダッシュボードのObservabilityで確認してください。この画面ではCloudflare内部ログを取得しません。</p>
+      <p>管理APIはサーバー側で管理者フラグを検証し、ログインから15分を超えたセッションを拒否します。管理者のパスキー認証は別工程で実装します。</p>
+    </section>
+  </section>
+</main>
+</body>
+</html>

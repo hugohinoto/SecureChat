@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_iterations INTEGER NOT NULL,
   created_at INTEGER NOT NULL,
   last_login_at INTEGER,
+  is_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0,1)),
   CHECK (length(user_id) BETWEEN 3 AND 32),
   CHECK (length(password_salt) > 0),
   CHECK (length(password_hash) > 0)
