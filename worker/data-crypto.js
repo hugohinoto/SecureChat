@@ -34,7 +34,7 @@ export function dataKeyStatus(env) {
 }
 async function importDataKey(env, version) {
   const secret = configuredSecret(env, version);
-  if (!secret) throw new Error("APP_DATA_ENCRYPTION_KEY_V" + version + "_NOT_CONFIGURED");
+  if (!secret) throw new Error(version === 1 ? "APP_DATA_ENCRYPTION_KEY_NOT_CONFIGURED" : "APP_DATA_ENCRYPTION_KEY_V" + version + "_NOT_CONFIGURED");
   const material = await crypto.subtle.digest("SHA-256", encoder.encode("SecureChat/application-data/v" + version + "\\0" + secret));
   return crypto.subtle.importKey("raw", material, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }
