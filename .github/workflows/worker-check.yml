@@ -19,4 +19,8 @@ jobs:
           node-version: "24.22.1"
       - run: npm install
       - run: node --check worker/index.js
+      - run: node --check worker/admin-features.js
+      - run: node --check worker/data-crypto.js
+      - run: node --check public/admin.js
+      - run: node --check public/bug-report.js
       - run: npm test
