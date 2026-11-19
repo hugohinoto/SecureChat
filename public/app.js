@@ -326,7 +326,7 @@ async function signIn(user) {
 function startAuthCheck() {
   clearInterval(authTimer);
   authTimer=setInterval(async()=>{
-    try { const s=await checkSession(); if(!s.authenticated){currentUser=null;showAuth("セッションの有効期限が切れました。再ログインしてください。");} }
+    try { const s=await checkSession(); if(!s.authenticated){currentUser=null;showAuth(formatError(appError("SESSION_EXPIRED","セッションの有効期限が切れました。再ログインしてください。")));} }
     catch {showError(appError("AUTH_RECHECK_FAILED","認証サーバーに接続できません。"));}
   },300000);
 }
@@ -389,7 +389,7 @@ async function deleteAccount() {
     currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;
     clearInterval(authTimer);clearInterval(refreshTimer);
     setAuthMode("login");showAuth();toast("アカウントと関連データを削除しました。");
-  } catch(e) {toast(e.message);}
+  } catch(e) {showError(e);}
   finally {el.deleteAccount.disabled=false;}
 }
 async function logout() {
@@ -398,7 +398,7 @@ async function logout() {
     await api("/api/auth/logout",{method:"POST"});
     currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;
     clearInterval(authTimer);clearInterval(refreshTimer);setAuthMode("login");showAuth();toast("ログアウトしました。");
-  } catch(e) {toast(e.message);}
+  } catch(e) {showError(e);}
   finally {el.logout.disabled=false;}
 }
 function userAction(userId,label,fn) {
@@ -414,12 +414,12 @@ function showOtpCode(container,code,expiresAt,key="",detailText="5分以内に�
   const value=document.createElement("strong");value.className="otp-code";value.textContent=code;
   const detail=document.createElement("span");detail.textContent=detailText;
   const copy=document.createElement("button");copy.type="button";copy.textContent="コードをコピー";
-  copy.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(code);toast("コードをコピーしました。");}catch{toast("コピーできませんでした。コードを手動で共有してください。");}});
+  copy.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(code);toast("コードをコピーしました。");}catch{showError(appError("CLIPBOARD_COPY_FAILED","コピーできませんでした。コードを手動で共有してください。"));}});
   panel.append(value,detail,copy);container.append(panel);
 }
 async function searchUsers() {
   const q=el.search.value.trim().toLowerCase();el.results.replaceChildren();
-  if(!/^[a-z0-9_]{1,32}$/.test(q)){el.results.textContent="1文字以上のユーザーIDを入力してください。";return;}
+  if(!/^[a-z0-9_]{1,32}$/.test(q)){el.results.textContent=formatError(appError("USER_SEARCH_QUERY_INVALID","1文字以上のユーザーIDを入力してください。"));return;}
   try {
     const data=await api("/api/users/search?q="+encodeURIComponent(q));
     if(!data.users.length){el.results.textContent="ユーザーが見つかりませんでした。";return;}
@@ -586,7 +586,7 @@ async function loadMessages(fullSync=false) {
 async function sendMessage() {
   if(busy||!activeConversation)return;
   const text=el.input.value.trim();if(!text)return;
-  if(Array.from(text).length>MAX_MESSAGE_LENGTH){toast("メッセージは2000文字以内にしてください。");return;}
+  if(Array.from(text).length>MAX_MESSAGE_LENGTH){showError(appError("MESSAGE_LENGTH_EXCEEDED","メッセージは2000文字以内にしてください。"));return;}
   busy=true;updateSend();
   try {
     const key=await deriveKey(activeConversation.id,activeConversation.peerUserId);
