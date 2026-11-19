@@ -22,7 +22,7 @@ const MAX_MESSAGE_LENGTH = 2000;
 const DB_NAME = "securechat-local-keys";
 const STORE = "identity";
 let currentUser = null, authMode = "login", toastTimer = null, authTimer = null;
-let identityPrivateKey = null, identityPublicKey = null;
+let identityPrivateKey = null, identityPublicKey = null, identitySigningPublicKey = null;
 let activeConversation = null, activeKey = null, busy = false, refreshTimer = null;
 let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", sidebarRefreshTick = 0;
 const displayedOtpCodes = new Map();
@@ -126,6 +126,9 @@ async function api(path, options={}) {
   }
   return data;
 }
+function identityProofMessage(userId,identityPublicKey) {
+  return new TextEncoder().encode("SecureChat identity-key-proof:v1\n"+userId+"\n"+identityPublicKey);
+}
 async function ensureIdentity() {
   const saved=await storedIdentity(currentUser.userId);
   if(saved && saved.privateKey && saved.publicKey) {
@@ -136,19 +139,35 @@ async function ensureIdentity() {
     const raw=await crypto.subtle.exportKey("raw",pair.publicKey);
     identityPrivateKey=pair.privateKey;
     identityPublicKey=toB64(new Uint8Array(raw));
-    await saveIdentity(currentUser.userId,{privateKey:identityPrivateKey,publicKey:identityPublicKey});
   }
-  await api("/api/keys",{method:"PUT",body:{identityPublicKey}});
+  let signingPrivateKey=saved?.signingPrivateKey, signingPublicKey=saved?.signingPublicKey;
+  if(!signingPrivateKey || !signingPublicKey) {
+    const signingPair=await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},false,["sign","verify"]);
+    signingPrivateKey=signingPair.privateKey;
+    signingPublicKey=toB64(new Uint8Array(await crypto.subtle.exportKey("raw",signingPair.publicKey)));
+  }
+  identitySigningPublicKey=signingPublicKey;
+  await saveIdentity(currentUser.userId,{privateKey:identityPrivateKey,publicKey:identityPublicKey,signingPrivateKey,signingPublicKey});
+  const signature=await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},signingPrivateKey,identityProofMessage(currentUser.userId,identityPublicKey));
+  await api("/api/keys",{method:"PUT",body:{
+    identityPublicKey,
+    identitySigningPublicKey:signingPublicKey,
+    identityKeySignature:toB64(new Uint8Array(signature))
+  }});
 }
 async function deriveKey(conversationId,peerUserId) {
   if(activeKey && activeConversation && activeConversation.id===conversationId)return activeKey;
   const peer=await api("/api/keys/"+encodeURIComponent(peerUserId));
+  if(!peer.identitySigningPublicKey || !peer.identityKeySignature) throw new Error("相手の公開鍵は旧形式です。相手に最新版で再ログインしてもらってください。");
+  const signingKey=await crypto.subtle.importKey("raw",fromB64(peer.identitySigningPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]);
+  const proofValid=await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"},signingKey,fromB64(peer.identityKeySignature),identityProofMessage(peerUserId,peer.identityPublicKey));
+  if(!proofValid) throw new Error("相手の公開鍵署名を検証できません。安全のため接続を中止しました。");
   const [ownFingerprint,peerFingerprint]=await Promise.all([
-    publicKeyFingerprint(identityPublicKey),
-    publicKeyFingerprint(peer.identityPublicKey)
+    publicKeyFingerprint(identitySigningPublicKey),
+    publicKeyFingerprint(peer.identitySigningPublicKey)
   ]);
   el.fingerprint.hidden=false;
-  el.fingerprint.textContent="公開鍵指紋（SHA-256）\nあなた: "+ownFingerprint+"\n相手: "+peerFingerprint+"\n別の安全な経路で相手の画面と照合してください。指紋が変わった場合は再確認が必要です。";
+  el.fingerprint.textContent="署名付き公開鍵の指紋（SHA-256）\nあなた: "+ownFingerprint+"\n相手: "+peerFingerprint+"\n署名検証: 成功。初回接続時と指紋変更時は、必ず別の安全な経路で相手と照合してください。";
   const pub=await crypto.subtle.importKey("raw",fromB64(peer.identityPublicKey),{name:"ECDH",namedCurve:"P-256"},false,[]);
   const bits=await crypto.subtle.deriveBits({name:"ECDH",public:pub},identityPrivateKey,256);
   const material=await crypto.subtle.importKey("raw",bits,"HKDF",false,["deriveKey"]);
@@ -328,7 +347,7 @@ async function deleteAccount() {
   try {
     await api("/api/auth/delete",{method:"POST",body:{password}});
     await removeIdentity(userId);
-    currentUser=null;identityPrivateKey=null;identityPublicKey=null;activeConversation=null;activeKey=null;
+    currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;
     clearInterval(authTimer);clearInterval(refreshTimer);
     setAuthMode("login");showAuth();toast("アカウントと関連データを削除しました。");
   } catch(e) {toast(e.message);}
