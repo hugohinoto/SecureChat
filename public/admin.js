@@ -1,6 +1,6 @@
 const $=s=>document.querySelector(s);
 const notice=$("#notice"),consoleRoot=$("#console");
-let page=0,currentAdmin="";
+let page=0,currentAdmin="",lastSecurityCheck=null;
 function message(text,type=""){notice.textContent=text;notice.className="notice "+type;}
 async function api(path,options={}){
  const response=await fetch(path,{method:options.method||"GET",credentials:"same-origin",cache:"no-store",headers:{"Accept":"application/json",...(options.body?{"Content-Type":"application/json"}:{})},...(options.body?{body:JSON.stringify(options.body)}:{})});
@@ -81,10 +81,29 @@ async function loadBugReports(){
  }
  if(!d.reports.length){const p=document.createElement("p");p.className="muted";p.textContent="バグ報告はまだありません。";root.append(p);}
 }
+function csvCell(value){
+ const text=String(value??"");
+ const safe=/^[\\s]*[=+@\\-]/.test(text)?"'"+text:text;
+ return '"'+safe.replace(/"/g,'""')+'"';
+}
+function exportSecurityCsv(){
+ if(!lastSecurityCheck?.checks?.length){message("先にセキュリティチェックを実行してください。","error");return;}
+ const rows=[["診断日時","総合判定","診断ID","診断項目","判定","詳細"]];
+ for(const item of lastSecurityCheck.checks){
+  rows.push([new Date(lastSecurityCheck.checkedAt).toISOString(),lastSecurityCheck.overall,item.id,item.label,item.status,item.detail]);
+ }
+ const csv="\\uFEFF"+rows.map(row=>row.map(csvCell).join(",")).join("\\r\\n");
+ const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
+ const url=URL.createObjectURL(blob),link=document.createElement("a");
+ link.href=url;link.download="securechat-security-check-"+new Date(lastSecurityCheck.checkedAt).toISOString().replace(/[:.]/g,"-")+".csv";
+ document.body.append(link);link.click();link.remove();URL.revokeObjectURL(url);
+ message("セキュリティ診断結果をCSVで出力しました。","ok");
+}
 async function runSecurityCheck(){
- const root=$("#security-checks"),summary=$("#security-summary");root.replaceChildren();summary.textContent="チェック中…";
+ const root=$("#security-checks"),summary=$("#security-summary"),exportButton=$("#export-security-csv");root.replaceChildren();summary.textContent="チェック中…";lastSecurityCheck=null;exportButton.disabled=true;
  try{
   const d=await api("/api/admin/security-check");
+  lastSecurityCheck=d;exportButton.disabled=!Array.isArray(d.checks)||d.checks.length===0;
   const labels={ok:"問題なし",warning:"要確認",critical:"重大",error:"エラー"};
   summary.textContent="総合判定："+({ok:"問題なし",warning:"要確認",critical:"重大な未実装項目あり",error:"設定エラー"})[d.overall]+" · "+date(d.checkedAt);
   summary.dataset.status=d.overall;
@@ -106,7 +125,7 @@ $("#user-search").addEventListener("submit",async e=>{e.preventDefault();page=0;
 $("#user-reset").addEventListener("click",async()=>{$("#user-query").value="";$("#user-search-mode").value="prefix";$("#user-role-filter").value="all";$("#user-sort").value="created_desc";page=0;try{await loadUsers();}catch(e){message(e.message,"error");}});
 $("#prev-page").addEventListener("click",async()=>{page=Math.max(0,page-1);try{await loadUsers();}catch(e){message(e.message,"error");}});
 $("#next-page").addEventListener("click",async()=>{page++;try{await loadUsers();}catch(e){message(e.message,"error");}});
-$("#run-security-check").addEventListener("click",runSecurityCheck);
+$("#run-security-check").addEventListener("click",runSecurityCheck);\n$("#export-security-csv").addEventListener("click",exportSecurityCsv);
 $("#refresh-reports").addEventListener("click",()=>loadBugReports().catch(e=>message(e.message,"error")));
 $("#refresh-logs").addEventListener("click",()=>loadLogs().catch(e=>message(e.message,"error")));
 $("#logout").addEventListener("click",async()=>{try{await fetch("/api/auth/logout",{method:"POST",credentials:"same-origin",headers:{"Accept":"application/json"}});}finally{location.href="/";}});
