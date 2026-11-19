@@ -32,5 +32,15 @@
   "triggers": { "crons": ["*/5 * * * *"] },
   "observability": {
     "enabled": true
+  },
+  "previews": {
+    "durable_objects": {
+      "bindings": [
+        {
+          "name": "CHAT_ROOM",
+          "class_name": "ChatRoom"
+        }
+      ]
+    }
   }
 }
