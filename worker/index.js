@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PASSWORD_ITERATIONS = 100_000;
+const ADMIN_PASSWORD_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const MAX_MESSAGE_LENGTH = 2_000;
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const RATE_LIMIT_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -132,7 +133,7 @@ async function getSession(env, token) {
   if (!token || token.length > 128) return null;
   const tokenHash = await sha256(token);
   return env.DB.prepare(
-    `SELECT users.id, users.user_id, users.is_admin, sessions.created_at, sessions.expires_at
+    `SELECT users.id, users.user_id, users.is_admin, users.password_changed_at, sessions.created_at, sessions.expires_at
        FROM sessions
        JOIN users ON users.id = sessions.user_id
       WHERE sessions.token_hash = ? AND sessions.expires_at > ?
@@ -248,6 +249,7 @@ async function handleApi(request, env) {
     catch { return json({ error: "AUTH_UNAVAILABLE" }, 503); }
     if (!admin) return json({ error: "UNAUTHENTICATED" }, 401);
     if (Number(admin.is_admin) !== 1) return json({ error: "ADMIN_REQUIRED" }, 403);
+    if (!admin.password_changed_at || Date.now() - Number(admin.password_changed_at) >= ADMIN_PASSWORD_MAX_AGE_MS) return json({ error: "PASSWORD_CHANGE_REQUIRED", message: "管理者パスワードの有効期限が切れています。先にパスワードを変更してください。" }, 428);
     if (Date.now() - Number(admin.created_at) > 15 * 60 * 1000) {
       return json({ error: "ADMIN_REAUTH_REQUIRED", message: "管理者操作には直近15分以内のログインが必要です。ログアウトして再ログインしてください。" }, 428);
     }
@@ -422,7 +424,7 @@ async function handleApi(request, env) {
     try {
       const session = await getSession(env, readCookie(request));
       return json(session
-        ? { authenticated: true, user: { id: session.id, userId: session.user_id, isAdmin: Number(session.is_admin) === 1 } }
+        ? { authenticated: true, user: { id: session.id, userId: session.user_id, isAdmin: Number(session.is_admin) === 1, mustChangePassword: Number(session.is_admin) === 1 && (!session.password_changed_at || Date.now() - Number(session.password_changed_at) >= ADMIN_PASSWORD_MAX_AGE_MS) } }
         : { authenticated: false, user: null });
     } catch {
       return json({ error: "AUTH_UNAVAILABLE", message: "認証サービスを利用できません。" }, 503);
@@ -503,8 +505,8 @@ async function handleApi(request, env) {
           "UPDATE registration_invites SET used_at=? WHERE code_hash=? AND used_at IS NULL AND expires_at>? RETURNING id"
         ).bind(now, inviteHash, now),
         env.DB.prepare(
-          "INSERT INTO users (id, user_id, password_salt, password_hash, password_iterations, created_at) SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM registration_invites WHERE code_hash=? AND used_at=? AND expires_at>?)"
-        ).bind(userUuid, userId, base64url(salt), base64url(passwordHash), PASSWORD_ITERATIONS, now, inviteHash, now, now)
+          "INSERT INTO users (id, user_id, password_salt, password_hash, password_iterations, created_at, password_changed_at) SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM registration_invites WHERE code_hash=? AND used_at=? AND expires_at>?)"
+        ).bind(userUuid, userId, base64url(salt), base64url(passwordHash), PASSWORD_ITERATIONS, now, now, inviteHash, now, now)
       ]);
       if (!registration[0]?.results?.length || registration[1]?.meta?.changes !== 1) {
         return json({ error: "INVITE_CODE_INVALID", message: "招待コードが無効・使用済み・期限切れです。" }, 403);
@@ -548,7 +550,7 @@ async function handleApi(request, env) {
 
     try {
       const user = await env.DB.prepare(
-        "SELECT id, user_id, password_salt, password_hash, password_iterations FROM users WHERE user_id = ? LIMIT 1"
+        "SELECT id, user_id, is_admin, password_changed_at, password_salt, password_hash, password_iterations FROM users WHERE user_id = ? LIMIT 1"
       ).bind(userId).first();
 
       const salt = user ? fromBase64url(user.password_salt) : encoder.encode("securechat-dummy-salt");
@@ -566,13 +568,52 @@ async function handleApi(request, env) {
       const session = await createSession(env, user.id);
       const response = json({
         authenticated: true,
-        user: { id: user.id, userId: user.user_id }
+        user: { id: user.id, userId: user.user_id, isAdmin: Number(user.is_admin) === 1, mustChangePassword: Number(user.is_admin) === 1 && (!user.password_changed_at || now - Number(user.password_changed_at) >= ADMIN_PASSWORD_MAX_AGE_MS) }
       });
       setSessionCookie(response, request, session.token);
       return response;
     } catch (error) {
       console.error("Login failed:", error.message);
       return json({ error: "LOGIN_UNAVAILABLE", message: "ログインできませんでした。時間をおいて再試行してください。" }, 503);
+    }
+  }
+
+  if (path === "/api/auth/admin/change-password" && method === "POST") {
+    if (!sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
+    if (!await checkRateLimit(env, request, "admin-password-change", 5)) return json({ error: "RATE_LIMITED" }, 429);
+    let session;
+    try { session = await getSession(env, readCookie(request)); } catch { return json({ error: "AUTH_UNAVAILABLE" }, 503); }
+    if (!session) return json({ error: "UNAUTHENTICATED" }, 401);
+    if (Number(session.is_admin) !== 1) return json({ error: "ADMIN_REQUIRED" }, 403);
+    let body;
+    try { body = await readJson(request); } catch (error) { return json({ error: error.message }, 400); }
+    const currentPassword = body?.currentPassword;
+    const newPassword = body?.newPassword;
+    if (!validPassword(currentPassword) || !validPassword(newPassword)) return json({ error: "INVALID_PASSWORD", message: "現在のパスワードと新しいパスワードはそれぞれ12〜128文字で入力してください。" }, 400);
+    if (currentPassword === newPassword) return json({ error: "PASSWORD_UNCHANGED", message: "新しいパスワードは現在のものと異なるものにしてください。" }, 400);
+    try {
+      const user = await env.DB.prepare("SELECT password_salt, password_hash, password_iterations FROM users WHERE id=? AND is_admin=1").bind(session.id).first();
+      if (!user) return json({ error: "ADMIN_REQUIRED" }, 403);
+      const derived = await derivePassword(currentPassword, fromBase64url(user.password_salt), user.password_iterations);
+      if (!constantTimeEqual(derived, fromBase64url(user.password_hash))) return json({ error: "INVALID_CREDENTIALS", message: "現在のパスワードが正しくありません。" }, 401);
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const hash = await derivePassword(newPassword, salt);
+      const now = Date.now();
+      const oldSessions = await env.DB.prepare("SELECT token_hash FROM sessions WHERE user_id=?").bind(session.id).all();
+      const room = env.CHAT_ROOM.get(env.CHAT_ROOM.idFromName("open-lounge"));
+      await Promise.allSettled((oldSessions.results || []).map(({token_hash}) => room.fetch("https://chat-room.internal/revoke", { method:"POST", headers:{"X-Session-Hash":token_hash} })));
+      await env.DB.batch([
+        env.DB.prepare("UPDATE users SET password_salt=?, password_hash=?, password_iterations=?, password_changed_at=? WHERE id=? AND is_admin=1").bind(base64url(salt), base64url(hash), PASSWORD_ITERATIONS, now, session.id),
+        env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(session.id)
+      ]);
+      const freshSession = await createSession(env, session.id);
+      await writeAdminAudit(env, session, "admin.password.change", session.id, { changedAt: now, maxAgeDays: 90 });
+      const response = json({ changed: true, user: { id: session.id, userId: session.user_id, isAdmin: true, mustChangePassword: false } });
+      setSessionCookie(response, request, freshSession.token);
+      return response;
+    } catch (error) {
+      console.error("Admin password change failed:", error.message);
+      return json({ error: "PASSWORD_CHANGE_FAILED", message: "パスワードを変更できませんでした。" }, 503);
     }
   }
 
@@ -585,6 +626,7 @@ async function handleApi(request, env) {
     try { session = await getSession(env, readCookie(request)); }
     catch { return json({ error: "AUTH_UNAVAILABLE" }, 503); }
     if (!session) return json({ error: "UNAUTHENTICATED" }, 401);
+    if (Number(session.is_admin) === 1) return json({ error: "ADMIN_ACCOUNT_PROTECTED", message: "管理者アカウントは通常のアカウント削除機能では削除できません。" }, 403);
     let body;
     try { body = await readJson(request); }
     catch (error) { return json({ error: error.message }, 400); }
