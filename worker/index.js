@@ -388,7 +388,7 @@ async function handleApi(request, env) {
       }
       return json({ error: "NOT_FOUND" }, 404);
     } catch (error) {
-      console.error("Admin API failed:", error.message);
+      console.error("Admin API failed:");
       return json({ error: "ADMIN_OPERATION_FAILED", message: "管理操作を完了できませんでした。" }, 503);
     }
   }
@@ -417,6 +417,7 @@ async function handleApi(request, env) {
         messageRetentionSeconds: 3600,
         contactVerification: "mutual-one-time-code",
         contactVerificationConfigured: typeof env.CONTACT_OTP_PEPPER === "string" && env.CONTACT_OTP_PEPPER.length >= 32,
+        applicationDataEncryptionConfigured: typeof env.APP_DATA_ENCRYPTION_KEY === "string" && encoder.encode(env.APP_DATA_ENCRYPTION_KEY).byteLength >= 32,
         contactVerificationDiagnostic: {
           pepperPresent: typeof env.CONTACT_OTP_PEPPER !== "undefined",
           pepperIsString: typeof env.CONTACT_OTP_PEPPER === "string",
@@ -464,7 +465,7 @@ async function handleApi(request, env) {
       ).bind(crypto.randomUUID(), session.id, await sha256(code), expiresAt, now).run();
       return json({ code, expiresAt }, 201);
     } catch (error) {
-      console.error("Registration invitation failed:", error.message);
+      console.error("Registration invitation failed:");
       return json({ error: "INVITATION_UNAVAILABLE", message: "招待コードを発行できませんでした。" }, 503);
     }
   }
@@ -532,7 +533,7 @@ async function handleApi(request, env) {
       if (String(error.message).includes("UNIQUE")) {
         return json({ error: "USER_ID_TAKEN", message: "このユーザーIDは既に使用されています。" }, 409);
       }
-      console.error("Account registration failed:", error.message);
+      console.error("Account registration failed:");
       return json({ error: "REGISTRATION_UNAVAILABLE", message: "アカウントを作成できませんでした。時間をおいて再試行してください。" }, 503);
     }
   }
@@ -582,13 +583,16 @@ async function handleApi(request, env) {
       setSessionCookie(response, request, session.token);
       return response;
     } catch (error) {
-      console.error("Login failed:", error.message);
+      console.error("Login failed:");
       return json({ error: "LOGIN_UNAVAILABLE", message: "ログインできませんでした。時間をおいて再試行してください。" }, 503);
     }
   }
 
   if (path === "/api/auth/admin/change-password" && method === "POST") {
     if (!sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
+    if (typeof env.APP_DATA_ENCRYPTION_KEY !== "string" || encoder.encode(env.APP_DATA_ENCRYPTION_KEY).byteLength < 32) {
+      return json({ error: "DATA_ENCRYPTION_NOT_CONFIGURED", message: "管理操作ログ用の暗号鍵が未設定です。管理者パスワードは変更されていません。" }, 503);
+    }
     if (!await checkRateLimit(env, request, "admin-password-change", 5)) return json({ error: "RATE_LIMITED" }, 429);
     let session;
     try { session = await getSession(env, readCookie(request)); } catch { return json({ error: "AUTH_UNAVAILABLE" }, 503); }
@@ -621,7 +625,7 @@ async function handleApi(request, env) {
       setSessionCookie(response, request, freshSession.token);
       return response;
     } catch (error) {
-      console.error("Admin password change failed:", error.message);
+      console.error("Admin password change failed:");
       return json({ error: "PASSWORD_CHANGE_FAILED", message: "パスワードを変更できませんでした。" }, 503);
     }
   }
@@ -664,7 +668,7 @@ async function handleApi(request, env) {
       clearSessionCookie(response, request);
       return response;
     } catch (error) {
-      console.error("Account deletion failed:", error.message);
+      console.error("Account deletion failed:");
       return json({ error: "DELETE_FAILED", message: "アカウントを削除できませんでした。" }, 503);
     }
   }
