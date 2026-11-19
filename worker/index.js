@@ -422,7 +422,7 @@ async function handleApi(request, env) {
     try {
       const session = await getSession(env, readCookie(request));
       return json(session
-        ? { authenticated: true, user: { id: session.id, userId: session.user_id } }
+        ? { authenticated: true, user: { id: session.id, userId: session.user_id, isAdmin: Number(session.is_admin) === 1 } }
         : { authenticated: false, user: null });
     } catch {
       return json({ error: "AUTH_UNAVAILABLE", message: "認証サービスを利用できません。" }, 503);
@@ -920,6 +920,11 @@ export default {
     if (url.pathname.startsWith("/api/")) {
       const response = await handleApi(request, env);
       return securityHeaders(response, request);
+    }
+
+    if (url.pathname === "/admin" || url.pathname === "/admin/") {
+      const adminUrl = new URL("/admin.html", url);
+      return securityHeaders(await env.ASSETS.fetch(new Request(adminUrl, request)), request);
     }
 
     const assetResponse = await env.ASSETS.fetch(request);
