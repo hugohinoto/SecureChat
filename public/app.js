@@ -27,11 +27,29 @@ let activeConversation = null, activeKey = null, busy = false, refreshTimer = nu
 let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", sidebarRefreshTick = 0;
 const displayedOtpCodes = new Map();
 
-function toast(message) {
+function toast(message, duration = 3200) {
   el.toast.textContent = message;
   el.toast.classList.add("visible");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.toast.classList.remove("visible"), 3200);
+  toastTimer = setTimeout(() => el.toast.classList.remove("visible"), duration);
+}
+function appError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+function formatError(error, prefix = "") {
+  const code = typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{1,63}$/.test(error.code)
+    ? error.code : "CLIENT_ERROR";
+  const message = typeof error?.message === "string" && error.message
+    ? error.message : "予期しないエラーが発生しました。";
+  return prefix + message + "\nエラーコード: " + code;
+}
+function showError(error, prefix = "") {
+  toast(formatError(error, prefix), 8000);
+}
+function setError(target, error, prefix = "") {
+  target.textContent = formatError(error, prefix);
 }
 function state(value, label) {
   el.connection.dataset.state = value;
@@ -92,11 +110,16 @@ async function publicKeyFingerprint(base64Key) {
 }
 
 async function api(path, options={}) {
-  const response=await fetch(path,{
-    method:options.method||"GET",credentials:"same-origin",cache:"no-store",
-    headers:Object.assign({Accept:"application/json"},options.body?{"Content-Type":"application/json"}:{}),
-    ...(options.body?{body:JSON.stringify(options.body)}:{})
-  });
+  let response;
+  try {
+    response=await fetch(path,{
+      method:options.method||"GET",credentials:"same-origin",cache:"no-store",
+      headers:Object.assign({Accept:"application/json"},options.body?{"Content-Type":"application/json"}:{}),
+      ...(options.body?{body:JSON.stringify(options.body)}:{})
+    });
+  } catch {
+    throw appError("NETWORK_ERROR","サーバーに接続できません。通信状態を確認してください。");
+  }
   const data=response.status===204?{}:await response.json().catch(()=>({}));
   if(!response.ok) {
     const known={
@@ -122,7 +145,9 @@ async function api(path, options={}) {
       INVITE_LIMIT_REACHED:"有効な招待コードは最大5件までです。",
       CONVERSATION_NOT_FOUND:"チャットが見つかりません。"
     };
-    throw new Error(known[data.error]||data.message||("通信エラー ("+response.status+")"));
+    const code=typeof data.error==="string"&&/^[A-Z][A-Z0-9_]{1,63}$/.test(data.error)
+      ? data.error : "HTTP_"+response.status;
+    throw appError(code,known[data.error]||data.message||("通信エラー ("+response.status+")"));
   }
   return data;
 }
@@ -158,14 +183,16 @@ async function ensureIdentity() {
 async function deriveKey(conversationId,peerUserId) {
   if(activeKey && activeConversation && activeConversation.id===conversationId)return activeKey;
   const peer=await api("/api/keys/"+encodeURIComponent(peerUserId));
-  if(!peer.identitySigningPublicKey || !peer.identityKeySignature) throw new Error("相手の公開鍵は旧形式です。相手に最新版で再ログインしてもらってください。");
+  if(!peer.identitySigningPublicKey || !peer.identityKeySignature) {
+    throw appError("IDENTITY_KEY_LEGACY_FORMAT","相手の公開鍵は旧形式です。相手に最新版でログインし直してもらい、署名付き公開鍵を登録してください。");
+  }
   const signingKey=await crypto.subtle.importKey("raw",fromB64(peer.identitySigningPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]);
   const proofValid=await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"},signingKey,fromB64(peer.identityKeySignature),identityProofMessage(peerUserId,peer.identityPublicKey));
-  if(!proofValid) throw new Error("相手の公開鍵署名を検証できません。安全のため接続を中止しました。");
+  if(!proofValid) throw appError("IDENTITY_KEY_SIGNATURE_INVALID","相手の公開鍵署名を検証できません。安全のため接続を中止しました。");
   const ownRecord=await storedIdentity(currentUser.userId);
   const peerPins=ownRecord?.peerPins||{};
   if(peerPins[peerUserId] && peerPins[peerUserId]!==peer.identitySigningPublicKey) {
-    throw new Error("相手の署名鍵が以前の登録から変更されています。別経路で指紋を確認するまで接続を中止しました。");
+    throw appError("IDENTITY_SIGNING_KEY_CHANGED","相手の署名鍵が以前の登録から変更されています。別経路で指紋を確認するまで接続を中止しました。");
   }
   if(!peerPins[peerUserId]) {
     peerPins[peerUserId]=peer.identitySigningPublicKey;
@@ -237,8 +264,10 @@ function setAuthMode(mode) {
 }
 function showAuth(message="") { el.gate.hidden=false; el.error.textContent=message; state("disconnected","ログインが必要です"); }
 async function checkSession() {
-  const r=await fetch("/api/auth/me",{credentials:"same-origin",cache:"no-store",headers:{Accept:"application/json"}});
-  if(!r.ok)throw new Error("認証状態を確認できませんでした。");
+  let r;
+  try { r=await fetch("/api/auth/me",{credentials:"same-origin",cache:"no-store",headers:{Accept:"application/json"}}); }
+  catch { throw appError("AUTH_NETWORK_ERROR","認証サーバーに接続できません。"); }
+  if(!r.ok)throw appError("AUTH_SESSION_CHECK_FAILED","認証状態を確認できませんでした。");
   return r.json();
 }
 async function loadPublicAnnouncements() {
@@ -297,8 +326,8 @@ async function signIn(user) {
 function startAuthCheck() {
   clearInterval(authTimer);
   authTimer=setInterval(async()=>{
-    try { const s=await checkSession(); if(!s.authenticated){currentUser=null;showAuth("セッションの有効期限が切れました。再ログインしてください。");} }
-    catch {toast("認証サーバーに接続できません。");}
+    try { const s=await checkSession(); if(!s.authenticated){currentUser=null;showAuth(formatError(appError("SESSION_EXPIRED","セッションの有効期限が切れました。再ログインしてください。")));} }
+    catch {showError(appError("AUTH_RECHECK_FAILED","認証サーバーに接続できません。"));}
   },300000);
 }
 async function submitAdminPasswordChange(event) {
@@ -308,10 +337,10 @@ async function submitAdminPasswordChange(event) {
   const confirmation=el.confirmAdminPassword.value;
   el.passwordChangeError.textContent="";
   if(Array.from(currentPassword).length<12 || Array.from(newPassword).length<12 || Array.from(newPassword).length>128) {
-    el.passwordChangeError.textContent="現在と新しいパスワードは12〜128文字で入力してください。";return;
+    setError(el.passwordChangeError,appError("PASSWORD_LENGTH_INVALID","現在と新しいパスワードは12〜128文字で入力してください。"));return;
   }
-  if(newPassword!==confirmation) {el.passwordChangeError.textContent="新しいパスワードが一致しません。";return;}
-  if(newPassword===currentPassword) {el.passwordChangeError.textContent="現在とは異なるパスワードを設定してください。";return;}
+  if(newPassword!==confirmation) {setError(el.passwordChangeError,appError("PASSWORD_CONFIRMATION_MISMATCH","新しいパスワードが一致しません。"));return;}
+  if(newPassword===currentPassword) {setError(el.passwordChangeError,appError("PASSWORD_UNCHANGED","現在とは異なるパスワードを設定してください。"));return;}
   el.passwordChangeSubmit.disabled=true;
   try {
     const result=await api("/api/auth/admin/change-password",{method:"POST",body:{currentPassword,newPassword}});
@@ -319,22 +348,22 @@ async function submitAdminPasswordChange(event) {
     el.passwordChangeGate.hidden=true;
     await signIn(result.user);
     toast("管理者パスワードを変更しました。次回の変更期限は90日後です。");
-  } catch(error) {el.passwordChangeError.textContent=error.message;}
+  } catch(error) {setError(el.passwordChangeError,error);}
   finally {el.passwordChangeSubmit.disabled=false;}
 }
 async function submitAuth(event) {
   event.preventDefault();
   const userId=el.user.value.trim(),password=el.password.value,registering=authMode==="register";
   el.error.textContent="";
-  if(!/^[a-zA-Z0-9_]{3,32}$/.test(userId)){el.error.textContent="ユーザーIDは半角英数字・アンダースコアの3〜32文字にしてください。";return;}
-  if(registering&&!el.inviteCode.value.trim()){el.error.textContent="招待コードを入力してください。";return;}
-  if(registering&&Array.from(password).length<12){el.error.textContent="パスワードは12文字以上にしてください。";return;}
-  if(!password||Array.from(password).length>128){el.error.textContent="パスワードを確認してください。";return;}
+  if(!/^[a-zA-Z0-9_]{3,32}$/.test(userId)){setError(el.error,appError("USER_ID_FORMAT_INVALID","ユーザーIDは半角英数字・アンダースコアの3〜32文字にしてください。"));return;}
+  if(registering&&!el.inviteCode.value.trim()){setError(el.error,appError("INVITE_CODE_REQUIRED","招待コードを入力してください。"));return;}
+  if(registering&&Array.from(password).length<12){setError(el.error,appError("PASSWORD_TOO_SHORT","パスワードは12文字以上にしてください。"));return;}
+  if(!password||Array.from(password).length>128){setError(el.error,appError("PASSWORD_INVALID","パスワードを確認してください。"));return;}
   el.submit.disabled=true;
   try {
     const data=await api(registering?"/api/auth/register":"/api/auth/login",{method:"POST",body:registering?{userId,password,inviteCode:el.inviteCode.value.trim()}:{userId,password}});
     await signIn(data.user); toast(registering?"アカウントを作成しました。":"ログインしました。");
-  } catch(e) {el.error.textContent=e.message;}
+  } catch(e) {setError(el.error,e);}
   finally {el.submit.disabled=false;el.submit.textContent=authMode==="register"?"アカウントを作成":"ログイン";}
 }
 async function issueRegistrationInvite() {
@@ -344,7 +373,7 @@ async function issueRegistrationInvite() {
     const invite=await api("/api/registration-invitations",{method:"POST",body:{}});
     showOtpCode(el.registrationInvite,invite.code,invite.expiresAt,"","24時間以内に共有してください。コードは1回だけ使用できます。");
     toast("アカウント招待コードを発行しました。");
-  } catch(e) {toast(e.message);}
+  } catch(e) {showError(e);}
   finally {el.registrationInviteButton.disabled=false;}
 }
 async function deleteAccount() {
@@ -360,7 +389,7 @@ async function deleteAccount() {
     currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;
     clearInterval(authTimer);clearInterval(refreshTimer);
     setAuthMode("login");showAuth();toast("アカウントと関連データを削除しました。");
-  } catch(e) {toast(e.message);}
+  } catch(e) {showError(e);}
   finally {el.deleteAccount.disabled=false;}
 }
 async function logout() {
@@ -369,7 +398,7 @@ async function logout() {
     await api("/api/auth/logout",{method:"POST"});
     currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;
     clearInterval(authTimer);clearInterval(refreshTimer);setAuthMode("login");showAuth();toast("ログアウトしました。");
-  } catch(e) {toast(e.message);}
+  } catch(e) {showError(e);}
   finally {el.logout.disabled=false;}
 }
 function userAction(userId,label,fn) {
@@ -385,12 +414,12 @@ function showOtpCode(container,code,expiresAt,key="",detailText="5分以内に�
   const value=document.createElement("strong");value.className="otp-code";value.textContent=code;
   const detail=document.createElement("span");detail.textContent=detailText;
   const copy=document.createElement("button");copy.type="button";copy.textContent="コードをコピー";
-  copy.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(code);toast("コードをコピーしました。");}catch{toast("コピーできませんでした。コードを手動で共有してください。");}});
+  copy.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(code);toast("コードをコピーしました。");}catch{showError(appError("CLIPBOARD_COPY_FAILED","コピーできませんでした。コードを手動で共有してください。"));}});
   panel.append(value,detail,copy);container.append(panel);
 }
 async function searchUsers() {
   const q=el.search.value.trim().toLowerCase();el.results.replaceChildren();
-  if(!/^[a-z0-9_]{1,32}$/.test(q)){el.results.textContent="1文字以上のユーザーIDを入力してください。";return;}
+  if(!/^[a-z0-9_]{1,32}$/.test(q)){el.results.textContent=formatError(appError("USER_SEARCH_QUERY_INVALID","1文字以上のユーザーIDを入力してください。"));return;}
   try {
     const data=await api("/api/users/search?q="+encodeURIComponent(q));
     if(!data.users.length){el.results.textContent="ユーザーが見つかりませんでした。";return;}
@@ -403,16 +432,16 @@ async function searchUsers() {
         row.append(label);el.results.append(row);showOtpCode(el.results,invite.code,invite.expiresAt);
         toast("招待コードを発行しました。相手に安全な方法で共有してください。");
         await refreshSidebar();
-      } catch(e){toast(e.message);}
+      } catch(e){showError(e);}
     }));
-  } catch(e){el.results.textContent=e.message;}
+  } catch(e){el.results.textContent=formatError(e);}
 }
 function otpInputRow(parent,placeholder,buttonText,handler,fieldKey) {
   const row=document.createElement("div");row.className="otp-input-row";
   const input=document.createElement("input");input.type="text";input.inputMode="numeric";input.autocomplete="one-time-code";input.maxLength=8;input.placeholder=placeholder;input.dataset.invitationField=fieldKey;
   input.addEventListener("input",()=>{input.value=input.value.replace(/\D/g,"").slice(0,8);});
   const button=document.createElement("button");button.type="button";button.textContent=buttonText;
-  button.addEventListener("click",async()=>{button.disabled=true;try{await handler(input.value);}catch(e){toast(e.message);}finally{button.disabled=false;}});
+  button.addEventListener("click",async()=>{button.disabled=true;try{await handler(input.value);}catch(e){showError(e);}finally{button.disabled=false;}});
   row.append(input,button);parent.append(row);
 }
 function renderInvitations(invitations) {
@@ -434,7 +463,7 @@ function renderInvitations(invitations) {
     } else {
       const note=document.createElement("p");note.textContent="あなたの確認コードを発行し、招待した相手へ共有してください。";card.append(note);
       const button=document.createElement("button");button.type="button";button.className="invitation-action";button.textContent="確認コードを発行 / 再発行";
-      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/response-code",{method:"POST"});showOtpCode(card,result.code,result.expiresAt,"incoming:"+inv.id);}catch(e){toast(e.message);}finally{button.disabled=false;}});
+      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/response-code",{method:"POST"});showOtpCode(card,result.code,result.expiresAt,"incoming:"+inv.id);}catch(e){showError(e);}finally{button.disabled=false;}});
       card.append(button);
       const savedCode=displayedOtpCodes.get("incoming:"+inv.id);if(savedCode)showOtpCode(card,savedCode.code,savedCode.expiresAt);
     }
@@ -447,7 +476,7 @@ function renderInvitations(invitations) {
     if(!inv.invitee_verified_at) {
       const note=document.createElement("p");note.textContent="相手が最初のコードを入力するのを待っています。";card.append(note);
       const button=document.createElement("button");button.type="button";button.className="invitation-action";button.textContent=inv.inviter_code_expires_at>Date.now()?"コードを再発行":"期限切れ：コードを再発行";
-      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/reissue",{method:"POST"});showOtpCode(card,result.code,result.expiresAt,"outgoing:"+inv.id);}catch(e){toast(e.message);}finally{button.disabled=false;}});
+      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/reissue",{method:"POST"});showOtpCode(card,result.code,result.expiresAt,"outgoing:"+inv.id);}catch(e){showError(e);}finally{button.disabled=false;}});
       card.append(button);
       const savedCode=displayedOtpCodes.get("outgoing:"+inv.id);if(savedCode)showOtpCode(card,savedCode.code,savedCode.expiresAt);
     } else {
@@ -492,7 +521,7 @@ async function refreshSidebar() {
         }
         await refreshSidebar();
         toast("@"+c.userId+"を削除しました。");
-      } catch(error) {toast(error.message);remove.disabled=false;}
+      } catch(error) {showError(error);remove.disabled=false;}
     });
     row.append(open,remove);el.contacts.append(row);
   }
@@ -507,7 +536,7 @@ async function openConversation(peerUserId) {
     const result=await api("/api/conversations",{method:"POST",body:{recipientUserId:peerUserId}});
     await refreshSidebar();
     await selectConversation({id:result.conversationId,peer_user_id:peerUserId});
-  } catch(e){toast(e.message);}
+  } catch(e){showError(e);}
 }
 async function selectConversation(c) {
   activeConversation={id:c.id,peerUserId:c.peer_user_id};activeKey=null;
@@ -521,7 +550,7 @@ async function selectConversation(c) {
   welcome("暗号化チャット","このブラウザーで暗号化してから送信します。");
   updateSend();
   try {await deriveKey(c.id,c.peer_user_id);await loadMessages(true);updateSend();}
-  catch(e){toast("暗号鍵を準備できません: "+e.message);el.input.disabled=true;}
+  catch(e){showError(e,"暗号鍵を準備できません: ");el.input.disabled=true;}
   await refreshSidebar();
 }
 async function loadMessages(fullSync=false) {
@@ -557,14 +586,14 @@ async function loadMessages(fullSync=false) {
 async function sendMessage() {
   if(busy||!activeConversation)return;
   const text=el.input.value.trim();if(!text)return;
-  if(Array.from(text).length>MAX_MESSAGE_LENGTH){toast("メッセージは2000文字以内にしてください。");return;}
+  if(Array.from(text).length>MAX_MESSAGE_LENGTH){showError(appError("MESSAGE_LENGTH_EXCEEDED","メッセージは2000文字以内にしてください。"));return;}
   busy=true;updateSend();
   try {
     const key=await deriveKey(activeConversation.id,activeConversation.peerUserId);
     const encrypted=await encryptText(text,key);
     await api("/api/conversations/"+activeConversation.id+"/messages",{method:"POST",body:encrypted});
     el.input.value="";el.input.style.height="auto";await loadMessages(true);
-  } catch(e){toast(e.message);}
+  } catch(e){showError(e);}
   finally {busy=false;updateSend();el.input.focus();}
 }
 el.loginTab.addEventListener("click",()=>setAuthMode("login"));
@@ -596,6 +625,6 @@ async function bootstrap() {
     const session=await checkSession();
     if(!session.authenticated||!session.user){showAuth();return;}
     await signIn(session.user);
-  } catch(e){showAuth("初期化できませんでした: "+e.message);}
+  } catch(e){showAuth(formatError(e,"初期化できませんでした: "));}
 }
 bootstrap();
