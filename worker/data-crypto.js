@@ -99,7 +99,7 @@ export async function migrateSensitiveRows(env, now = Date.now()) {
   let activeVersion;
   try { activeVersion = activeDataKeyVersion(env); await importDataKey(env, activeVersion); }
   catch { return { skipped: true }; }
-  let announcements = 0, auditLogs = 0;
+  let announcements = 0, auditLogs = 0, bugReports = 0;
   try {
     const notices = await env.DB.prepare(
       "SELECT id,title,body,title_ciphertext,body_ciphertext,encryption_version,published_at,published FROM announcements WHERE encryption_version=0 OR title_ciphertext IS NULL OR body_ciphertext IS NULL OR title_ciphertext NOT LIKE ? OR body_ciphertext NOT LIKE ? LIMIT 10"
@@ -123,9 +123,17 @@ export async function migrateSensitiveRows(env, now = Date.now()) {
         .bind(encrypted, row.id, row.details_json).run();
       auditLogs += 1;
     }
+    const reports = await env.DB.prepare("SELECT id, encrypted_payload FROM bug_reports WHERE encrypted_payload NOT LIKE ? LIMIT 20").bind("enc:v" + activeVersion + ":%").all();
+    for (const row of reports.results || []) {
+      const plaintext = await decryptStored(env, "bug-report:" + row.id, row.encrypted_payload);
+      const encrypted = await encryptStored(env, "bug-report:" + row.id, plaintext);
+      await env.DB.prepare("UPDATE bug_reports SET encrypted_payload=?, updated_at=? WHERE id=? AND encrypted_payload=?")
+        .bind(encrypted, now, row.id, row.encrypted_payload).run();
+      bugReports += 1;
+    }
     await env.DB.prepare("DELETE FROM announcements WHERE published=1 AND expires_at IS NOT NULL AND expires_at<=?").bind(now).run();
-    return { skipped: false, activeVersion, announcements, auditLogs };
+    return { skipped: false, activeVersion, announcements, auditLogs, bugReports };
   } catch {
-    return { skipped: false, activeVersion, error: true };
+    return { skipped: false, activeVersion, announcements, auditLogs, bugReports, error: true };
   }
 }
