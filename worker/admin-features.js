@@ -21,7 +21,7 @@ async function checkSecurity(env) {
   const keyReady = keyStatus.activeKeyReady;
   const otpReady = typeof env.CONTACT_OTP_PEPPER === "string" && env.CONTACT_OTP_PEPPER.length >= 32;
   checks.push({ id: "db", label: "D1接続", status: "ok", detail: "管理画面からの診断クエリが成功しました。" });
-  checks.push({ id: "data-key", label: "保存データ暗号鍵", status: keyReady ? "ok" : "error", detail: keyReady ? "APP_DATA_ENCRYPTION_KEYを確認しました。" : "APP_DATA_ENCRYPTION_KEYが未設定、または32バイト未満です。" });
+  checks.push({ id: "data-key", label: "保存データ暗号鍵", status: keyReady ? "ok" : "error", detail: keyReady ? "現行鍵 v" + keyStatus.activeVersion + "を確認しました。" : "現行鍵 v" + keyStatus.activeVersion + "が未設定、または32バイト未満です。" });
   checks.push({ id: "otp-key", label: "OTP秘密値", status: otpReady ? "ok" : "error", detail: otpReady ? "CONTACT_OTP_PEPPERを確認しました。" : "CONTACT_OTP_PEPPERが未設定、または短すぎます。" });
   checks.push({ id: "key-rotation", label: "暗号鍵のローテーション", status: keyReady && keyStatus.configuredVersions.length >= 2 ? "ok" : keyReady ? "warning" : "error", detail: keyReady ? "現行鍵 v" + keyStatus.activeVersion + "。登録済み鍵世代: " + keyStatus.configuredVersions.join(", ") + "。Cronで旧世代データを段階的に再暗号化します。移行完了前に旧鍵を削除しないでください。" : "現行鍵が未設定です。APP_DATA_ENCRYPTION_KEY（旧v1）またはAPP_DATA_ENCRYPTION_KEY_V" + keyStatus.activeVersion + "を設定してください。" });
   try {
