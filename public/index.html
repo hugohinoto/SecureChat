@@ -74,6 +74,7 @@
           </svg>
         </button>
       </div>
+      <a class="admin-link" id="admin-link" href="/admin" hidden>管理者コンソール</a>
       <button class="delete-account-button" id="delete-account-button" type="button">アカウントを削除</button>
     </aside>
 
@@ -102,6 +103,10 @@
           <span id="security-description">会話ごとにブラウザー内で暗号化します。公開鍵指紋は別経路で照合してください。前方秘匿性は未実装です。</span>
         </div>
         <span class="banner-tag" id="security-tag">PROTOTYPE</span>
+      </section>
+      <section class="public-announcements" id="public-announcements" hidden aria-label="運営からのお知らせ">
+        <div class="public-announcements-heading">運営からのお知らせ</div>
+        <div id="public-announcements-list"></div>
       </section>
       <div class="fingerprint-panel" id="key-fingerprint" hidden></div>
 
