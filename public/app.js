@@ -13,7 +13,7 @@ const el = {
   search: $("#user-search-input"), searchButton: $("#user-search-button"),
   results: $("#user-search-results"), contacts: $("#contact-list"), invitations: $("#invitation-list"),
   conversations: $("#conversation-list"), adminLink: $("#admin-link"), announcements: $("#public-announcements"), announcementsList: $("#public-announcements-list"), contactCount: $("#contact-count"),
-  conversationCount: $("#conversation-count"), chatTitle: $("#chat-title"),
+  conversationCount: $("#conversation-count"), passwordChangeGate: $("#password-change-gate"), passwordChangeForm: $("#password-change-form"), currentAdminPassword: $("#current-admin-password"), newAdminPassword: $("#new-admin-password"), confirmAdminPassword: $("#confirm-admin-password"), passwordChangeError: $("#password-change-error"), passwordChangeSubmit: $("#password-change-submit"), chatTitle: $("#chat-title"),
   chatSubtitle: $("#chat-subtitle"), securityTitle: $("#security-title"),
   securityDescription: $("#security-description"), securityTag: $("#security-tag"),
   composerHint: $("#composer-hint"), fingerprint: $("#key-fingerprint")
@@ -232,8 +232,17 @@ async function loadPublicAnnouncements() {
 async function signIn(user) {
   const sessionState=await checkSession();
   user.isAdmin=!!sessionState.user?.isAdmin;
+  user.mustChangePassword=!!sessionState.user?.mustChangePassword;
   currentUser=user;
   if(el.adminLink)el.adminLink.hidden=!user.isAdmin;
+  if(el.deleteAccount)el.deleteAccount.hidden=!!user.isAdmin;
+  if(user.isAdmin && user.mustChangePassword) {
+    el.gate.hidden=true;
+    el.passwordChangeGate.hidden=false;
+    el.currentAdminPassword.focus();
+    return;
+  }
+  el.passwordChangeGate.hidden=true;
   await loadPublicAnnouncements();
   try {
     await ensureIdentity();
@@ -262,6 +271,27 @@ function startAuthCheck() {
     try { const s=await checkSession(); if(!s.authenticated){currentUser=null;showAuth("セッションの有効期限が切れました。再ログインしてください。");} }
     catch {toast("認証サーバーに接続できません。");}
   },300000);
+}
+async function submitAdminPasswordChange(event) {
+  event.preventDefault();
+  const currentPassword=el.currentAdminPassword.value;
+  const newPassword=el.newAdminPassword.value;
+  const confirmation=el.confirmAdminPassword.value;
+  el.passwordChangeError.textContent="";
+  if(Array.from(currentPassword).length<12 || Array.from(newPassword).length<12 || Array.from(newPassword).length>128) {
+    el.passwordChangeError.textContent="現在と新しいパスワードは12〜128文字で入力してください。";return;
+  }
+  if(newPassword!==confirmation) {el.passwordChangeError.textContent="新しいパスワードが一致しません。";return;}
+  if(newPassword===currentPassword) {el.passwordChangeError.textContent="現在とは異なるパスワードを設定してください。";return;}
+  el.passwordChangeSubmit.disabled=true;
+  try {
+    const result=await api("/api/auth/admin/change-password",{method:"POST",body:{currentPassword,newPassword}});
+    el.passwordChangeForm.reset();
+    el.passwordChangeGate.hidden=true;
+    await signIn(result.user);
+    toast("管理者パスワードを変更しました。次回の変更期限は90日後です。");
+  } catch(error) {el.passwordChangeError.textContent=error.message;}
+  finally {el.passwordChangeSubmit.disabled=false;}
 }
 async function submitAuth(event) {
   event.preventDefault();
@@ -511,6 +541,7 @@ async function sendMessage() {
 el.loginTab.addEventListener("click",()=>setAuthMode("login"));
 el.registerTab.addEventListener("click",()=>setAuthMode("register"));
 el.form.addEventListener("submit",submitAuth);
+el.passwordChangeForm.addEventListener("submit",submitAdminPasswordChange);
 el.logout.addEventListener("click",logout);
 el.deleteAccount.addEventListener("click",deleteAccount);
 el.registrationInviteButton.addEventListener("click",issueRegistrationInvite);
