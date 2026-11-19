@@ -515,7 +515,7 @@ async function selectConversation(c) {
   lastMessageCreatedAt=0;lastMessageId="";messageLoadBusy=false;
   el.chatTitle.textContent=c.peer_user_id;el.chatSubtitle.textContent="@"+c.peer_user_id+" · 1対1の個別チャット";
   el.securityTitle.textContent="暗号化チャット（試作）";
-  el.securityDescription.textContent="ECDH P-256 + HKDF + AES-GCM。公開鍵指紋を別経路で照合してください。前方秘匿性は未実装です。";
+  el.securityDescription.textContent="ECDH P-256 + HKDF + AES-GCM。ECDSA署名と端末内の鍵ピン留めを検証します。初回指紋は別経路で照合してください。前方秘匿性は未実装です。";
   el.securityTag.textContent="E2EE PROTOTYPE";
   el.composerHint.textContent="端末内で暗号化 · メッセージは1時間後に削除";
   welcome("暗号化チャット","このブラウザーで暗号化してから送信します。");
