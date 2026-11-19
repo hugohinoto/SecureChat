@@ -1,4 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
+import { handleAdminFeatures } from "./admin-features.js";
+import { encryptStored, migrateSensitiveRows } from "./data-crypto.js";
 
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PASSWORD_ITERATIONS = 100_000;
@@ -232,15 +234,22 @@ async function readJson(request) {
 }
 
 async function writeAdminAudit(env, session, action, targetUserId = null, details = {}) {
+  const id = crypto.randomUUID();
+  const encryptedDetails = await encryptStored(env, "admin-audit:" + id, JSON.stringify(details).slice(0, 4000));
   await env.DB.prepare(
     "INSERT INTO admin_audit_logs (id, admin_user_id, action, target_user_id, details_json, created_at) VALUES (?, ?, ?, ?, ?, ?)"
-  ).bind(crypto.randomUUID(), session.id, action, targetUserId, JSON.stringify(details).slice(0, 4000), Date.now()).run();
+  ).bind(id, session.id, action, targetUserId, encryptedDetails, Date.now()).run();
 }
 
 async function handleApi(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
+
+  const featureResponse = await handleAdminFeatures(request, env, {
+    url, readCookie, getSession, checkRateLimit, sameOrigin, readJson, writeAdminAudit
+  });
+  if (featureResponse) return featureResponse;
 
   if (path.startsWith("/api/admin/")) {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
@@ -942,7 +951,8 @@ export default {
       env.DB.prepare("DELETE FROM contact_invitations WHERE expires_at <= ?").bind(now).run(),
       env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now).run(),
       env.DB.prepare("DELETE FROM registration_invites WHERE expires_at <= ? OR (used_at IS NOT NULL AND used_at <= ?)").bind(now, now - 7 * 24 * 60 * 60 * 1000).run(),
-      env.DB.prepare("DELETE FROM rate_limit_buckets WHERE expires_at <= ?").bind(now).run()
+      env.DB.prepare("DELETE FROM rate_limit_buckets WHERE expires_at <= ?").bind(now).run(),
+      migrateSensitiveRows(env, now)
     ]));
   },
   async fetch(request, env) {
@@ -967,6 +977,11 @@ export default {
     if (url.pathname === "/admin" || url.pathname === "/admin/") {
       const adminUrl = new URL("/admin.html", url);
       return securityHeaders(await env.ASSETS.fetch(new Request(adminUrl, request)), request);
+    }
+
+    if (url.pathname === "/bug-report" || url.pathname === "/bug-report/") {
+      const reportUrl = new URL("/bug-report.html", url);
+      return securityHeaders(await env.ASSETS.fetch(new Request(reportUrl, request)), request);
     }
 
     const assetResponse = await env.ASSETS.fetch(request);
