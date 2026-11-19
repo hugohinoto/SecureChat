@@ -21,6 +21,7 @@ async function checkSecurity(env) {
   checks.push({ id: "db", label: "D1接続", status: "ok", detail: "管理画面からの診断クエリが成功しました。" });
   checks.push({ id: "data-key", label: "保存データ暗号鍵", status: keyReady ? "ok" : "error", detail: keyReady ? "APP_DATA_ENCRYPTION_KEYを確認しました。" : "APP_DATA_ENCRYPTION_KEYが未設定、または32バイト未満です。" });
   checks.push({ id: "otp-key", label: "OTP秘密値", status: otpReady ? "ok" : "error", detail: otpReady ? "CONTACT_OTP_PEPPERを確認しました。" : "CONTACT_OTP_PEPPERが未設定、または短すぎます。" });
+  checks.push({ id: "key-rotation", label: "暗号鍵のローテーション", status: "warning", detail: "現在はAPP_DATA_ENCRYPTION_KEYの単一世代です。再暗号化移行を実装するまでは、この値を変更しないでください。鍵を失うと保存データを復号できません。" });
   try {
     const [oldNotices, oldLogs, unsignedKeys, reportCount] = await Promise.all([
       env.DB.prepare("SELECT COUNT(*) AS count FROM announcements WHERE encryption_version=0 OR title_ciphertext IS NULL OR body_ciphertext IS NULL").first(),
