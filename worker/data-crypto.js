@@ -5,7 +5,7 @@ const DEFAULT_NOTICE_HOURS = 48;
 function encode64(bytes) {
   let raw = "";
   for (const byte of bytes) raw += String.fromCharCode(byte);
-  return btoa(raw).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
+  return btoa(raw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 function decode64(value) {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
@@ -35,11 +35,11 @@ export function dataKeyStatus(env) {
 async function importDataKey(env, version) {
   const secret = configuredSecret(env, version);
   if (!secret) throw new Error(version === 1 ? "APP_DATA_ENCRYPTION_KEY_NOT_CONFIGURED" : "APP_DATA_ENCRYPTION_KEY_V" + version + "_NOT_CONFIGURED");
-  const material = await crypto.subtle.digest("SHA-256", encoder.encode("SecureChat/application-data/v" + version + "\\0" + secret));
+  const material = await crypto.subtle.digest("SHA-256", encoder.encode("SecureChat/application-data/v" + version + "\0" + secret));
   return crypto.subtle.importKey("raw", material, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }
 export function storedKeyVersion(value) {
-  const match = typeof value === "string" && value.match(/^enc:v(\\d+):/);
+  const match = typeof value === "string" && value.match(/^enc:v(\d+):/);
   return match ? Number(match[1]) : 0;
 }
 export async function encryptStored(env, context, plaintext) {
