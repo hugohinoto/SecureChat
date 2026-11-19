@@ -80,7 +80,7 @@ export async function handleAdminFeatures(request, env, deps) {
         const orderBy = { created_desc: "created_at DESC", created_asc: "created_at ASC", login_desc: "last_login_at DESC, created_at DESC", user_id_asc: "user_id ASC" }[sort];
         if (!orderBy || !/^\d{1,5}$/.test(pageRaw)) return json({ error: "INVALID_SEARCH_OPTIONS" }, 400);
         const page = Math.min(10000, Number(pageRaw)), clauses = [], binds = [];
-        if (q) { if (mode === "exact") { clauses.push("(user_id=? OR id=?)"); binds.push(q, q); } else { clauses.push("user_id LIKE ?"); binds.push(mode === "contains" ? "%" + q + "%" : q + "%"); } }
+        if (q) { if (mode === "exact") { clauses.push("(user_id=? OR id=?)"); binds.push(q, q); } else { const escaped = q.replace(/[_%]/g, (ch) => "!" + ch); clauses.push("user_id LIKE ? ESCAPE '!'"); binds.push(mode === "contains" ? "%" + escaped + "%" : escaped + "%"); } }
         if (role === "admin") clauses.push("is_admin=1"); if (role === "user") clauses.push("is_admin=0");
         const where = clauses.length ? " WHERE " + clauses.join(" AND ") : "";
         const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM users" + where).bind(...binds).first();
