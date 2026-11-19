@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "d1_databases": [
+    {
+      "binding": "PREVIEW_DB",
+      "database_name": "securechat-preview-db",
+      "database_id": "ae88705d-afe7-4bf6-bb15-15d68c96f8d7",
+      "migrations_dir": "database/d1-migrations"
+    }
+  ]
+}
