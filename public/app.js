@@ -24,6 +24,7 @@ const STORE = "identity";
 let currentUser = null, authMode = "login", toastTimer = null, authTimer = null;
 let identityPrivateKey = null, identityPublicKey = null, identitySigningPublicKey = null;
 let activeConversation = null, activeKey = null, busy = false, refreshTimer = null;
+const openingConversationPeers = new Set();
 let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", sidebarRefreshTick = 0;
 const displayedOtpCodes = new Map();
 
@@ -502,7 +503,7 @@ async function refreshSidebar() {
   for(const c of contacts){
     const row=document.createElement("div");row.className="contact-row";
     const open=document.createElement("button");open.type="button";open.className="sidebar-user-button";open.textContent=c.userId;
-    open.addEventListener("click",()=>openConversation(c.userId));
+    open.addEventListener("click",()=>openConversation(c.userId,open));
     const remove=document.createElement("button");remove.type="button";remove.className="contact-remove";remove.textContent="削除";
     remove.title="@"+c.userId+"を連絡先から削除";
     remove.setAttribute("aria-label",c.userId+"を連絡先から削除");
@@ -531,12 +532,20 @@ async function refreshSidebar() {
     b.classList.toggle("active",activeConversation?.id===c.id);b.addEventListener("click",()=>selectConversation(c));el.conversations.append(b);
   }
 }
-async function openConversation(peerUserId) {
+async function openConversation(peerUserId, triggerButton = null) {
+  const peerKey=String(peerUserId).toLowerCase();
+  if(openingConversationPeers.has(peerKey))return;
+  openingConversationPeers.add(peerKey);
+  if(triggerButton)triggerButton.disabled=true;
   try {
     const result=await api("/api/conversations",{method:"POST",body:{recipientUserId:peerUserId}});
     await refreshSidebar();
     await selectConversation({id:result.conversationId,peer_user_id:peerUserId});
   } catch(e){showError(e);}
+  finally {
+    openingConversationPeers.delete(peerKey);
+    if(triggerButton)triggerButton.disabled=false;
+  }
 }
 async function selectConversation(c) {
   activeConversation={id:c.id,peerUserId:c.peer_user_id};activeKey=null;
