@@ -371,6 +371,34 @@ async function handleApi(request, env) {
         return json({ deleted: true });
       }
 
+      if (path === "/api/admin/bug-reports" && method === "GET") {
+        const status = url.searchParams.get("status") || "";
+        const allowed = ["open", "investigating", "resolved", "wont_fix"];
+        const filter = allowed.includes(status) ? status : "";
+        const rows = await env.DB.prepare(
+          `SELECT r.id, r.reporter_user_id, u.user_id, r.category, r.title, r.description, r.page_path, r.app_version, r.status, r.admin_note, r.created_at, r.updated_at
+             FROM bug_reports r LEFT JOIN users u ON u.id=r.reporter_user_id
+            ${filter ? "WHERE r.status=?" : ""}
+            ORDER BY r.created_at DESC LIMIT 200`
+        ).bind(...(filter ? [filter] : [])).all();
+        return json({ reports: rows.results || [] });
+      }
+
+      const bugReportUpdate = path.match(/^\\/api\\/admin\\/bug-reports\\/([a-f0-9-]+)$/i);
+      if (bugReportUpdate && method === "PATCH") {
+        let body;
+        try { body = await readJson(request); } catch (error) { return json({ error: error.message }, 400); }
+        const status = body?.status;
+        const adminNote = typeof body?.adminNote === "string" ? body.adminNote.trim().slice(0, 1000) : "";
+        if (!["open", "investigating", "resolved", "wont_fix"].includes(status)) return json({ error: "INVALID_REPORT_STATUS" }, 400);
+        const now = Date.now();
+        const result = await env.DB.prepare("UPDATE bug_reports SET status=?, admin_note=?, updated_at=? WHERE id=?")
+          .bind(status, adminNote, now, bugReportUpdate[1]).run();
+        if (!result.meta?.changes) return json({ error: "BUG_REPORT_NOT_FOUND" }, 404);
+        await writeAdminAudit(env, admin, "bug_report.update", bugReportUpdate[1], { status });
+        return json({ updated: true });
+      }
+
       if (path === "/api/admin/audit-logs" && method === "GET") {
         const rows = await env.DB.prepare(
           "SELECT l.id, l.action, l.target_user_id, l.details_json, l.created_at, u.user_id AS admin_user_id FROM admin_audit_logs l LEFT JOIN users u ON u.id=l.admin_user_id ORDER BY l.created_at DESC LIMIT 100"
@@ -685,6 +713,56 @@ async function handleApi(request, env) {
   }
 
 
+  if (path === "/api/bug-reports" && (method === "POST" || method === "GET")) {
+    if (method !== "GET" && !sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
+    let session;
+    try { session = await getSession(env, readCookie(request)); } catch { return json({ error: "AUTH_UNAVAILABLE" }, 503); }
+    if (!session) return json({ error: "UNAUTHENTICATED" }, 401);
+    if (method === "GET") {
+      const rows = await env.DB.prepare(
+        "SELECT id, category, title, description, page_path, app_version, status, created_at, updated_at, admin_note FROM bug_reports WHERE reporter_user_id=? ORDER BY created_at DESC LIMIT 50"
+      ).bind(session.id).all();
+      return json({ reports: rows.results || [] });
+    }
+    if (!await checkRateLimit(env, request, "bug-report", 3)) return json({ error: "RATE_LIMITED", message: "報告回数が多すぎます。15分ほど待ってから再試行してください。" }, 429);
+    let body;
+    try { body = await readJson(request); } catch (error) { return json({ error: error.message }, 400); }
+    const category = typeof body?.category === "string" ? body.category : "";
+    const title = typeof body?.title === "string" ? body.title.trim() : "";
+    const description = typeof body?.description === "string" ? body.description.trim() : "";
+    const pagePath = typeof body?.pagePath === "string" ? body.pagePath.slice(0, 200) : "/";
+    const appVersion = typeof body?.appVersion === "string" ? body.appVersion.slice(0, 40) : "unknown";
+    if (!["display", "login", "chat", "contact", "performance", "other"].includes(category) ||
+        title.length < 3 || title.length > 120 || description.length < 10 || description.length > 4000) {
+      return json({ error: "INVALID_BUG_REPORT", message: "種類、タイトル（3〜120文字）、詳細（10〜4000文字）を確認してください。" }, 400);
+    }
+    const id = crypto.randomUUID(), now = Date.now();
+    await env.DB.prepare(
+      "INSERT INTO bug_reports (id, reporter_user_id, category, title, description, page_path, app_version, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)"
+    ).bind(id, session.id, category, title, description, pagePath, appVersion, now, now).run();
+    return json({ created: true, reportId: id, createdAt: now }, 201);
+  }
+
+  if (path === "/api/security/check" && method === "GET") {
+    let session;
+    try { session = await getSession(env, readCookie(request)); } catch { return json({ error: "AUTH_UNAVAILABLE" }, 503); }
+    if (!session) return json({ error: "UNAUTHENTICATED" }, 401);
+    const checks = [];
+    const secure = new URL(request.url).protocol === "https:";
+    checks.push({ id: "https", label: "HTTPS通信", status: secure ? "ok" : "danger", detail: secure ? "暗号化されたHTTPS接続です。" : "HTTPS接続ではありません。" });
+    const [db, reportTable] = await Promise.all([
+      env.DB.prepare("SELECT 1 AS ok").first().catch(() => null),
+      env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='bug_reports'").first().catch(() => null)
+    ]);
+    checks.push({ id: "database", label: "データベース接続", status: db?.ok === 1 ? "ok" : "danger", detail: db?.ok === 1 ? "データベースに接続できています。" : "データベースに接続できません。" });
+    checks.push({ id: "report-storage", label: "バグ報告保存領域", status: reportTable ? "ok" : "warning", detail: reportTable ? "報告データ保存用テーブルが利用できます。" : "機能用データベース更新がまだ適用されていません。" });
+    checks.push({ id: "session", label: "ログインセッション", status: session.expires_at > Date.now() ? "ok" : "danger", detail: "現在のログインセッションを確認しました。" });
+    checks.push({ id: "password", label: "管理者パスワード期限", status: Number(session.is_admin) !== 1 ? "info" : (!session.password_changed_at || Date.now() - Number(session.password_changed_at) >= ADMIN_PASSWORD_MAX_AGE_MS ? "warning" : "ok"), detail: Number(session.is_admin) !== 1 ? "一般ユーザーのため管理者用チェックは対象外です。" : "管理者パスワードの更新期限を確認しました。" });
+    const hasWarning = checks.some(item => item.status === "warning");
+    const hasDanger = checks.some(item => item.status === "danger");
+    return json({ checkedAt: Date.now(), overall: hasDanger ? "danger" : hasWarning ? "warning" : "ok", checks, limitations: ["この診断はアプリの基本設定を確認するもので、侵入テストや脆弱性スキャンではありません。", "公開鍵の本人確認と前方秘匿性は未実装です。"] });
+  }
+
   // Authenticated private-chat API. Only ciphertext is accepted as message content.
   if (path.startsWith("/api/") && (path === "/api/users/search" || path === "/api/contacts" || path.startsWith("/api/contacts/") || path === "/api/contact-invitations" || path.startsWith("/api/contact-invitations/") || path === "/api/keys" || path.startsWith("/api/keys/") || path === "/api/conversations" || path.startsWith("/api/conversations/"))) {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
@@ -962,6 +1040,13 @@ export default {
     if (url.pathname.startsWith("/api/")) {
       const response = await handleApi(request, env);
       return securityHeaders(response, request);
+    }
+
+    if (url.pathname === "/security" || url.pathname === "/security/") {
+      return securityHeaders(await env.ASSETS.fetch(new Request(new URL("/security.html", url), request)), request);
+    }
+    if (url.pathname === "/report-bug" || url.pathname === "/report-bug/") {
+      return securityHeaders(await env.ASSETS.fetch(new Request(new URL("/report-bug.html", url), request)), request);
     }
 
     if (url.pathname === "/admin" || url.pathname === "/admin/") {
