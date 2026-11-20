@@ -1085,3 +1085,45 @@ body {
   .footer-caption { display: none; }
 }
 .mobile-back-button { display: none; }
+
+
+/* Keep populated private-chat lists visible in the scrollable mobile sidebar. */
+@media (max-width: 680px) {
+  .sidebar > .user-search-results,
+  .sidebar > .invitation-list,
+  .sidebar > .contact-list,
+  .sidebar > .conversation-list {
+    flex: 0 0 auto !important;
+  }
+
+  .sidebar > .contact-list,
+  .sidebar > .conversation-list {
+    min-height: 48px;
+  }
+
+  .contact-row {
+    display: flex !important;
+    flex: 0 0 auto !important;
+    min-height: 48px;
+  }
+
+  .sidebar .sidebar-user-button {
+    display: flex !important;
+    flex: 0 0 auto !important;
+    align-items: center;
+    min-height: 48px !important;
+    width: 100%;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+
+  .contact-row .sidebar-user-button {
+    flex: 1 1 auto !important;
+    width: auto;
+  }
+
+  .contact-remove {
+    flex: 0 0 auto !important;
+    min-height: 44px;
+  }
+}
