@@ -908,3 +908,180 @@ body {
   .icon-button { width: 44px; height: 44px; }
   .admin-link, .delete-account-button { min-height: 42px; font-size: 12px; }
 }
+
+
+/* Full-size chat workspace: LINE-like layout and mobile one-pane navigation */
+@media (min-width: 681px) {
+  html, body {
+    width: 100%;
+    height: 100%;
+    min-height: 100%;
+    overflow: hidden !important;
+  }
+  .app-shell {
+    display: grid;
+    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    gap: 14px;
+    width: calc(100vw - 32px);
+    max-width: none;
+    height: calc(100dvh - 32px) !important;
+    min-height: 520px;
+    margin: 16px auto;
+    align-items: stretch !important;
+  }
+  .sidebar {
+    height: 100% !important;
+    min-height: 0;
+    overflow-y: auto !important;
+    padding: 22px 16px 16px;
+  }
+  .chat-panel {
+    height: 100% !important;
+    min-height: 0;
+    min-width: 0;
+  }
+  .chat-header { min-height: 82px; padding: 18px 28px; }
+  .room-title-wrap h1 { font-size: 18px; }
+  .room-title-wrap p { font-size: 12px; }
+  .security-banner { margin: 14px 28px 0; padding: 13px 16px; }
+  .security-copy strong { font-size: 13px; }
+  .security-copy span { font-size: 11px; }
+  .timeline { padding: 24px clamp(24px, 4vw, 64px); gap: 17px; }
+  .message-row { max-width: min(760px, 82%); gap: 12px; }
+  .message-avatar { width: 38px; height: 38px; border-radius: 13px; font-size: 12px; }
+  .message-name { font-size: 12px; }
+  .message-time { font-size: 10px; }
+  .message-bubble { padding: 13px 17px; font-size: 14px; line-height: 1.75; }
+  .composer-area { padding: 0 28px 18px; }
+  .composer { padding: 14px 16px 12px; border-radius: 18px; }
+  .composer textarea { min-height: 38px; max-height: 160px; font-size: 14px; }
+  .send-button { min-height: 40px; min-width: 96px; font-size: 12px; }
+  .footer-caption { font-size: 9px; }
+}
+
+@media (max-width: 680px) {
+  html, body {
+    width: 100%;
+    height: 100%;
+    min-height: 100%;
+    overflow: hidden !important;
+    overscroll-behavior: none;
+  }
+  body { position: fixed; inset: 0; }
+  .app-shell {
+    display: block !important;
+    width: 100% !important;
+    height: 100dvh !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  .sidebar, .chat-panel {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100dvh !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    border: 0;
+    border-radius: 0;
+    overflow: hidden;
+  }
+  .sidebar {
+    display: flex !important;
+    flex-direction: column;
+    padding: max(14px, env(safe-area-inset-top)) 16px max(14px, env(safe-area-inset-bottom));
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+  }
+  .chat-panel { display: flex; }
+  body.mobile-list .chat-panel { display: none !important; }
+  body.mobile-chat .sidebar { display: none !important; }
+  body.mobile-chat .chat-panel { display: flex !important; }
+  .brand { padding: 2px 5px 18px; }
+  .brand-name { font-size: 20px; }
+  .brand-caption { font-size: 9px; }
+  .sidebar .sidebar-heading { margin-top: 18px; }
+  .user-search input { height: 44px; font-size: 16px; }
+  .user-search button, .user-result button,
+  .registration-invite-button { min-height: 42px; font-size: 13px; }
+  .sidebar-user-button { min-height: 48px; padding: 12px; font-size: 14px; }
+  .contact-list, .conversation-list { max-height: none !important; overflow: visible; gap: 7px; }
+  .contact-remove { min-height: 40px; font-size: 12px; }
+  .invitation-list { max-height: none; }
+  .sidebar-empty { font-size: 12px; }
+  .sidebar-note { margin-top: 18px; padding: 13px; }
+  .sidebar-note p { font-size: 11px; }
+  .profile-card { margin-top: 18px; padding-top: 15px; }
+  .profile-copy strong { font-size: 13px; }
+  .profile-copy span { font-size: 11px; }
+  .delete-account-button, .admin-link { min-height: 40px; font-size: 12px; }
+  .chat-panel { padding-bottom: env(safe-area-inset-bottom); }
+  .chat-header {
+    flex: 0 0 auto;
+    min-height: calc(66px + env(safe-area-inset-top));
+    padding: max(10px, env(safe-area-inset-top)) 13px 10px;
+  }
+  .mobile-back-button {
+    display: grid !important;
+    flex: 0 0 auto;
+    width: 42px;
+    height: 42px;
+    place-items: center;
+    margin-right: 1px;
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    color: #e8f2ff;
+    background: rgba(255,255,255,.06);
+    font-size: 23px;
+    cursor: pointer;
+  }
+  .room-title-avatar { width: 40px; height: 40px; }
+  .room-title-wrap { gap: 9px; }
+  .room-title-wrap h1 { font-size: 15px; }
+  .room-title-wrap p { max-width: 42vw; font-size: 10px; }
+  .connection-pill { padding: 7px 9px; font-size: 10px; }
+  .security-banner { flex: 0 0 auto; margin: 8px 10px 0; padding: 9px 10px; }
+  .security-copy strong { font-size: 11px; }
+  .security-copy span { font-size: 10px; line-height: 1.45; }
+  .banner-tag { display: none; }
+  .fingerprint-panel { flex: 0 0 auto; max-height: 96px; overflow: auto; }
+  .timeline {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 14px 13px;
+    gap: 13px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .welcome-card { width: min(440px, 100%); padding: 24px 18px; }
+  .message-row { max-width: 94%; gap: 8px; }
+  .message-avatar { width: 32px; height: 32px; }
+  .message-name { font-size: 11px; }
+  .message-time { font-size: 10px; }
+  .message-bubble { padding: 11px 13px; font-size: 14px; line-height: 1.65; }
+  .composer-area {
+    flex: 0 0 auto;
+    padding: 7px 10px max(10px, env(safe-area-inset-bottom));
+    background: rgba(9, 15, 29, .92);
+  }
+  .composer-hint { margin-bottom: 6px; font-size: 10px; }
+  .composer { padding: 9px 11px 8px; border-radius: 16px; }
+  .composer textarea {
+    min-height: 42px;
+    max-height: 120px;
+    padding: 8px 3px;
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  .composer-bottom { margin-top: 5px; }
+  .composer-shortcut { display: none; }
+  .character-count { font-size: 10px; }
+  .send-button { min-width: 82px; min-height: 42px; padding: 10px 14px; font-size: 13px; }
+  .footer-caption { display: none; }
+}
+.mobile-back-button { display: none; }
