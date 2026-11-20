@@ -200,8 +200,10 @@ function securityHeaders(response, request) {
       `connect-src 'self' ${wsOrigin}`,
       "object-src 'none'",
       "base-uri 'self'",
+      "frame-src 'none'",
       "frame-ancestors 'none'",
-      "form-action 'self'"
+      "form-action 'self'",
+      "upgrade-insecure-requests"
     ].join("; ")
   );
   if (url.protocol === "https:") {
@@ -993,7 +995,7 @@ export default {
     const url = new URL(request.url);
     if (url.protocol === "http:") {
       url.protocol = "https:";
-      return Response.redirect(url.toString(), 308);
+      return securityHeaders(Response.redirect(url.toString(), 308), request);
     }
 
     if (url.pathname === "/ws") {
