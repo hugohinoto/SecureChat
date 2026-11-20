@@ -24,7 +24,7 @@ const DB_NAME = "securechat-local-keys";
 const STORE = "identity";
 let currentUser = null, authMode = "login", toastTimer = null, authTimer = null;
 let identityPrivateKey = null, identityPublicKey = null, identitySigningPublicKey = null;
-let activeConversation = null, activeKey = null, busy = false, refreshTimer = null;
+let activeConversation = null, activeKey = null, busy = false, refreshTimer = null, mobileView = "list";
 const openingConversationPeers = new Set();
 let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", sidebarRefreshTick = 0;
 const displayedOtpCodes = new Map();
@@ -59,6 +59,7 @@ function state(value, label) {
   updateSend();
 }
 function setMobileView(view) {
+  mobileView = view;
   const isMobile = window.matchMedia("(max-width: 680px)").matches;
   document.body.classList.toggle("mobile-chat", isMobile && view === "chat");
   document.body.classList.toggle("mobile-list", isMobile && view !== "chat");
@@ -614,7 +615,7 @@ async function sendMessage() {
 }
 setMobileView("list");
 el.mobileBack.addEventListener("click",()=>setMobileView("list"));
-window.addEventListener("resize",()=>setMobileView(activeConversation ? "chat" : "list"));
+window.addEventListener("resize",()=>setMobileView(mobileView));
 el.loginTab.addEventListener("click",()=>setAuthMode("login"));
 el.registerTab.addEventListener("click",()=>setAuthMode("register"));
 el.form.addEventListener("submit",submitAuth);
