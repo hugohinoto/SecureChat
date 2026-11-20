@@ -16,14 +16,15 @@ const el = {
   conversationCount: $("#conversation-count"), passwordChangeGate: $("#password-change-gate"), passwordChangeForm: $("#password-change-form"), currentAdminPassword: $("#current-admin-password"), newAdminPassword: $("#new-admin-password"), confirmAdminPassword: $("#confirm-admin-password"), passwordChangeError: $("#password-change-error"), passwordChangeSubmit: $("#password-change-submit"), chatTitle: $("#chat-title"),
   chatSubtitle: $("#chat-subtitle"), securityTitle: $("#security-title"),
   securityDescription: $("#security-description"), securityTag: $("#security-tag"),
-  composerHint: $("#composer-hint"), fingerprint: $("#key-fingerprint")
+  composerHint: $("#composer-hint"), fingerprint: $("#key-fingerprint"),
+  mobileBack: $("#mobile-back-button")
 };
 const MAX_MESSAGE_LENGTH = 2000;
 const DB_NAME = "securechat-local-keys";
 const STORE = "identity";
 let currentUser = null, authMode = "login", toastTimer = null, authTimer = null;
 let identityPrivateKey = null, identityPublicKey = null, identitySigningPublicKey = null;
-let activeConversation = null, activeKey = null, busy = false, refreshTimer = null;
+let activeConversation = null, activeKey = null, busy = false, refreshTimer = null, mobileView = "list";
 const openingConversationPeers = new Set();
 let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", sidebarRefreshTick = 0;
 const displayedOtpCodes = new Map();
@@ -56,6 +57,12 @@ function state(value, label) {
   el.connection.dataset.state = value;
   el.connectionLabel.textContent = label;
   updateSend();
+}
+function setMobileView(view) {
+  mobileView = view;
+  const isMobile = window.matchMedia("(max-width: 680px)").matches;
+  document.body.classList.toggle("mobile-chat", isMobile && view === "chat");
+  document.body.classList.toggle("mobile-list", isMobile && view !== "chat");
 }
 function updateSend() {
   el.count.textContent = Array.from(el.input.value).length + " / " + MAX_MESSAGE_LENGTH;
@@ -548,6 +555,7 @@ async function openConversation(peerUserId, triggerButton = null) {
   }
 }
 async function selectConversation(c) {
+  setMobileView("chat");
   activeConversation={id:c.id,peerUserId:c.peer_user_id};activeKey=null;
   el.fingerprint.hidden=true;
   lastMessageCreatedAt=0;lastMessageId="";messageLoadBusy=false;
@@ -605,6 +613,9 @@ async function sendMessage() {
   } catch(e){showError(e);}
   finally {busy=false;updateSend();el.input.focus();}
 }
+setMobileView("list");
+el.mobileBack.addEventListener("click",()=>setMobileView("list"));
+window.addEventListener("resize",()=>setMobileView(mobileView));
 el.loginTab.addEventListener("click",()=>setAuthMode("login"));
 el.registerTab.addEventListener("click",()=>setAuthMode("register"));
 el.form.addEventListener("submit",submitAuth);
