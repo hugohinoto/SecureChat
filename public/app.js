@@ -327,7 +327,8 @@ async function ensureIdentity(password=null) {
     if(restored.publicKey!==remote.identityPublicKey || restored.signingPublicKey!==remote.identitySigningPublicKey) {
       throw appError("IDENTITY_BACKUP_INVALID","バックアップの公開鍵がサーバー登録情報と一致しません。");
     }
-    const record={...restored,peerPins:saved?.peerPins||{}};
+    const {backupPayload,...restoredIdentity}=restored;
+    const record={...restoredIdentity,peerPins:saved?.peerPins||{}};
     await saveIdentity(currentUser.userId,record);
     setIdentityRecord(record);
     return;
@@ -343,7 +344,8 @@ async function ensureIdentity(password=null) {
       if(restored.publicKey!==remote.identityPublicKey || restored.signingPublicKey!==remote.identitySigningPublicKey) {
         throw appError("IDENTITY_BACKUP_INVALID","バックアップの公開鍵がサーバー登録情報と一致しません。");
       }
-      const record={...restored,peerPins:{}};
+      const {backupPayload,...restoredIdentity}=restored;
+      const record={...restoredIdentity,peerPins:{}};
       await saveIdentity(currentUser.userId,record);setIdentityRecord(record);return;
     }
     throw appError("IDENTITY_BACKUP_SETUP_REQUIRED","このアカウントの暗号鍵は別端末にあります。元の端末で再ログインして同期バックアップを作成してください。");
@@ -367,7 +369,8 @@ async function ensureIdentity(password=null) {
         if(restored.publicKey!==latest.identityPublicKey || restored.signingPublicKey!==latest.identitySigningPublicKey) {
           throw appError("IDENTITY_BACKUP_INVALID","バックアップの公開鍵がサーバー登録情報と一致しません。");
         }
-        const record={...restored,peerPins:saved?.peerPins||{}};
+        const {backupPayload,...restoredIdentity}=restored;
+        const record={...restoredIdentity,peerPins:saved?.peerPins||{}};
         await saveIdentity(currentUser.userId,record);setIdentityRecord(record);return;
       }
     }
