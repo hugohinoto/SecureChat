@@ -103,9 +103,9 @@ async function checkSchema(env,checks) {
 
   await runIsolated(checks,"schema-constraints","SQL制約・データ保持ルール",async()=>{
     const objects=rows(await env.DB.prepare("SELECT name,type,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all());
-    const definitions=new Map(objects.map(item=>[item.name,String(item.sql||"").toLowerCase().replace(/[\\s"`\\[\\]]/g,"")]));
+    const definitions=new Map(objects.map(item=>[item.name,String(item.sql||"").toLowerCase().replace(/[ \t\r\n"`\\[\\]]/g,"")]));
     const requirements=[
-      ["users","useridtextnotnullunique"],
+      ["users","user_idtextnotnullunique"],
       ["conversations","check(expires_in_seconds=3600)"],
       ["encrypted_messages","check(expires_at=created_at+3600000)"],
       ["contact_invitations","check(inviter_attemptsbetween0and5)"],
