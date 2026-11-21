@@ -1139,6 +1139,11 @@ export default {
       return securityHeaders(response, request);
     }
 
+    if (url.pathname === "/") {
+      const indexUrl = new URL("/index.html", url);
+      return securityHeaders(await env.ASSETS.fetch(new Request(indexUrl, request)), request);
+    }
+
     if (url.pathname === "/admin" || url.pathname === "/admin/") {
       const adminUrl = new URL("/admin.html", url);
       return securityHeaders(await env.ASSETS.fetch(new Request(adminUrl, request)), request);

@@ -42,3 +42,15 @@ test("Worker keeps security headers on redirects and blocks nested frames", asyn
   assert.match(worker, /frame-src 'none'/);
   assert.match(worker, /upgrade-insecure-requests/);
 });
+
+
+test("the root URL explicitly serves index.html when HTML handling is disabled", async () => {
+  const config = JSON.parse(await read("../wrangler.jsonc"));
+  const worker = await read("../worker/index.js");
+  const html = await read("../public/index.html");
+  assert.equal(config.assets?.html_handling, "none");
+  assert.ok((config.assets?.run_worker_first || []).includes("/"));
+  assert.match(worker, /if \(url\.pathname === "\/"\)\s*\{\s*const indexUrl = new URL\("\/index\.html", url\)/);
+  assert.ok(worker.indexOf('if (url.pathname === "/")') < worker.indexOf('if (url.pathname === "/admin"'));
+  assert.match(html, /<!doctype html>/i);
+});
