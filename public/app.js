@@ -151,7 +151,12 @@ async function api(path, options={}) {
       INVITE_CODE_REQUIRED:"新規登録には招待コードが必要です。",
       INVITE_CODE_INVALID:"招待コードが無効・使用済み・期限切れです。",
       INVITE_LIMIT_REACHED:"有効な招待コードは最大5件までです。",
-      CONVERSATION_NOT_FOUND:"チャットが見つかりません。"
+      CONVERSATION_NOT_FOUND:"チャットが見つかりません。",
+      IDENTITY_KEY_CONFLICT:"このアカウントの暗号鍵が別端末で変更されています。元の端末で同期の初期設定を完了してください。",
+      IDENTITY_BACKUP_REQUIRED:"複数端末同期用の暗号化バックアップが必要です。アプリを更新して再ログインしてください。",
+      IDENTITY_BACKUP_PASSWORD_REQUIRED:"暗号鍵を同期するため、パスワードを入力して再ログインしてください。",
+      IDENTITY_BACKUP_PASSWORD_MISMATCH:"暗号鍵バックアップを復号できません。パスワードを確認してください。",
+      IDENTITY_BACKUP_SETUP_REQUIRED:"このアカウントの暗号鍵は別端末にあります。先に元の端末で再ログインして同期バックアップを作成してください。"
     };
     const code=typeof data.error==="string"&&/^[A-Z][A-Z0-9_]{1,63}$/.test(data.error)
       ? data.error : "HTTP_"+response.status;
@@ -162,31 +167,157 @@ async function api(path, options={}) {
 function identityProofMessage(userId,identityPublicKey) {
   return new TextEncoder().encode("SecureChat identity-key-proof:v1\n"+userId+"\n"+identityPublicKey);
 }
-async function ensureIdentity() {
-  const saved=await storedIdentity(currentUser.userId);
-  if(saved && saved.privateKey && saved.publicKey) {
-    identityPrivateKey=saved.privateKey;
-    identityPublicKey=saved.publicKey;
-  } else {
-    const pair=await crypto.subtle.generateKey({name:"ECDH",namedCurve:"P-256"},false,["deriveBits"]);
-    const raw=await crypto.subtle.exportKey("raw",pair.publicKey);
-    identityPrivateKey=pair.privateKey;
-    identityPublicKey=toB64(new Uint8Array(raw));
+const IDENTITY_BACKUP_ITERATIONS = 250000;
+
+async function deriveIdentityBackupKey(password,salt) {
+  const material=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    {name:"PBKDF2",hash:"SHA-256",salt,iterations:IDENTITY_BACKUP_ITERATIONS},
+    material,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]
+  );
+}
+async function encryptIdentityBackup(payload,password) {
+  const salt=crypto.getRandomValues(new Uint8Array(16));
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const key=await deriveIdentityBackupKey(password,salt);
+  const ciphertext=await crypto.subtle.encrypt(
+    {name:"AES-GCM",iv,key},
+    key,
+    new TextEncoder().encode(JSON.stringify(payload))
+  );
+  return {version:1,salt:toB64(salt),iv:toB64(iv),ciphertext:toB64(new Uint8Array(ciphertext))};
+}
+async function decryptIdentityBackup(backup,password) {
+  try {
+    if(!backup || backup.version!==1)throw new Error("INVALID_BACKUP_VERSION");
+    const salt=fromB64(backup.salt),iv=fromB64(backup.iv),ciphertext=fromB64(backup.ciphertext);
+    if(salt.length!==16 || iv.length!==12 || ciphertext.length<64 || ciphertext.length>12000)throw new Error("INVALID_BACKUP_SIZE");
+    const key=await deriveIdentityBackupKey(password,salt);
+    const plaintext=await crypto.subtle.decrypt({name:"AES-GCM",iv},key,ciphertext);
+    const payload=JSON.parse(new TextDecoder().decode(plaintext));
+    if(payload?.version!==1 || typeof payload.identityPublicKey!=="string" ||
+       typeof payload.identitySigningPublicKey!=="string" || !payload.ecdhPrivateJwk || !payload.signingPrivateJwk) {
+      throw new Error("INVALID_BACKUP_PAYLOAD");
+    }
+    const privateKey=await crypto.subtle.importKey("jwk",payload.ecdhPrivateJwk,{name:"ECDH",namedCurve:"P-256"},false,["deriveBits"]);
+    const signingPrivateKey=await crypto.subtle.importKey("jwk",payload.signingPrivateJwk,{name:"ECDSA",namedCurve:"P-256"},false,["sign"]);
+    return {privateKey,publicKey:payload.identityPublicKey,signingPrivateKey,signingPublicKey:payload.identitySigningPublicKey};
+  } catch(error) {
+    throw appError("IDENTITY_BACKUP_PASSWORD_MISMATCH","暗号鍵バックアップを復号できません。パスワードを確認してください。");
   }
-  let signingPrivateKey=saved?.signingPrivateKey, signingPublicKey=saved?.signingPublicKey;
-  if(!signingPrivateKey || !signingPublicKey) {
-    const signingPair=await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},false,["sign","verify"]);
-    signingPrivateKey=signingPair.privateKey;
-    signingPublicKey=toB64(new Uint8Array(await crypto.subtle.exportKey("raw",signingPair.publicKey)));
+}
+async function createPortableIdentity(password,peerPins={}) {
+  const ecdh=await crypto.subtle.generateKey({name:"ECDH",namedCurve:"P-256"},true,["deriveBits"]);
+  const signing=await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},true,["sign","verify"]);
+  const ecdhPrivateJwk=await crypto.subtle.exportKey("jwk",ecdh.privateKey);
+  const signingPrivateJwk=await crypto.subtle.exportKey("jwk",signing.privateKey);
+  const publicKey=toB64(new Uint8Array(await crypto.subtle.exportKey("raw",ecdh.publicKey)));
+  const signingPublicKey=toB64(new Uint8Array(await crypto.subtle.exportKey("raw",signing.publicKey)));
+  const privateKey=await crypto.subtle.importKey("jwk",ecdhPrivateJwk,{name:"ECDH",namedCurve:"P-256"},false,["deriveBits"]);
+  const signingPrivateKey=await crypto.subtle.importKey("jwk",signingPrivateJwk,{name:"ECDSA",namedCurve:"P-256"},false,["sign"]);
+  const signature=await crypto.subtle.sign(
+    {name:"ECDSA",hash:"SHA-256"},signingPrivateKey,
+    identityProofMessage(currentUser.userId,publicKey)
+  );
+  const identityBackup=await encryptIdentityBackup({
+    version:1,identityPublicKey:publicKey,identitySigningPublicKey:signingPublicKey,
+    ecdhPrivateJwk,signingPrivateJwk
+  },password);
+  return {
+    record:{privateKey,publicKey,signingPrivateKey,signingPublicKey,peerPins},
+    identityPublicKey:publicKey,identitySigningPublicKey:signingPublicKey,
+    identityKeySignature:toB64(new Uint8Array(signature)),identityBackup
+  };
+}
+function setIdentityRecord(record) {
+  identityPrivateKey=record.privateKey;
+  identityPublicKey=record.publicKey;
+  identitySigningPublicKey=record.signingPublicKey;
+}
+async function registerPortableIdentity(portable,previousRecord=null) {
+  let previousIdentitySigningPublicKey=null,identityTransitionSignature=null;
+  if(previousRecord?.signingPrivateKey && previousRecord?.signingPublicKey) {
+    previousIdentitySigningPublicKey=previousRecord.signingPublicKey;
+    const transitionMessage=new TextEncoder().encode(
+      "SecureChat identity-key-transition:v1\n"+currentUser.userId+"\n"+
+      previousIdentitySigningPublicKey+"\n"+portable.identityPublicKey+"\n"+portable.identitySigningPublicKey
+    );
+    identityTransitionSignature=toB64(new Uint8Array(await crypto.subtle.sign(
+      {name:"ECDSA",hash:"SHA-256"},previousRecord.signingPrivateKey,transitionMessage
+    )));
   }
-  identitySigningPublicKey=signingPublicKey;
-  await saveIdentity(currentUser.userId,{privateKey:identityPrivateKey,publicKey:identityPublicKey,signingPrivateKey,signingPublicKey,peerPins:saved?.peerPins||{}});
-  const signature=await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},signingPrivateKey,identityProofMessage(currentUser.userId,identityPublicKey));
   await api("/api/keys",{method:"PUT",body:{
-    identityPublicKey,
-    identitySigningPublicKey:signingPublicKey,
-    identityKeySignature:toB64(new Uint8Array(signature))
+    identityPublicKey:portable.identityPublicKey,
+    identitySigningPublicKey:portable.identitySigningPublicKey,
+    identityKeySignature:portable.identityKeySignature,
+    identityBackup:portable.identityBackup,
+    ...(previousIdentitySigningPublicKey?{previousIdentitySigningPublicKey,identityTransitionSignature}:{})
   }});
+  await saveIdentity(currentUser.userId,portable.record);
+  setIdentityRecord(portable.record);
+}
+async function ensureIdentity(password=null) {
+  const saved=await storedIdentity(currentUser.userId);
+  let remote=await api("/api/keys/backup");
+  if(remote.backupAvailable) {
+    if(!password) {
+      if(saved?.privateKey && saved.publicKey===remote.identityPublicKey &&
+         saved.signingPublicKey===remote.identitySigningPublicKey) {
+        setIdentityRecord(saved);
+        return;
+      }
+      throw appError("IDENTITY_BACKUP_PASSWORD_REQUIRED","暗号鍵を同期するため、パスワードを入力して再ログインしてください。");
+    }
+    const restored=await decryptIdentityBackup(remote.backup,password);
+    if(restored.publicKey!==remote.identityPublicKey || restored.signingPublicKey!==remote.identitySigningPublicKey) {
+      throw appError("IDENTITY_BACKUP_INVALID","バックアップの公開鍵がサーバー登録情報と一致しません。");
+    }
+    const record={...restored,peerPins:saved?.peerPins||{}};
+    await saveIdentity(currentUser.userId,record);
+    setIdentityRecord(record);
+    return;
+  }
+
+  if(remote.identityRegistered && !saved?.privateKey) {
+    // A second device must never create and silently overwrite a different identity.
+    // Retry once to cover two devices reaching the setup endpoint at nearly the same time.
+    await new Promise(resolve=>setTimeout(resolve,400));
+    remote=await api("/api/keys/backup");
+    if(remote.backupAvailable && password) {
+      const restored=await decryptIdentityBackup(remote.backup,password);
+      if(restored.publicKey!==remote.identityPublicKey || restored.signingPublicKey!==remote.identitySigningPublicKey) {
+        throw appError("IDENTITY_BACKUP_INVALID","バックアップの公開鍵がサーバー登録情報と一致しません。");
+      }
+      const record={...restored,peerPins:{}};
+      await saveIdentity(currentUser.userId,record);setIdentityRecord(record);return;
+    }
+    throw appError("IDENTITY_BACKUP_SETUP_REQUIRED","このアカウントの暗号鍵は別端末にあります。元の端末で再ログインして同期バックアップを作成してください。");
+  }
+  if(!password) {
+    throw appError("IDENTITY_BACKUP_PASSWORD_REQUIRED","複数端末同期の初期設定にはパスワードの再入力が必要です。");
+  }
+  if(remote.identityRegistered && saved?.privateKey &&
+     (saved.publicKey!==remote.identityPublicKey || saved.signingPublicKey!==remote.identitySigningPublicKey)) {
+    throw appError("IDENTITY_KEY_CONFLICT","サーバーの暗号鍵とこの端末の鍵が異なります。以前の端末で鍵が上書きされている可能性があります。安全のため自動上書きを停止しました。");
+  }
+
+  const portable=await createPortableIdentity(password,saved?.peerPins||{});
+  try {
+    await registerPortableIdentity(portable,remote.identityRegistered?saved:null);
+  } catch(error) {
+    if(error.code==="IDENTITY_KEY_CONFLICT") {
+      const latest=await api("/api/keys/backup");
+      if(latest.backupAvailable) {
+        const restored=await decryptIdentityBackup(latest.backup,password);
+        if(restored.publicKey!==latest.identityPublicKey || restored.signingPublicKey!==latest.identitySigningPublicKey) {
+          throw appError("IDENTITY_BACKUP_INVALID","バックアップの公開鍵がサーバー登録情報と一致しません。");
+        }
+        const record={...restored,peerPins:saved?.peerPins||{}};
+        await saveIdentity(currentUser.userId,record);setIdentityRecord(record);return;
+      }
+    }
+    throw error;
+  }
 }
 async function deriveKey(conversationId,peerUserId) {
   if(activeKey && activeConversation && activeConversation.id===conversationId)return activeKey;
