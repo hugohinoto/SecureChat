@@ -193,23 +193,23 @@ async function checkKeyRotation(env,checks,keyStatus) {
       return {status:"error",detail:"現行鍵 v"+keyStatus.activeVersion+" が未設定です。"};
     }
     const usage=rows(await env.DB.prepare(`
-      SELECT key_version, SUM(record_count) AS record_count
+      SELECT key_version, COUNT(*) AS record_count
       FROM (
-        SELECT CAST(substr(title_ciphertext,6,instr(substr(title_ciphertext,6),':')-1) AS INTEGER) AS key_version,
-               COUNT(*) AS record_count
-        FROM announcements WHERE title_ciphertext LIKE 'enc:v%:%' GROUP BY key_version
-        UNION ALL
-        SELECT CAST(substr(body_ciphertext,6,instr(substr(body_ciphertext,6),':')-1) AS INTEGER) AS key_version,
-               COUNT(*) AS record_count
-        FROM announcements WHERE body_ciphertext LIKE 'enc:v%:%' GROUP BY key_version
-        UNION ALL
-        SELECT CAST(substr(details_json,6,instr(substr(details_json,6),':')-1) AS INTEGER) AS key_version,
-               COUNT(*) AS record_count
-        FROM admin_audit_logs WHERE details_json LIKE 'enc:v%:%' GROUP BY key_version
-        UNION ALL
-        SELECT CAST(substr(encrypted_payload,6,instr(substr(encrypted_payload,6),':')-1) AS INTEGER) AS key_version,
-               COUNT(*) AS record_count
-        FROM bug_reports WHERE encrypted_payload LIKE 'enc:v%:%' GROUP BY key_version
+        SELECT 'announcement' AS record_type, id AS record_id,
+               CAST(substr(title_ciphertext,6,instr(substr(title_ciphertext,6),':')-1) AS INTEGER) AS key_version
+        FROM announcements WHERE title_ciphertext LIKE 'enc:v%:%'
+        UNION
+        SELECT 'announcement' AS record_type, id AS record_id,
+               CAST(substr(body_ciphertext,6,instr(substr(body_ciphertext,6),':')-1) AS INTEGER) AS key_version
+        FROM announcements WHERE body_ciphertext LIKE 'enc:v%:%'
+        UNION
+        SELECT 'admin-audit' AS record_type, id AS record_id,
+               CAST(substr(details_json,6,instr(substr(details_json,6),':')-1) AS INTEGER) AS key_version
+        FROM admin_audit_logs WHERE details_json LIKE 'enc:v%:%'
+        UNION
+        SELECT 'bug-report' AS record_type, id AS record_id,
+               CAST(substr(encrypted_payload,6,instr(substr(encrypted_payload,6),':')-1) AS INTEGER) AS key_version
+        FROM bug_reports WHERE encrypted_payload LIKE 'enc:v%:%'
       )
       GROUP BY key_version
       ORDER BY key_version
