@@ -1144,9 +1144,39 @@ export default {
       return securityHeaders(await env.ASSETS.fetch(new Request(indexUrl, request)), request);
     }
 
-    if (url.pathname === "/admin" || url.pathname === "/admin/") {
+    if (url.pathname === "/admin" || url.pathname === "/admin/" || url.pathname === "/admin.html") {
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        return securityHeaders(json({ error: "METHOD_NOT_ALLOWED" }, 405), request);
+      }
+      let adminSession;
+      try {
+        adminSession = await getSession(env, readCookie(request));
+      } catch {
+        return securityHeaders(json({ error: "AUTH_UNAVAILABLE", message: "管理者認証を確認できません。" }, 503), request);
+      }
+      if (!adminSession) {
+        return securityHeaders(json({ error: "UNAUTHENTICATED", message: "ログイン後に管理者コンソールへアクセスしてください。" }, 401), request);
+      }
+      if (Number(adminSession.is_admin) !== 1) {
+        return securityHeaders(json({ error: "ADMIN_REQUIRED", message: "このアカウントには管理者権限がありません。" }, 403), request);
+      }
+      if (!adminSession.password_changed_at ||
+          Date.now() - Number(adminSession.password_changed_at) >= ADMIN_PASSWORD_MAX_AGE_MS) {
+        return securityHeaders(json({ error: "PASSWORD_CHANGE_REQUIRED", message: "管理者パスワードを変更してからアクセスしてください。" }, 428), request);
+      }
+      if (Date.now() - Number(adminSession.created_at) > AUTH_WINDOW_MS) {
+        return securityHeaders(json({ error: "ADMIN_REAUTH_REQUIRED", message: "管理者コンソールを開くには、ログアウトして再ログインしてください。" }, 428), request);
+      }
       const adminUrl = new URL("/admin.html", url);
-      return securityHeaders(await env.ASSETS.fetch(new Request(adminUrl, request)), request);
+      const assetResponse = await env.ASSETS.fetch(new Request(adminUrl, request));
+      const headers = new Headers(assetResponse.headers);
+      headers.set("Cache-Control", "no-store");
+      headers.set("Pragma", "no-cache");
+      return securityHeaders(new Response(assetResponse.body, {
+        status: assetResponse.status,
+        statusText: assetResponse.statusText,
+        headers
+      }), request);
     }
 
     if (url.pathname === "/bug-report" || url.pathname === "/bug-report/") {
