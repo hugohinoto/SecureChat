@@ -172,5 +172,5 @@ test("the admin endpoint continues reporting secret and scanner checks when D1 i
   assert.ok(ids.has("external-engines"));
   assert.equal(result.checks.find(check => check.id === "db-quick-check").status, "error");
   assert.equal(result.checks.find(check => check.id === "external-engines").complete, false);
-  assert.equal(result.coverage.notCompleted, 0);
+  assert.ok(result.coverage.notCompleted > 0);
 });
