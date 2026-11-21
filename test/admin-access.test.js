@@ -26,7 +26,7 @@ test("admin console verifies role and recent authentication before revealing pri
   const admin = await read("../public/admin.js");
   const initializer = admin.slice(admin.indexOf("async function initializeAdminConsole"));
   assert.match(initializer, /api\("\/api\/auth\/me"\)/);
-  assert.match(initializer, /me\.user\.isAdmin !== true/);
+  assert.match(initializer, /me\.user\.isAdmin\s*!==\s*true/);
   assert.match(initializer, /api\("\/api\/admin\/overview"\)/);
   assert.match(admin, /window\.addEventListener\("pagehide",clearSensitiveConsole\)/);
   assert.match(admin, /window\.addEventListener\("pageshow",event=>\s*\{\s*if\(event\.persisted\)initializeAdminConsole\(\)/);
