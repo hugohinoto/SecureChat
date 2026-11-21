@@ -903,9 +903,6 @@ async function handleApi(request, env) {
           typeof signature !== "string" || signature.length < 80 || signature.length > 128) {
         return json({ error: "IDENTITY_KEY_PROOF_REQUIRED", message: "署名付き公開鍵が必要です。アプリを更新して再ログインしてください。" }, 400);
       }
-      if (!validIdentityBackup(body?.identityBackup)) {
-        return json({ error: "IDENTITY_BACKUP_REQUIRED", message: "複数端末で同じ暗号鍵を使うための暗号化バックアップが必要です。" }, 400);
-      }
       const validProof = await verifyIdentityKeyProof({
         userId: session.user_id,
         identityPublicKey: pub,
@@ -917,6 +914,28 @@ async function handleApi(request, env) {
       const existingKey = await env.DB.prepare(
         "SELECT identity_public_key, identity_signing_public_key FROM user_keys WHERE user_id=?"
       ).bind(me).first();
+
+      // Older cached clients do not send identityBackup. Allow them to reuse an
+      // already-registered identical identity, but never create or rotate a key
+      // without a valid password-encrypted backup.
+      if (body?.identityBackup === undefined || body?.identityBackup === null) {
+        if (existingKey &&
+            existingKey.identity_public_key === pub &&
+            existingKey.identity_signing_public_key === signingPub) {
+          return json({ saved: true, backupUnchanged: true });
+        }
+        return json({
+          error: "IDENTITY_BACKUP_REQUIRED",
+          message: "この端末のアプリが古い可能性があります。ページを再読み込みしてください。新しい端末での鍵登録には暗号化バックアップが必要です。"
+        }, 400);
+      }
+      if (!validIdentityBackup(body.identityBackup)) {
+        return json({
+          error: "IDENTITY_BACKUP_INVALID",
+          message: "暗号化バックアップの形式が正しくありません。ページを再読み込みして再度ログインしてください。"
+        }, 400);
+      }
+
       let transitionFrom = null, transitionSignature = null;
       if (existingKey) {
         const sameIdentity = existingKey.identity_public_key === pub &&

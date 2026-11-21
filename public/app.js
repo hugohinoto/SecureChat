@@ -209,7 +209,8 @@ async function api(path, options={}) {
       INVITE_LIMIT_REACHED:"有効な招待コードは最大5件までです。",
       CONVERSATION_NOT_FOUND:"チャットが見つかりません。",
       IDENTITY_KEY_CONFLICT:"このアカウントの暗号鍵が別端末で変更されています。元の端末で同期の初期設定を完了してください。",
-      IDENTITY_BACKUP_REQUIRED:"複数端末同期用の暗号化バックアップが必要です。アプリを更新して再ログインしてください。",
+      IDENTITY_BACKUP_REQUIRED:"このブラウザーのアプリが古い可能性があります。Ctrl+Shift+R（MacはCommand+Shift+R）でページを強制再読み込みしてください。サイトデータや保存済み暗号鍵は削除しないでください。",
+      IDENTITY_BACKUP_INVALID:"暗号化バックアップの形式を確認できません。ページを強制再読み込みして再度ログインしてください。サイトデータは削除しないでください。",
       IDENTITY_BACKUP_PASSWORD_REQUIRED:"暗号鍵を同期するため、パスワードを入力して再ログインしてください。",
       IDENTITY_BACKUP_PASSWORD_MISMATCH:"暗号鍵バックアップを復号できません。パスワードを確認してください。",
       IDENTITY_BACKUP_SETUP_REQUIRED:"このアカウントの暗号鍵は別端末にあります。先に元の端末で再ログインして同期バックアップを作成してください。"
