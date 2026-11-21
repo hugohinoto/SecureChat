@@ -18,7 +18,7 @@ test("Worker console output contains only fixed literal labels", () => {
     const calls = source.matchAll(/\bconsole\.(?:log|info|warn|error|debug)\s*\(([^)]*)\)/gs);
     for (const call of calls) {
       const argument = call[1].trim();
-      if (!/^(?:"[^"\\r\\n]*"|'[^'\\r\\n]*')$/.test(argument)) {
+      if (!/^(?:"[^"]*"|'[^']*')$/.test(argument)) {
         findings.push(file + ": " + argument.slice(0, 120));
       }
     }
