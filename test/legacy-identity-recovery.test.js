@@ -16,6 +16,9 @@ test("legacy identity upgrade preserves the original ECDH public key and marks t
   assert.match(client, /privateKey:saved\.privateKey,publicKey:saved\.publicKey/);
   assert.match(client, /legacyLocalOnly:true/);
   assert.match(client, /api\("\/api\/keys\/legacy-challenge"/);
+  assert.match(client, /function fromB64Url\(s\)/);
+  assert.match(client, /fromB64Url\(challenge\.serverPublicKey\)/);
+  assert.match(client, /!remote\.identitySigningPublicKey/);
   assert.match(client, /crypto\.subtle\.deriveBits\(\{name:"ECDH",public:serverPublicKey\},saved\.privateKey,256\)/);
   assert.match(worker, /identity-legacy\/verify/);
   assert.match(worker, /crypto\.subtle\.verify\("HMAC",\s*proofKey,\s*proofBytes,\s*message\)/);
