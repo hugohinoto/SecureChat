@@ -1,4 +1,5 @@
 import test from "node:test";
+import { handleAdminFeatures } from "../worker/admin-features.js";
 import assert from "node:assert/strict";
 import {
   securityDiagnosticSchema,
@@ -139,4 +140,37 @@ test("external scan results are not treated as passing when no GitHub token is c
   assert.equal(external.status,"warning");
   assert.equal(external.complete,false);
   assert.notEqual(result.overall,"ok");
+});
+
+
+test("the admin endpoint continues reporting secret and scanner checks when D1 is unavailable", async () => {
+  const env = {
+    DB: { prepare() { throw new Error("simulated D1 outage"); } },
+    APP_DATA_ENCRYPTION_KEY: "x".repeat(32),
+    CONTACT_OTP_PEPPER: "y".repeat(32)
+  };
+  const admin = {
+    id: "admin-id",
+    user_id: "admin",
+    is_admin: 1,
+    password_changed_at: Date.now(),
+    created_at: Date.now()
+  };
+  const request = new Request("https://securechat.example/api/admin/security-check", { method: "GET" });
+  const response = await handleAdminFeatures(request, env, {
+    url: new URL(request.url),
+    sameOrigin: () => true,
+    getSession: async () => admin,
+    readCookie: () => "session",
+    checkRateLimit: async () => true
+  });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  const ids = new Set(result.checks.map(check => check.id));
+  assert.ok(ids.has("db-quick-check"));
+  assert.ok(ids.has("schema-inventory"));
+  assert.ok(ids.has("external-engines"));
+  assert.equal(result.checks.find(check => check.id === "db-quick-check").status, "error");
+  assert.equal(result.checks.find(check => check.id === "external-engines").complete, false);
+  assert.equal(result.coverage.notCompleted, 0);
 });
