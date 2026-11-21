@@ -1,3 +1,4 @@
+import { decryptIdentityBackup, encryptIdentityBackup } from "./identity-backup.js";
 const $ = (s) => document.querySelector(s);
 const el = {
   connection: $("#connection-pill"), connectionLabel: $("#connection-label"),
@@ -221,45 +222,6 @@ async function api(path, options={}) {
 }
 function identityProofMessage(userId,identityPublicKey) {
   return new TextEncoder().encode("SecureChat identity-key-proof:v1\n"+userId+"\n"+identityPublicKey);
-}
-const IDENTITY_BACKUP_ITERATIONS = 250000;
-
-async function deriveIdentityBackupKey(password,salt) {
-  const material=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveKey"]);
-  return crypto.subtle.deriveKey(
-    {name:"PBKDF2",hash:"SHA-256",salt,iterations:IDENTITY_BACKUP_ITERATIONS},
-    material,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]
-  );
-}
-async function encryptIdentityBackup(payload,password) {
-  const salt=crypto.getRandomValues(new Uint8Array(16));
-  const iv=crypto.getRandomValues(new Uint8Array(12));
-  const key=await deriveIdentityBackupKey(password,salt);
-  const ciphertext=await crypto.subtle.encrypt(
-    {name:"AES-GCM",iv},
-    key,
-    new TextEncoder().encode(JSON.stringify(payload))
-  );
-  return {version:1,salt:toB64(salt),iv:toB64(iv),ciphertext:toB64(new Uint8Array(ciphertext))};
-}
-async function decryptIdentityBackup(backup,password) {
-  try {
-    if(!backup || backup.version!==1)throw new Error("INVALID_BACKUP_VERSION");
-    const salt=fromB64(backup.salt),iv=fromB64(backup.iv),ciphertext=fromB64(backup.ciphertext);
-    if(salt.length!==16 || iv.length!==12 || ciphertext.length<64 || ciphertext.length>12000)throw new Error("INVALID_BACKUP_SIZE");
-    const key=await deriveIdentityBackupKey(password,salt);
-    const plaintext=await crypto.subtle.decrypt({name:"AES-GCM",iv},key,ciphertext);
-    const payload=JSON.parse(new TextDecoder().decode(plaintext));
-    if(payload?.version!==1 || typeof payload.identityPublicKey!=="string" ||
-       typeof payload.identitySigningPublicKey!=="string" || !payload.ecdhPrivateJwk || !payload.signingPrivateJwk) {
-      throw new Error("INVALID_BACKUP_PAYLOAD");
-    }
-    const privateKey=await crypto.subtle.importKey("jwk",payload.ecdhPrivateJwk,{name:"ECDH",namedCurve:"P-256"},false,["deriveBits"]);
-    const signingPrivateKey=await crypto.subtle.importKey("jwk",payload.signingPrivateJwk,{name:"ECDSA",namedCurve:"P-256"},false,["sign"]);
-    return {privateKey,publicKey:payload.identityPublicKey,signingPrivateKey,signingPublicKey:payload.identitySigningPublicKey,backupPayload:payload};
-  } catch(error) {
-    throw appError("IDENTITY_BACKUP_PASSWORD_MISMATCH","暗号鍵バックアップを復号できません。パスワードを確認してください。");
-  }
 }
 async function createPortableIdentity(password,peerPins={}) {
   const ecdh=await crypto.subtle.generateKey({name:"ECDH",namedCurve:"P-256"},true,["deriveBits"]);
