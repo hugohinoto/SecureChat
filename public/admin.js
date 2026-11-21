@@ -170,8 +170,24 @@ async function initializeAdminConsole(){
   clearSensitiveConsole();message(e.message,"error");
  }
 }
+async function revalidateVisibleAdminConsole(){
+ if(consoleRoot.hidden)return;
+ try{
+  const me=await api("/api/auth/me");
+  if(!me.authenticated||!me.user||me.user.isAdmin!==true||me.user.mustChangePassword){
+   throw new Error(!me.authenticated?"ログインが必要です。":!me.user?.isAdmin?"このアカウントには管理者権限がありません。":"管理者パスワードを変更してください。");
+  }
+  await api("/api/admin/overview");
+ }catch(e){
+  clearSensitiveConsole();message(e.message,"error");
+ }
+}
 window.addEventListener("pagehide",clearSensitiveConsole);
 window.addEventListener("pageshow",event=>{
  if(event.persisted)initializeAdminConsole();
+});
+window.addEventListener("focus",revalidateVisibleAdminConsole);
+document.addEventListener("visibilitychange",()=>{
+ if(document.visibilityState==="visible")revalidateVisibleAdminConsole();
 });
 initializeAdminConsole();
