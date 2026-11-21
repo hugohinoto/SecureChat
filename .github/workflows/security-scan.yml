@@ -33,11 +33,13 @@ jobs:
           --config p/security-audit
           --config .semgrep/sql-injection.yml
           --severity ERROR
-          --error
           --metrics=off
           --json
           --output semgrep-results.json
           .
+      - name: Fail with readable Semgrep findings
+        if: always()
+        run: python scripts/report-semgrep-findings.py semgrep-results.json
       - name: Upload Semgrep report
         if: always()
         uses: actions/upload-artifact@v4
