@@ -106,10 +106,13 @@
         </div>
         <span class="banner-tag" id="security-tag">PROTOTYPE</span>
       </section>
-      <section class="public-announcements" id="public-announcements" hidden aria-label="運営からのお知らせ">
-        <div class="public-announcements-heading">運営からのお知らせ</div>
-        <div id="public-announcements-list"></div>
-      </section>
+      <details class="public-announcements" id="public-announcements" hidden aria-label="運営からのお知らせ">
+        <summary class="public-announcements-toggle">
+          <span class="public-announcements-heading">運営からのお知らせ</span>
+          <span class="public-announcements-hint">クリックして内容を表示</span>
+        </summary>
+        <div class="public-announcements-content" id="public-announcements-list"></div>
+      </details>
       <div class="fingerprint-panel" id="key-fingerprint" hidden></div>
 
       <div class="timeline" id="message-list" aria-live="polite" aria-relevant="additions">
