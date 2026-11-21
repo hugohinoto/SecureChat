@@ -6,7 +6,7 @@ async function api(path,options={}){
  const response=await fetch(path,{method:options.method||"GET",credentials:"same-origin",cache:"no-store",headers:{"Accept":"application/json",...(options.body?{"Content-Type":"application/json"}:{})},...(options.body?{body:JSON.stringify(options.body)}:{})});
  const data=response.status===204?{}:await response.json().catch(()=>({}));
  if(!response.ok){
-  const messages={UNAUTHENTICATED:"ログインが必要です。SecureChatに管理者アカウントでログインしてください。",ADMIN_REQUIRED:"このアカウントには管理者権限がありません。",ADMIN_REAUTH_REQUIRED:"直近15分以内の再ログインが必要です。",ADMIN_ACCOUNT_PROTECTED:"管理者アカウントはこの画面から削除できません。",CANNOT_DELETE_SELF:"自分自身のアカウントは削除できません。",CONFIRMATION_MISMATCH:"確認用ユーザーIDが一致しません。",DATA_ENCRYPTION_NOT_CONFIGURED:"APP_DATA_ENCRYPTION_KEYが未設定です。CloudflareのWorker Secretsに設定してください。"};
+  const messages={UNAUTHENTICATED:"ログインが必要です。SecureChatに管理者アカウントでログインしてください。",ADMIN_REQUIRED:"このアカウントには管理者権限がありません。",ADMIN_REAUTH_REQUIRED:"直近15分以内の再ログインが必要です。ログアウトして管理者アカウントで再ログインしてください。",PASSWORD_CHANGE_REQUIRED:"管理者パスワードを変更してからアクセスしてください。",ADMIN_ACCOUNT_PROTECTED:"管理者アカウントはこの画面から削除できません。",CANNOT_DELETE_SELF:"自分自身のアカウントは削除できません。",CONFIRMATION_MISMATCH:"確認用ユーザーIDが一致しません。",DATA_ENCRYPTION_NOT_CONFIGURED:"APP_DATA_ENCRYPTION_KEYが未設定です。CloudflareのWorker Secretsに設定してください。"};
   throw new Error(messages[data.error]||data.message||data.error||("HTTP "+response.status));
  }
  return data;
@@ -141,9 +141,37 @@ $("#export-security-csv").addEventListener("click",exportSecurityCsv);
 $("#refresh-reports").addEventListener("click",()=>loadBugReports().catch(e=>message(e.message,"error")));
 $("#refresh-logs").addEventListener("click",()=>loadLogs().catch(e=>message(e.message,"error")));
 $("#logout").addEventListener("click",async()=>{try{await fetch("/api/auth/logout",{method:"POST",credentials:"same-origin",headers:{"Accept":"application/json"}});}finally{location.href="/";}});
-(async()=>{
+function clearSensitiveConsole(){
+ currentAdmin="";lastSecurityCheck=null;
+ consoleRoot.hidden=true;notice.hidden=false;
+ $("#admin-identity").textContent="認証確認中";
+ for(const selector of ["#stats","#security-checks","#announcements","#users","#bug-reports","#logs"]){
+  $(selector)?.replaceChildren();
+ }
+ for(const selector of ["#security-summary","#worker-note","#user-search-summary","#page-label"]){
+  const node=$(selector);if(node)node.textContent="";
+ }
+ $("#export-security-csv").disabled=true;
+ $("#announcement-form").reset();$("#user-search").reset();
+}
+async function initializeAdminConsole(){
+ clearSensitiveConsole();
+ message("管理者権限と再認証状態を確認しています…");
  try{
-  const me=await api("/api/auth/me");currentAdmin=me.user?.userId||"管理者";$("#admin-identity").textContent="@"+currentAdmin;
+  const me=await api("/api/auth/me");
+  if(!me.authenticated||!me.user)throw new Error("ログインが必要です。管理者アカウントでログインしてください。");
+  if(me.user.isAdmin!==true)throw new Error("このアカウントには管理者権限がありません。");
+  if(me.user.mustChangePassword)throw new Error("管理者パスワードを変更してからアクセスしてください。");
+  // The overview endpoint enforces the server-side 15-minute reauthentication window.
+  await api("/api/admin/overview");
+  currentAdmin=me.user.userId||"管理者";$("#admin-identity").textContent="@"+currentAdmin;
   consoleRoot.hidden=false;notice.hidden=true;await refreshAll();
- }catch(e){message(e.message,"error");consoleRoot.hidden=true;}
-})();
+ }catch(e){
+  clearSensitiveConsole();message(e.message,"error");
+ }
+}
+window.addEventListener("pagehide",clearSensitiveConsole);
+window.addEventListener("pageshow",event=>{
+ if(event.persisted)initializeAdminConsole();
+});
+initializeAdminConsole();
