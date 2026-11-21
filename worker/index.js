@@ -943,16 +943,26 @@ async function handleApi(request, env) {
       }
 
       if (!existingKey) {
-        await env.DB.prepare(
-          "INSERT INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, identity_signing_public_key, identity_key_signature, identity_transition_from, identity_transition_signature, identity_backup_version, identity_backup_salt, identity_backup_iv, identity_backup_ciphertext, key_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 1, ?, ?, ?, 1, ?)"
-        ).bind(me, pub, pub, "legacy-placeholder-not-used", signingPub, signature,
-          body.identityBackup.salt, body.identityBackup.iv, body.identityBackup.ciphertext, now).run();
+        try {
+          await env.DB.prepare(
+            "INSERT INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, identity_signing_public_key, identity_key_signature, identity_transition_from, identity_transition_signature, identity_backup_version, identity_backup_salt, identity_backup_iv, identity_backup_ciphertext, key_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 1, ?, ?, ?, 1, ?)"
+          ).bind(me, pub, pub, "legacy-placeholder-not-used", signingPub, signature,
+            body.identityBackup.salt, body.identityBackup.iv, body.identityBackup.ciphertext, now).run();
+        } catch (error) {
+          if (String(error?.message || error).includes("UNIQUE")) {
+            return json({ error: "IDENTITY_KEY_CONFLICT", message: "別端末で暗号鍵の初期設定が完了しました。もう一度ログインしてください。" }, 409);
+          }
+          throw error;
+        }
       } else {
-        await env.DB.prepare(
-          "UPDATE user_keys SET identity_public_key=?, signed_prekey=?, signed_prekey_signature=?, identity_signing_public_key=?, identity_key_signature=?, identity_transition_from=COALESCE(?, identity_transition_from), identity_transition_signature=COALESCE(?, identity_transition_signature), identity_backup_version=1, identity_backup_salt=?, identity_backup_iv=?, identity_backup_ciphertext=?, key_version=key_version+1, updated_at=? WHERE user_id=?"
+        const update = await env.DB.prepare(
+          "UPDATE user_keys SET identity_public_key=?, signed_prekey=?, signed_prekey_signature=?, identity_signing_public_key=?, identity_key_signature=?, identity_transition_from=COALESCE(?, identity_transition_from), identity_transition_signature=COALESCE(?, identity_transition_signature), identity_backup_version=1, identity_backup_salt=?, identity_backup_iv=?, identity_backup_ciphertext=?, key_version=key_version+1, updated_at=? WHERE user_id=? AND identity_signing_public_key=?"
         ).bind(pub, pub, "legacy-placeholder-not-used", signingPub, signature,
           transitionFrom, transitionSignature, body.identityBackup.salt, body.identityBackup.iv,
-          body.identityBackup.ciphertext, now, me).run();
+          body.identityBackup.ciphertext, now, me, existingKey.identity_signing_public_key).run();
+        if (Number(update.meta?.changes || 0) !== 1) {
+          return json({ error: "IDENTITY_KEY_CONFLICT", message: "別端末で暗号鍵の更新が完了しました。もう一度ログインしてください。" }, 409);
+        }
       }
       return json({ saved: true, transition: !!transitionFrom });
     }
