@@ -17,7 +17,8 @@ const el = {
   chatSubtitle: $("#chat-subtitle"), securityTitle: $("#security-title"),
   securityDescription: $("#security-description"), securityTag: $("#security-tag"),
   composerHint: $("#composer-hint"), fingerprint: $("#key-fingerprint"),
-  mobileBack: $("#mobile-back-button")
+  mobileBack: $("#mobile-back-button"),
+  unreadTotal: $("#unread-total"), notificationButton: $("#notification-enable-button")
 };
 const MAX_MESSAGE_LENGTH = 2000;
 const DB_NAME = "securechat-local-keys";
@@ -28,6 +29,9 @@ let activeConversation = null, activeKey = null, busy = false, refreshTimer = nu
 const openingConversationPeers = new Set();
 let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", sidebarRefreshTick = 0;
 const displayedOtpCodes = new Map();
+const previousUnreadCounts = new Map();
+const originalDocumentTitle = document.title;
+let unreadCountsInitialized = false;
 
 function toast(message, duration = 3200) {
   el.toast.textContent = message;
@@ -57,6 +61,57 @@ function state(value, label) {
   el.connection.dataset.state = value;
   el.connectionLabel.textContent = label;
   updateSend();
+}
+function updateNotificationButton() {
+  if(!el.notificationButton)return;
+  if(!("Notification" in window)) {
+    el.notificationButton.hidden=true;
+    return;
+  }
+  el.notificationButton.hidden=false;
+  if(Notification.permission==="granted") {
+    el.notificationButton.textContent="ブラウザー通知は有効です";
+    el.notificationButton.disabled=true;
+  } else if(Notification.permission==="denied") {
+    el.notificationButton.textContent="通知はブラウザー設定で許可してください";
+    el.notificationButton.disabled=true;
+  } else {
+    el.notificationButton.textContent="ブラウザー通知を有効にする";
+    el.notificationButton.disabled=false;
+  }
+}
+async function enableBrowserNotifications() {
+  if(!("Notification" in window)) {
+    toast("このブラウザーは通知に対応していません。");
+    return;
+  }
+  if(Notification.permission==="granted") {
+    updateNotificationButton();toast("ブラウザー通知は既に有効です。");return;
+  }
+  try {
+    const permission=await Notification.requestPermission();
+    updateNotificationButton();
+    toast(permission==="granted"?"新着メッセージのブラウザー通知を有効にしました。":
+      "通知は許可されませんでした。ブラウザーのサイト設定から変更できます。",5000);
+  } catch {
+    toast("通知の許可を確認できませんでした。ブラウザーの設定を確認してください。",5000);
+  }
+}
+function notifyUnreadConversation(conversation) {
+  const peer=conversation.peer_user_id;
+  toast("@"+peer+" から新着メッセージがあります。",4500);
+  if(!("Notification" in window) || Notification.permission!=="granted")return;
+  try {
+    const notification=new Notification("SecureChat — 新着メッセージ",{
+      body:"@"+peer+" から新着メッセージがあります。",
+      tag:"securechat-conversation-"+conversation.id
+    });
+    notification.onclick=()=>{
+      window.focus();
+      notification.close();
+      selectConversation({id:conversation.id,peer_user_id:peer});
+    };
+  } catch { /* Browser notification display can be blocked by platform settings. */ }
 }
 function setMobileView(view) {
   mobileView = view;
@@ -474,8 +529,8 @@ async function signIn(user,password=null) {
   startAuthCheck();
   clearInterval(refreshTimer);
   refreshTimer=setInterval(()=>{
-    if(document.visibilityState==="visible" && activeConversation) loadMessages(false).catch(()=>{});
-    if(document.visibilityState==="visible" && ++sidebarRefreshTick % 5 === 0) refreshSidebar().catch(()=>{});
+    if(document.visibilityState==="visible" && document.hasFocus() && activeConversation) loadMessages(false).catch(()=>{});
+    if(++sidebarRefreshTick % 5 === 0) refreshSidebar().catch(()=>{});
   },1000);
 }
 function startAuthCheck() {
@@ -660,6 +715,22 @@ async function refreshSidebar() {
   const contacts=data[0].contacts||[],conversations=data[1].conversations||[];
   renderInvitations(data[2].invitations||[]);
   el.contactCount.textContent=String(contacts.length);el.conversationCount.textContent=String(conversations.length);
+  const unreadTotal=conversations.reduce((sum,c)=>sum+Number(c.unread_count||0),0);
+  el.unreadTotal.textContent="未読 "+unreadTotal;
+  el.unreadTotal.hidden=unreadTotal===0;
+  document.title=unreadTotal ? "("+unreadTotal+") "+originalDocumentTitle : originalDocumentTitle;
+
+  const nextUnreadCounts=new Map();
+  for(const conversation of conversations) {
+    const count=Number(conversation.unread_count||0);
+    nextUnreadCounts.set(conversation.id,count);
+    const previous=previousUnreadCounts.get(conversation.id)||0;
+    if(unreadCountsInitialized && count>previous) notifyUnreadConversation(conversation);
+  }
+  previousUnreadCounts.clear();
+  for(const [id,count] of nextUnreadCounts)previousUnreadCounts.set(id,count);
+  unreadCountsInitialized=true;
+
   el.contacts.replaceChildren();el.conversations.replaceChildren();
   if(!contacts.length){const p=document.createElement("p");p.className="sidebar-empty";p.textContent="連絡先はまだありません。";el.contacts.append(p);}
   for(const c of contacts){
@@ -690,8 +761,16 @@ async function refreshSidebar() {
   }
   if(!conversations.length){const p=document.createElement("p");p.className="sidebar-empty";p.textContent="チャットはまだありません。";el.conversations.append(p);}
   for(const c of conversations){
-    const b=document.createElement("button");b.type="button";b.className="sidebar-user-button";b.textContent=c.peer_user_id;
-    b.classList.toggle("active",activeConversation?.id===c.id);b.addEventListener("click",()=>selectConversation(c));el.conversations.append(b);
+    const b=document.createElement("button");b.type="button";b.className="sidebar-user-button";
+    const label=document.createElement("span");label.textContent=c.peer_user_id;
+    const badge=document.createElement("span");badge.className="unread-badge";
+    const unread=Number(c.unread_count||0);
+    badge.textContent=unread>99?"99+":String(unread);
+    badge.hidden=unread===0;
+    b.append(label,badge);
+    b.classList.toggle("active",activeConversation?.id===c.id);
+    b.addEventListener("click",()=>selectConversation(c));
+    el.conversations.append(b);
   }
 }
 async function openConversation(peerUserId, triggerButton = null) {
@@ -776,6 +855,8 @@ el.registerTab.addEventListener("click",()=>setAuthMode("register"));
 el.form.addEventListener("submit",submitAuth);
 el.passwordChangeForm.addEventListener("submit",submitAdminPasswordChange);
 el.logout.addEventListener("click",logout);
+el.notificationButton?.addEventListener("click",enableBrowserNotifications);
+updateNotificationButton();
 el.deleteAccount.addEventListener("click",deleteAccount);
 el.registrationInviteButton.addEventListener("click",issueRegistrationInvite);
 el.searchButton.addEventListener("click",searchUsers);
@@ -789,8 +870,8 @@ window.addEventListener("focus",()=>{
   refreshSidebar().catch(()=>{});
 });
 document.addEventListener("visibilitychange",()=>{
-  if(document.visibilityState!=="visible"||!currentUser)return;
-  if(activeConversation)loadMessages(false).catch(()=>{});
+  if(!currentUser)return;
+  if(document.visibilityState==="visible" && document.hasFocus() && activeConversation)loadMessages(false).catch(()=>{});
   refreshSidebar().catch(()=>{});
 });
 
