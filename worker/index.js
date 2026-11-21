@@ -895,6 +895,52 @@ async function handleApi(request, env) {
         } : {})
       });
     }
+    if (path === "/api/keys/legacy-challenge" && method === "POST") {
+      if (!sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
+      if (!await checkRateLimit(env, request, "legacy-identity-challenge", 5)) {
+        return json({ error: "RATE_LIMITED" }, 429);
+      }
+      const legacyKey = await env.DB.prepare(
+        "SELECT identity_public_key, identity_signing_public_key, identity_backup_version FROM user_keys WHERE user_id=?"
+      ).bind(me).first();
+      if (!legacyKey || legacyKey.identity_signing_public_key ||
+          Number(legacyKey.identity_backup_version || 0) !== 0) {
+        return json({ error: "IDENTITY_LEGACY_UPGRADE_NOT_AVAILABLE" }, 409);
+      }
+      let pair, privateJwk, serverPublicKey;
+      try {
+        pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+        privateJwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+        serverPublicKey = base64url(new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey)));
+      } catch {
+        return json({ error: "IDENTITY_LEGACY_CHALLENGE_FAILED" }, 503);
+      }
+      const challengeId = randomToken();
+      const challenge = randomToken();
+      const expiresAt = Date.now() + 5 * 60 * 1000;
+      const room = env.CHAT_ROOM.get(env.CHAT_ROOM.idFromName("open-lounge"));
+      const stored = await room.fetch("https://chat-room.internal/identity-legacy/challenge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: session.user_id,
+          challengeId,
+          identityPublicKey: legacyKey.identity_public_key,
+          serverPrivateJwk: privateJwk,
+          challenge,
+          expiresAt
+        })
+      });
+      if (!stored.ok) return json({ error: "IDENTITY_LEGACY_CHALLENGE_FAILED" }, 503);
+      return json({
+        challengeId,
+        challenge,
+        identityPublicKey: legacyKey.identity_public_key,
+        serverPublicKey,
+        expiresAt
+      });
+    }
+
     if (path === "/api/keys" && method === "PUT") {
       let body;
       try { body = await readJson(request); } catch { return json({ error: "INVALID_JSON" }, 400); }
@@ -920,11 +966,27 @@ async function handleApi(request, env) {
       // once, but only without changing that ECDH key. Version 2 marks this
       // legacy identity as local-device-only and prevents later silent rotation.
       if ((body?.identityBackup === undefined || body?.identityBackup === null) &&
-          body?.legacyUpgrade === true &&
+          body?.legacyUpgrade && typeof body.legacyUpgrade === "object" &&
           existingKey &&
           existingKey.identity_public_key === pub &&
           !existingKey.identity_signing_public_key &&
           Number(existingKey.identity_backup_version || 0) === 0) {
+        const challengeId = body.legacyUpgrade.challengeId;
+        const proof = body.legacyUpgrade.proof;
+        if (typeof challengeId !== "string" || challengeId.length < 32 || challengeId.length > 64 ||
+            typeof proof !== "string" || proof.length < 40 || proof.length > 128) {
+          return json({ error: "IDENTITY_LEGACY_PROOF_REQUIRED" }, 400);
+        }
+        const room = env.CHAT_ROOM.get(env.CHAT_ROOM.idFromName("open-lounge"));
+        const verification = await room.fetch("https://chat-room.internal/identity-legacy/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: session.user_id, challengeId, identityPublicKey: pub, proof })
+        });
+        const verified = await verification.json().catch(() => ({}));
+        if (!verification.ok || verified.valid !== true) {
+          return json({ error: "IDENTITY_LEGACY_PROOF_INVALID", message: "元の暗号鍵を確認できませんでした。元の端末で再試行してください。" }, 403);
+        }
         const upgrade = await env.DB.prepare(
           "UPDATE user_keys SET identity_signing_public_key=?, identity_key_signature=?, identity_backup_version=2, key_version=key_version+1, updated_at=? WHERE user_id=? AND identity_public_key=? AND (identity_signing_public_key IS NULL OR identity_signing_public_key='') AND identity_backup_version=0"
         ).bind(signingPub, signature, now, me, pub).run();
