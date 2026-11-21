@@ -1278,6 +1278,7 @@ export class ChatRoom extends DurableObject {
         challenge: body.challenge,
         expiresAt: body.expiresAt
       });
+      await this.scheduleNextExpiry();
       return json({ stored: true });
     }
 
@@ -1293,6 +1294,7 @@ export class ChatRoom extends DurableObject {
       const pending = await this.ctx.storage.get(storageKey);
       // Challenges are one-use, even when the proof is invalid.
       await this.ctx.storage.delete(storageKey);
+      await this.scheduleNextExpiry();
       if (!pending || pending.expiresAt <= Date.now() ||
           pending.challengeId !== body.challengeId ||
           pending.identityPublicKey !== body.identityPublicKey) {
@@ -1460,6 +1462,10 @@ export class ChatRoom extends DurableObject {
         socket.close(4001, "Session expired");
       }
     }
+    const pendingLegacyChallenges = await this.ctx.storage.list({ prefix: "identity-legacy:" });
+    for (const [key, challenge] of pendingLegacyChallenges) {
+      if (!challenge || challenge.expiresAt <= now) await this.ctx.storage.delete(key);
+    }
     await this.scheduleNextExpiry();
   }
 
@@ -1467,6 +1473,12 @@ export class ChatRoom extends DurableObject {
     const expiries = this.ctx.getWebSockets()
       .map((socket) => socket.deserializeAttachment()?.expiresAt)
       .filter((value) => Number.isFinite(value) && value > Date.now());
+    const pendingLegacyChallenges = await this.ctx.storage.list({ prefix: "identity-legacy:" });
+    for (const challenge of pendingLegacyChallenges.values()) {
+      if (challenge && Number.isFinite(challenge.expiresAt) && challenge.expiresAt > Date.now()) {
+        expiries.push(challenge.expiresAt);
+      }
+    }
     if (expiries.length === 0) {
       await this.ctx.storage.deleteAlarm();
       return;
