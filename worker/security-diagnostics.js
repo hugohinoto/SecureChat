@@ -1,3 +1,5 @@
+import { dataKeyStatus } from "./data-crypto.js";
+
 const EXPECTED_TABLES = {
   users: ["id","user_id","password_salt","password_hash","password_iterations","created_at","last_login_at","is_admin","password_changed_at"],
   sessions: ["token_hash","user_id","expires_at","created_at"],
@@ -267,14 +269,8 @@ async function checkExternalEngines(env,checks) {
 
 export async function summarizeSecurityDiagnostics(env) {
   const checks=[];
-  const [keyResult]=await Promise.all([Promise.resolve().then(()=> {
-    try { return (env.APP_DATA_ENCRYPTION_KEY||"").length>=32; } catch { return false; }
-  })]);
   let keyStatus={activeVersion:1,configuredVersions:[],activeKeyReady:false};
-  try {
-    const {dataKeyStatus}=await import("./data-crypto.js");
-    keyStatus=dataKeyStatus(env);
-  } catch {}
+  try { keyStatus=dataKeyStatus(env); } catch {}
   add(checks,"data-key","保存データ暗号鍵",keyStatus.activeKeyReady?"ok":"error",
     keyStatus.activeKeyReady
       ? "現行鍵 v"+keyStatus.activeVersion+" を確認しました。設定済み世代: "+keyStatus.configuredVersions.join(", ")+"."
