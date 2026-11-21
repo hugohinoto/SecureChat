@@ -1,4 +1,5 @@
-import { encryptStored, decryptStored, encryptAnnouncement, decodeAnnouncement, dataKeyStatus } from "./data-crypto.js";
+import { encryptStored, decryptStored, encryptAnnouncement, decodeAnnouncement } from "./data-crypto.js";
+import { summarizeSecurityDiagnostics } from "./security-diagnostics.js";
 const DEFAULT_NOTICE_HOURS = 48, MAX_NOTICE_HOURS = 720, encoder = new TextEncoder();
 function json(data, status = 200) { return Response.json(data, { status, headers: { "Cache-Control": "no-store" } }); }
 function expiryHours(value, fallback = DEFAULT_NOTICE_HOURS) {
@@ -16,36 +17,9 @@ async function adminAuth(request, env, deps) {
   return admin;
 }
 async function checkSecurity(env) {
-  const checks = [];
-  let keyStatus; try { keyStatus = dataKeyStatus(env); } catch { keyStatus = { activeVersion: 0, configuredVersions: [], activeKeyReady: false }; }
-  const keyReady = keyStatus.activeKeyReady;
-  const otpReady = typeof env.CONTACT_OTP_PEPPER === "string" && env.CONTACT_OTP_PEPPER.length >= 32;
-  checks.push({ id: "db", label: "D1接続", status: "ok", detail: "管理画面からの診断クエリが成功しました。" });
-  checks.push({ id: "data-key", label: "保存データ暗号鍵", status: keyReady ? "ok" : "error", detail: keyReady ? "現行鍵 v" + keyStatus.activeVersion + "を確認しました。" : "現行鍵 v" + keyStatus.activeVersion + "が未設定、または32バイト未満です。" });
-  checks.push({ id: "otp-key", label: "OTP秘密値", status: otpReady ? "ok" : "error", detail: otpReady ? "CONTACT_OTP_PEPPERを確認しました。" : "CONTACT_OTP_PEPPERが未設定、または短すぎます。" });
-  checks.push({ id: "key-rotation", label: "暗号鍵のローテーション", status: keyReady && keyStatus.configuredVersions.length >= 2 ? "ok" : keyReady ? "warning" : "error", detail: keyReady ? "現行鍵 v" + keyStatus.activeVersion + "。登録済み鍵世代: " + keyStatus.configuredVersions.join(", ") + "。Cronで旧世代データを段階的に再暗号化します。移行完了前に旧鍵を削除しないでください。" : "現行鍵が未設定です。APP_DATA_ENCRYPTION_KEY（旧v1）またはAPP_DATA_ENCRYPTION_KEY_V" + keyStatus.activeVersion + "を設定してください。" });
-  try {
-    const [oldNotices, oldLogs, unsignedKeys, reportCount, oldReports] = await Promise.all([
-      env.DB.prepare("SELECT COUNT(*) AS count FROM announcements WHERE encryption_version=0 OR title_ciphertext IS NULL OR body_ciphertext IS NULL OR title_ciphertext NOT LIKE ? OR body_ciphertext NOT LIKE ?").bind("enc:v" + keyStatus.activeVersion + ":%", "enc:v" + keyStatus.activeVersion + ":%").first(),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM admin_audit_logs WHERE details_json NOT LIKE ?").bind("enc:v" + keyStatus.activeVersion + ":%").first(),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM user_keys WHERE identity_signing_public_key IS NULL OR TRIM(identity_signing_public_key) = '' OR identity_key_signature IS NULL OR TRIM(identity_key_signature) = ''").first(),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM bug_reports").first(),
-      env.DB.prepare("SELECT COUNT(*) AS count FROM bug_reports WHERE encrypted_payload NOT LIKE ?").bind("enc:v" + keyStatus.activeVersion + ":%").first()
-    ]);
-    const n = Number(oldNotices?.count || 0), l = Number(oldLogs?.count || 0), k = Number(unsignedKeys?.count || 0), oldReportCount = Number(oldReports?.count || 0);
-    checks.push({ id: "notice-data", label: "お知らせの暗号化", status: n === 0 ? "ok" : "warning", detail: n === 0 ? "移行対象の平文お知らせはありません。" : "未移行のお知らせが" + n + "件あります。" });
-    checks.push({ id: "audit-data", label: "監査ログ詳細の暗号化", status: l === 0 ? "ok" : "warning", detail: l === 0 ? "監査ログ詳細は暗号化済みです。" : "旧形式の監査ログが" + l + "件あります。" });
-    checks.push({ id: "key-auth", label: "公開鍵の署名検証", status: k === 0 ? "ok" : "critical", detail: k ? "署名証明が未登録の旧形式公開鍵が" + k + "件あります。該当ユーザーに最新版で再ログインしてもらってください。" : "全登録公開鍵にアカウントIDとECDH公開鍵を結び付けるECDSA署名証明があります。初回接続時・鍵変更時の指紋照合は別経路で必要です。" });
-    checks.push({ id: "forward-secrecy", label: "前方秘匿性", status: "critical", detail: "Double Ratchet等の鍵更新・前方秘匿性は未実装です。" });
-    checks.push({ id: "reports", label: "バグ報告保存", status: oldReportCount === 0 ? "ok" : "warning", detail: "報告総数 " + Number(reportCount?.count || 0) + "件、現行鍵への移行待ち " + oldReportCount + "件です。" });
-  } catch {
-    checks.push({ id: "schema", label: "追加D1スキーマ", status: "error", detail: "0008_admin_security_reports.sqlが未適用、または必要なテーブルにアクセスできません。" });
-  }
-  checks.push({ id: "passkeys", label: "管理者パスキー", status: "warning", detail: "現状はパスワード認証です。パスキーと予備キーは未実装です。" });
-  checks.push({ id: "cloudflare-logs", label: "Cloudflare Invocation Logs", status: "warning", detail: "Cloudflare側のプラットフォームログはアプリから保存暗号化を指定できません。アプリから秘密情報や本文を出力しない運用が必要です。" });
-  const statuses = checks.map(x => x.status);
-  return { overall: statuses.includes("error") ? "error" : statuses.includes("critical") ? "critical" : statuses.includes("warning") ? "warning" : "ok", checkedAt: Date.now(), checks };
+  return summarizeSecurityDiagnostics(env);
 }
+
 export async function handleAdminFeatures(request, env, deps) {
   const url = deps.url || new URL(request.url), path = url.pathname, method = request.method;
   if (path === "/api/bug-reports" && method === "POST") {
@@ -126,7 +100,8 @@ export async function handleAdminFeatures(request, env, deps) {
         return json({ updated: true, expiresAt });
       }
       if (securityRoute) {
-        try { await env.DB.prepare("SELECT 1").first(); } catch { return json({ overall: "error", checks: [{ id: "db", label: "D1接続", status: "error", detail: "D1へ接続できません。" }], checkedAt: Date.now() }, 503); }
+        // Let each database check report its own failure; even when D1 is down,
+        // secret checks and external scanner status must still be returned.
         return json(await checkSecurity(env));
       }
       if (path === "/api/admin/bug-reports" && method === "GET") {

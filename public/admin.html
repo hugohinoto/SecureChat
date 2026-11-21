@@ -31,9 +31,10 @@
 
     <section class="panel">
       <div class="panel-heading"><div><p class="eyebrow">SECURITY DIAGNOSTICS</p><h2>セキュリティチェック</h2></div><div class="item-actions"><button id="export-security-csv" class="secondary" type="button" disabled>CSVで出力</button><button id="run-security-check" class="secondary" type="button">今すぐ再チェック</button></div></div>
+      <div class="security-engine-links"><a href="https://github.com/hugohinoto/SecureChat/actions/workflows/security-scan.yml" target="_blank" rel="noopener noreferrer">外部エンジンの実行履歴を開く</a><span>Semgrep・SQLFluff・OWASP ZAP。未実行・取得不能は安全扱いしません。</span></div>
       <div id="security-summary" class="security-summary">チェックを実行しています…</div>
       <div id="security-checks" class="security-check-list"></div>
-      <p class="muted">このチェックは設定・D1スキーマ・既知の暗号方式を確認する診断です。外部からの侵入テストやCloudflare内部ログの監査を代替するものではありません。</p>
+      <p class="muted">ランタイム・D1構造・マイグレーション・外部エンジンを組み合わせた診断です。最新エンジン結果の照合にはWorker Secret SECURITY_SCAN_GITHUB_TOKEN（Actions: read）が必要です。ZAPは公開面へのパッシブ検査のみで、認証後のAPIやCloudflare内部ログの完全監査を代替するものではありません。</p>
     </section>
 
     <section class="panel">
