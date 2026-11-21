@@ -28,6 +28,7 @@ class FakeStatement {
   }
   async all() {
     const sql=this.sql;
+    if(sql.includes("AS key_version"))return {results:this.db.keyUsageRows};
     if(sql.includes("sqlite_master")&&sql.includes("type IN ('table','view','trigger')")) {
       const objects=[
         ...Object.keys(securityDiagnosticSchema.tables.reduce((a,t)=>(a[t]=true,a),{})).map(name=>({name,type:"table",sql:this.db.tableSql[name]||"CREATE TABLE "+name+" (id TEXT)"})),
@@ -67,9 +68,10 @@ class FakeStatement {
 }
 
 class FakeDB {
-  constructor({failQuickCheck=false,missingColumn=null,extraObject=null}={}) {
+  constructor({failQuickCheck=false,missingColumn=null,extraObject=null,keyUsageRows=[]}={}) {
     this.failQuickCheck=failQuickCheck;
     this.extraObject=extraObject;
+    this.keyUsageRows=keyUsageRows;
     this.columns=Object.fromEntries(securityDiagnosticSchema.tables.map(table=>[table,[...knownColumns[table]]]));
     if(missingColumn) {
       const [table,column]=missingColumn;
@@ -113,6 +115,45 @@ function environment(options) {
     CONTACT_OTP_PEPPER:"y".repeat(32)
   };
 }
+
+test("key rotation remains warning until old ciphertext is migrated", async () => {
+  const env=environment({keyUsageRows:[
+    {key_version:1,record_count:2},
+    {key_version:2,record_count:8}
+  ]});
+  env.APP_DATA_ENCRYPTION_KEY_V2="z".repeat(32);
+  env.APP_DATA_ENCRYPTION_ACTIVE_VERSION="2";
+  const result=await summarizeSecurityDiagnostics(env);
+  const check=result.checks.find(item=>item.id==="key-rotation");
+  assert.equal(check.status,"warning");
+  assert.match(check.detail,/2 件残っています/);
+});
+
+test("key rotation is critical when old ciphertext remains but its old key is missing", async () => {
+  const env=environment({keyUsageRows:[{key_version:1,record_count:1}]});
+  delete env.APP_DATA_ENCRYPTION_KEY;
+  env.APP_DATA_ENCRYPTION_KEY_V2="z".repeat(32);
+  env.APP_DATA_ENCRYPTION_ACTIVE_VERSION="2";
+  const result=await summarizeSecurityDiagnostics(env);
+  assert.equal(result.checks.find(item=>item.id==="key-rotation").status,"critical");
+});
+
+test("key rotation passes only after all encrypted rows use the active generation", async () => {
+  const env=environment({keyUsageRows:[{key_version:2,record_count:12}]});
+  env.APP_DATA_ENCRYPTION_KEY_V2="z".repeat(32);
+  env.APP_DATA_ENCRYPTION_ACTIVE_VERSION="2";
+  const result=await summarizeSecurityDiagnostics(env);
+  assert.equal(result.checks.find(item=>item.id==="key-rotation").status,"ok");
+});
+
+test("forward secrecy and admin passkeys remain explicitly incomplete until implemented", async () => {
+  const result=await summarizeSecurityDiagnostics(environment());
+  assert.equal(result.checks.find(item=>item.id==="forward-secrecy").status,"critical");
+  assert.equal(result.checks.find(item=>item.id==="passkeys").status,"warning");
+  const logs=result.checks.find(item=>item.id==="cloudflare-logs");
+  assert.equal(logs.status,"warning");
+  assert.equal(logs.complete,false);
+});
 
 test("diagnostics cover SQL schema, indexes, migration history and runtime integrity", async () => {
   const result=await summarizeSecurityDiagnostics(environment());
