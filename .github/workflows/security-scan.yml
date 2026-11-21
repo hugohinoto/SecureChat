@@ -1,0 +1,83 @@
+name: Independent security engines
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 16 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semgrep:
+    name: semgrep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Semgrep
+        run: python -m pip install --disable-pip-version-check semgrep
+      - name: Run Semgrep security rules and D1 SQL taint rules
+        run: >-
+          semgrep scan
+          --config p/security-audit
+          --config .semgrep/sql-injection.yml
+          --severity ERROR
+          --error
+          --metrics=off
+          --json
+          --output semgrep-results.json
+          .
+      - name: Upload Semgrep report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-security-report
+          path: semgrep-results.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  sqlfluff:
+    name: sqlfluff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install SQLFluff
+        run: python -m pip install --disable-pip-version-check sqlfluff
+      - name: Extract static D1 statements from Worker code
+        run: node scripts/extract-worker-sql.js /tmp/securechat-worker-queries.sql
+      - name: Parse every migration and static D1 statement
+        run: >-
+          sqlfluff lint
+          --dialect sqlite
+          --rules PRS
+          database/d1-migrations
+          /tmp/securechat-worker-queries.sql
+
+  zap:
+    name: zap
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run OWASP ZAP passive baseline scan
+        uses: zaproxy/action-baseline@v0.15.0
+        with:
+          target: https://securechat.hugohinoto.workers.dev/
+          rules_file_name: .zap/rules.tsv
+          allow_issue_writing: false
+          fail_action: true
+          artifact_name: zap-passive-baseline-report
