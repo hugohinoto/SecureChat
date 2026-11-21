@@ -42,7 +42,11 @@
   ],
   "triggers": { "crons": ["*/5 * * * *"] },
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false
+    }
   },
   "previews": {
     "durable_objects": {
