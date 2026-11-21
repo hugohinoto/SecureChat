@@ -181,7 +181,7 @@ async function encryptIdentityBackup(payload,password) {
   const iv=crypto.getRandomValues(new Uint8Array(12));
   const key=await deriveIdentityBackupKey(password,salt);
   const ciphertext=await crypto.subtle.encrypt(
-    {name:"AES-GCM",iv,key},
+    {name:"AES-GCM",iv},
     key,
     new TextEncoder().encode(JSON.stringify(payload))
   );
@@ -201,7 +201,7 @@ async function decryptIdentityBackup(backup,password) {
     }
     const privateKey=await crypto.subtle.importKey("jwk",payload.ecdhPrivateJwk,{name:"ECDH",namedCurve:"P-256"},false,["deriveBits"]);
     const signingPrivateKey=await crypto.subtle.importKey("jwk",payload.signingPrivateJwk,{name:"ECDSA",namedCurve:"P-256"},false,["sign"]);
-    return {privateKey,publicKey:payload.identityPublicKey,signingPrivateKey,signingPublicKey:payload.identitySigningPublicKey};
+    return {privateKey,publicKey:payload.identityPublicKey,signingPrivateKey,signingPublicKey:payload.identitySigningPublicKey,backupPayload:payload};
   } catch(error) {
     throw appError("IDENTITY_BACKUP_PASSWORD_MISMATCH","暗号鍵バックアップを復号できません。パスワードを確認してください。");
   }
@@ -331,9 +331,25 @@ async function deriveKey(conversationId,peerUserId) {
   const ownRecord=await storedIdentity(currentUser.userId);
   const peerPins=ownRecord?.peerPins||{};
   if(peerPins[peerUserId] && peerPins[peerUserId]!==peer.identitySigningPublicKey) {
-    throw appError("IDENTITY_SIGNING_KEY_CHANGED","相手の署名鍵が以前の登録から変更されています。別経路で指紋を確認するまで接続を中止しました。");
-  }
-  if(!peerPins[peerUserId]) {
+    const previousSigningPublicKey=peer.previousIdentitySigningPublicKey;
+    if(previousSigningPublicKey!==peerPins[peerUserId] || !peer.identityTransitionSignature) {
+      throw appError("IDENTITY_SIGNING_KEY_CHANGED","相手の署名鍵が以前の登録から変更されています。別経路で指紋を確認するまで接続を中止しました。");
+    }
+    const previousSigningKey=await crypto.subtle.importKey(
+      "raw",fromB64(previousSigningPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]
+    );
+    const transitionMessage=new TextEncoder().encode(
+      "SecureChat identity-key-transition:v1\n"+peerUserId+"\n"+
+      previousSigningPublicKey+"\n"+peer.identityPublicKey+"\n"+peer.identitySigningPublicKey
+    );
+    const transitionValid=await crypto.subtle.verify(
+      {name:"ECDSA",hash:"SHA-256"},previousSigningKey,
+      fromB64(peer.identityTransitionSignature),transitionMessage
+    );
+    if(!transitionValid)throw appError("IDENTITY_KEY_TRANSITION_INVALID","相手の暗号鍵移行証明を検証できません。安全のため接続を中止しました。");
+    peerPins[peerUserId]=peer.identitySigningPublicKey;
+    await saveIdentity(currentUser.userId,{...ownRecord,peerPins});
+  } else if(!peerPins[peerUserId]) {
     peerPins[peerUserId]=peer.identitySigningPublicKey;
     await saveIdentity(currentUser.userId,{...ownRecord,peerPins});
   }
@@ -425,7 +441,7 @@ async function loadPublicAnnouncements() {
     el.announcements.hidden=!(data.announcements||[]).length;
   } catch { el.announcements.hidden=true; }
 }
-async function signIn(user) {
+async function signIn(user,password=null) {
   const sessionState=await checkSession();
   user.isAdmin=!!sessionState.user?.isAdmin;
   user.mustChangePassword=!!sessionState.user?.mustChangePassword;
@@ -441,7 +457,7 @@ async function signIn(user) {
   el.passwordChangeGate.hidden=true;
   await loadPublicAnnouncements();
   try {
-    await ensureIdentity();
+    await ensureIdentity(password);
     await refreshSidebar();
   } catch (error) {
     currentUser=null;
@@ -482,10 +498,18 @@ async function submitAdminPasswordChange(event) {
   if(newPassword===currentPassword) {setError(el.passwordChangeError,appError("PASSWORD_UNCHANGED","現在とは異なるパスワードを設定してください。"));return;}
   el.passwordChangeSubmit.disabled=true;
   try {
-    const result=await api("/api/auth/admin/change-password",{method:"POST",body:{currentPassword,newPassword}});
+    const backupState=await api("/api/keys/backup");
+    let identityBackup=null;
+    if(backupState.backupAvailable) {
+      const restored=await decryptIdentityBackup(backupState.backup,currentPassword);
+      identityBackup=await encryptIdentityBackup(restored.backupPayload,newPassword);
+    }
+    const result=await api("/api/auth/admin/change-password",{
+      method:"POST",body:{currentPassword,newPassword,...(identityBackup?{identityBackup}:{})}
+    });
     el.passwordChangeForm.reset();
     el.passwordChangeGate.hidden=true;
-    await signIn(result.user);
+    await signIn(result.user,newPassword);
     toast("管理者パスワードを変更しました。次回の変更期限は90日後です。");
   } catch(error) {setError(el.passwordChangeError,error);}
   finally {el.passwordChangeSubmit.disabled=false;}
@@ -501,7 +525,7 @@ async function submitAuth(event) {
   el.submit.disabled=true;
   try {
     const data=await api(registering?"/api/auth/register":"/api/auth/login",{method:"POST",body:registering?{userId,password,inviteCode:el.inviteCode.value.trim()}:{userId,password}});
-    await signIn(data.user); toast(registering?"アカウントを作成しました。":"ログインしました。");
+    await signIn(data.user,password); toast(registering?"アカウントを作成しました。":"ログインしました。");
   } catch(e) {setError(el.error,e);}
   finally {el.submit.disabled=false;el.submit.textContent=authMode==="register"?"アカウントを作成":"ログイン";}
 }
