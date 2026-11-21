@@ -1259,6 +1259,70 @@ export class ChatRoom extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/identity-legacy/challenge" && request.method === "POST") {
+      let body;
+      try { body = await readJson(request); } catch { return json({ error: "INVALID_JSON" }, 400); }
+      if (typeof body?.userId !== "string" || !/^[a-z0-9_]{3,32}$/.test(body.userId) ||
+          typeof body.challengeId !== "string" || body.challengeId.length < 32 || body.challengeId.length > 64 ||
+          typeof body.identityPublicKey !== "string" || body.identityPublicKey.length < 80 || body.identityPublicKey.length > 128 ||
+          !body.serverPrivateJwk || typeof body.serverPrivateJwk.d !== "string" ||
+          typeof body.challenge !== "string" || body.challenge.length < 32 || body.challenge.length > 64 ||
+          !Number.isSafeInteger(body.expiresAt) || body.expiresAt <= Date.now() ||
+          body.expiresAt > Date.now() + 5 * 60 * 1000) {
+        return json({ error: "INVALID_LEGACY_CHALLENGE" }, 400);
+      }
+      await this.ctx.storage.put("identity-legacy:" + body.userId, {
+        challengeId: body.challengeId,
+        identityPublicKey: body.identityPublicKey,
+        serverPrivateJwk: body.serverPrivateJwk,
+        challenge: body.challenge,
+        expiresAt: body.expiresAt
+      });
+      return json({ stored: true });
+    }
+
+    if (url.pathname === "/identity-legacy/verify" && request.method === "POST") {
+      let body;
+      try { body = await readJson(request); } catch { return json({ error: "INVALID_JSON" }, 400); }
+      if (typeof body?.userId !== "string" || !/^[a-z0-9_]{3,32}$/.test(body.userId) ||
+          typeof body.challengeId !== "string" || typeof body.identityPublicKey !== "string" ||
+          typeof body.proof !== "string") {
+        return json({ valid: false }, 400);
+      }
+      const storageKey = "identity-legacy:" + body.userId;
+      const pending = await this.ctx.storage.get(storageKey);
+      // Challenges are one-use, even when the proof is invalid.
+      await this.ctx.storage.delete(storageKey);
+      if (!pending || pending.expiresAt <= Date.now() ||
+          pending.challengeId !== body.challengeId ||
+          pending.identityPublicKey !== body.identityPublicKey) {
+        return json({ valid: false });
+      }
+      try {
+        const privateKey = await crypto.subtle.importKey(
+          "jwk", pending.serverPrivateJwk, { name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]
+        );
+        const legacyPublicKey = await crypto.subtle.importKey(
+          "raw", fromBase64url(pending.identityPublicKey), { name: "ECDH", namedCurve: "P-256" }, false, []
+        );
+        const shared = await crypto.subtle.deriveBits({ name: "ECDH", public: legacyPublicKey }, privateKey, 256);
+        const proofKey = await crypto.subtle.importKey(
+          "raw", shared, { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
+        );
+        const proofBytes = fromBase64url(body.proof);
+        if (proofBytes.length !== 32) return json({ valid: false });
+        const message = encoder.encode(
+          "SecureChat legacy-identity-possession:v1\\n" +
+          body.userId + "\\n" + pending.challengeId + "\\n" +
+          pending.identityPublicKey + "\\n" + pending.challenge
+        );
+        const valid = await crypto.subtle.verify("HMAC", proofKey, proofBytes, message);
+        return json({ valid });
+      } catch {
+        return json({ valid: false });
+      }
+    }
+
     if (url.pathname === "/revoke" && request.method === "POST") {
       const tokenHash = request.headers.get("X-Session-Hash");
       if (!tokenHash) return new Response("Unauthorized", { status: 401 });
