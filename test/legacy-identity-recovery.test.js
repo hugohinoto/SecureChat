@@ -7,7 +7,7 @@ const read = path => readFile(new URL(path, import.meta.url), "utf8");
 test("legacy identity upgrade preserves the original ECDH public key and marks the key local-only", async () => {
   const worker = await read("../worker/index.js");
   const client = await read("../public/app.js");
-  assert.match(worker, /body\?\.legacyUpgrade === true/);
+  assert.match(worker, /body\?\.legacyUpgrade && typeof body\.legacyUpgrade === "object"/);
   assert.match(worker, /existingKey\.identity_public_key === pub/);
   assert.match(worker, /identity_backup_version=2/);
   assert.match(worker, /legacy-local-only/);
@@ -15,6 +15,11 @@ test("legacy identity upgrade preserves the original ECDH public key and marks t
   assert.match(client, /saved\.publicKey===remote\.identityPublicKey/);
   assert.match(client, /privateKey:saved\.privateKey,publicKey:saved\.publicKey/);
   assert.match(client, /legacyLocalOnly:true/);
+  assert.match(client, /api\("\/api\/keys\/legacy-challenge"/);
+  assert.match(client, /crypto\.subtle\.deriveBits\(\{name:"ECDH",public:serverPublicKey\},saved\.privateKey,256\)/);
+  assert.match(worker, /identity-legacy\/verify/);
+  assert.match(worker, /crypto\.subtle\.verify\("HMAC",proofKey,proofBytes,message\)/);
+  assert.match(worker, /this\.ctx\.storage\.delete\(storageKey\)/);
   assert.match(client, /IDENTITY_LEGACY_DEVICE_REQUIRED/);
 });
 
