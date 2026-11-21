@@ -33,3 +33,23 @@ To display the latest Semgrep, SQLFluff, and OWASP ZAP job results, add a Cloudf
 ## Notification limits
 
 Unread counts are persisted per conversation and shown in the chat list. Browser notifications work while SecureChat is open in a browser tab and the user has granted notification permission. This release does not implement Web Push or delivery after the browser has fully closed.
+
+
+## Application data-encryption key rotation
+
+This rotation applies only to application-stored sensitive fields (announcement content, admin audit details, and bug-report payloads). It does **not** rotate chat identity keys and does not provide chat forward secrecy.
+
+1. Keep the existing `APP_DATA_ENCRYPTION_KEY` (generation v1) unchanged and store a protected offline backup. Never paste key material into GitHub, chat, or logs.
+2. Generate a new random secret with at least 32 bytes of entropy and add it as the Worker Secret `APP_DATA_ENCRYPTION_KEY_V2`.
+3. Set the non-secret Worker variable `APP_DATA_ENCRYPTION_ACTIVE_VERSION=2`. Do not remove v1.
+4. Deploy the Worker. The existing five-minute Cron migration re-encrypts up to 10 announcements, 20 audit records, and 20 bug reports per run.
+5. Re-run the admin security diagnostic. `key-rotation` remains warning while older encrypted rows remain, becomes critical if an old key required by stored ciphertext is missing, and passes only after no ciphertext from an older generation remains. The separate `sensitive-data-migration` check must also pass.
+6. Keep v1 available through a recovery period and retain a protected backup. Do not delete v1 merely because v2 is active; only consider retirement after the diagnostics show zero old-generation records, backups are verified, and recovery has been tested.
+
+The Worker cannot create or change Cloudflare Secrets/Variables on your behalf. Perform steps 2–3 in **Workers & Pages → securechat → Settings → Variables and Secrets**. Do not share secret values.
+
+## Cloudflare Invocation Logs and application logs
+
+`wrangler.jsonc` keeps application log collection enabled but explicitly sets `observability.logs.invocation_logs=false` to disable automatically generated invocation logs. Worker source logging is restricted by a regression test to fixed literal labels; do not add request objects, headers, cookies, user IDs, message bodies, key material, or raw exception objects to `console.*`.
+
+The application cannot inspect Cloudflare account-level log access permissions, retention settings, or verify which configuration is currently deployed. Check **Workers & Pages → securechat → Observability → Logs** and the Cloudflare account roles separately. The diagnostic intentionally remains `warning / incomplete` rather than claiming those platform controls passed.
