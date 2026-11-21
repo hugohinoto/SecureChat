@@ -1163,3 +1163,133 @@ body {
     min-height: 12px;
   }
 }
+
+
+/* Give the conversation timeline priority over secondary information panels. */
+.chat-panel > .chat-header,
+.chat-panel > .security-banner,
+.chat-panel > .public-announcements,
+.chat-panel > .fingerprint-panel,
+.chat-panel > .composer-area {
+  flex-shrink: 0;
+}
+
+.chat-panel > .timeline {
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.chat-panel > .composer-area {
+  flex: 0 0 auto;
+}
+
+/* Announcements stay available without taking chat height until opened. */
+.public-announcements {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-height: 38px;
+  margin: 8px 28px 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(112,211,229,.2);
+  border-radius: 11px;
+  background: rgba(48,139,159,.07);
+}
+
+.public-announcements[open] {
+  max-height: min(190px, 25dvh);
+}
+
+.public-announcements-toggle {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.public-announcements-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.public-announcements-heading {
+  margin: 0;
+  color: #bdeef5;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.public-announcements-hint {
+  flex: 0 0 auto;
+  color: #8eabba;
+  font-size: 9px;
+}
+
+.public-announcements[open] .public-announcements-hint::after {
+  content: "（閉じる）";
+}
+
+.public-announcements-content {
+  max-height: calc(min(190px, 25dvh) - 38px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 12px 9px;
+  overscroll-behavior: contain;
+}
+
+.public-announcements-content .public-announcement:first-child {
+  border-top: 1px solid rgba(185,220,235,.1);
+}
+
+@media (min-width: 681px) {
+  .chat-header {
+    min-height: 72px;
+    padding: 12px 24px;
+  }
+
+  .security-banner {
+    margin: 8px 28px 0;
+    padding: 9px 13px;
+    gap: 9px;
+  }
+
+  .security-symbol {
+    width: 23px;
+    height: 23px;
+  }
+
+  .security-copy span {
+    font-size: 10px;
+    line-height: 1.4;
+  }
+
+  .fingerprint-panel {
+    max-height: 96px;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 680px) {
+  .public-announcements {
+    margin: 8px 10px 0;
+  }
+
+  .public-announcements[open] {
+    max-height: 22dvh;
+  }
+
+  .public-announcements-content {
+    max-height: calc(22dvh - 38px);
+  }
+
+  .chat-panel > .timeline {
+    flex: 1 1 0%;
+    min-height: 0;
+  }
+}
