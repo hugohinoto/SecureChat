@@ -875,12 +875,13 @@ async function handleApi(request, env) {
       const key = await env.DB.prepare(
         "SELECT identity_public_key, identity_signing_public_key, identity_key_signature, identity_transition_from, identity_transition_signature, identity_backup_version, identity_backup_salt, identity_backup_iv, identity_backup_ciphertext FROM user_keys WHERE user_id=?"
       ).bind(me).first();
-      if (!key) return json({ identityRegistered: false, backupAvailable: false });
+      if (!key) return json({ identityRegistered: false, backupAvailable: false, identityMode: "unregistered" });
       const backupAvailable = Number(key.identity_backup_version) === 1 &&
         !!key.identity_backup_salt && !!key.identity_backup_iv && !!key.identity_backup_ciphertext;
       return json({
         identityRegistered: true,
         backupAvailable,
+        identityMode: backupAvailable ? "portable" : Number(key.identity_backup_version) === 2 ? "legacy-local-only" : "setup-required",
         identityPublicKey: key.identity_public_key,
         identitySigningPublicKey: key.identity_signing_public_key,
         identityKeySignature: key.identity_key_signature,
@@ -894,6 +895,52 @@ async function handleApi(request, env) {
         } : {})
       });
     }
+    if (path === "/api/keys/legacy-challenge" && method === "POST") {
+      if (!sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
+      if (!await checkRateLimit(env, request, "legacy-identity-challenge", 5)) {
+        return json({ error: "RATE_LIMITED" }, 429);
+      }
+      const legacyKey = await env.DB.prepare(
+        "SELECT identity_public_key, identity_signing_public_key, identity_backup_version FROM user_keys WHERE user_id=?"
+      ).bind(me).first();
+      if (!legacyKey || legacyKey.identity_signing_public_key ||
+          Number(legacyKey.identity_backup_version || 0) !== 0) {
+        return json({ error: "IDENTITY_LEGACY_UPGRADE_NOT_AVAILABLE" }, 409);
+      }
+      let pair, privateJwk, serverPublicKey;
+      try {
+        pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+        privateJwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+        serverPublicKey = base64url(new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey)));
+      } catch {
+        return json({ error: "IDENTITY_LEGACY_CHALLENGE_FAILED" }, 503);
+      }
+      const challengeId = randomToken();
+      const challenge = randomToken();
+      const expiresAt = Date.now() + 5 * 60 * 1000;
+      const room = env.CHAT_ROOM.get(env.CHAT_ROOM.idFromName("open-lounge"));
+      const stored = await room.fetch("https://chat-room.internal/identity-legacy/challenge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: session.user_id,
+          challengeId,
+          identityPublicKey: legacyKey.identity_public_key,
+          serverPrivateJwk: privateJwk,
+          challenge,
+          expiresAt
+        })
+      });
+      if (!stored.ok) return json({ error: "IDENTITY_LEGACY_CHALLENGE_FAILED" }, 503);
+      return json({
+        challengeId,
+        challenge,
+        identityPublicKey: legacyKey.identity_public_key,
+        serverPublicKey,
+        expiresAt
+      });
+    }
+
     if (path === "/api/keys" && method === "PUT") {
       let body;
       try { body = await readJson(request); } catch { return json({ error: "INVALID_JSON" }, 400); }
@@ -912,21 +959,59 @@ async function handleApi(request, env) {
       if (!validProof) return json({ error: "IDENTITY_KEY_PROOF_INVALID" }, 400);
 
       const existingKey = await env.DB.prepare(
-        "SELECT identity_public_key, identity_signing_public_key FROM user_keys WHERE user_id=?"
+        "SELECT identity_public_key, identity_signing_public_key, identity_key_signature, identity_backup_version FROM user_keys WHERE user_id=?"
       ).bind(me).first();
 
-      // Older cached clients do not send identityBackup. Allow them to reuse an
-      // already-registered identical identity, but never create or rotate a key
-      // without a valid password-encrypted backup.
+      // A pre-signed-key account may attach a signer to its existing ECDH key
+      // once, but only without changing that ECDH key. Version 2 marks this
+      // legacy identity as local-device-only and prevents later silent rotation.
+      if ((body?.identityBackup === undefined || body?.identityBackup === null) &&
+          body?.legacyUpgrade && typeof body.legacyUpgrade === "object" &&
+          existingKey &&
+          existingKey.identity_public_key === pub &&
+          !existingKey.identity_signing_public_key &&
+          Number(existingKey.identity_backup_version || 0) === 0) {
+        const challengeId = body.legacyUpgrade.challengeId;
+        const proof = body.legacyUpgrade.proof;
+        if (typeof challengeId !== "string" || challengeId.length < 32 || challengeId.length > 64 ||
+            typeof proof !== "string" || proof.length < 40 || proof.length > 128) {
+          return json({ error: "IDENTITY_LEGACY_PROOF_REQUIRED" }, 400);
+        }
+        const room = env.CHAT_ROOM.get(env.CHAT_ROOM.idFromName("open-lounge"));
+        const verification = await room.fetch("https://chat-room.internal/identity-legacy/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: session.user_id, challengeId, identityPublicKey: pub, proof })
+        });
+        const verified = await verification.json().catch(() => ({}));
+        if (!verification.ok || verified.valid !== true) {
+          return json({ error: "IDENTITY_LEGACY_PROOF_INVALID", message: "元の暗号鍵を確認できませんでした。元の端末で再試行してください。" }, 403);
+        }
+        const upgrade = await env.DB.prepare(
+          "UPDATE user_keys SET identity_signing_public_key=?, identity_key_signature=?, identity_backup_version=2, key_version=key_version+1, updated_at=? WHERE user_id=? AND identity_public_key=? AND (identity_signing_public_key IS NULL OR identity_signing_public_key='') AND identity_backup_version=0"
+        ).bind(signingPub, signature, now, me, pub).run();
+        if (Number(upgrade.meta?.changes || 0) === 1) {
+          return json({ saved: true, legacyLocalOnly: true, backupAvailable: false });
+        }
+        return json({
+          error: "IDENTITY_KEY_CONFLICT",
+          message: "別端末で旧形式の鍵移行が完了しました。ページを再読み込みしてください。"
+        }, 409);
+      }
+
+      // Older cached clients may only reuse the exact identity already stored.
+      // Legacy-local-only records may not be rotated without a portable backup.
       if (body?.identityBackup === undefined || body?.identityBackup === null) {
         if (existingKey &&
             existingKey.identity_public_key === pub &&
             existingKey.identity_signing_public_key === signingPub) {
-          return json({ saved: true, backupUnchanged: true });
+          return json({ saved: true, backupUnchanged: true, legacyLocalOnly: Number(existingKey.identity_backup_version) === 2 });
         }
         return json({
-          error: "IDENTITY_BACKUP_REQUIRED",
-          message: "この端末のアプリが古い可能性があります。ページを再読み込みしてください。新しい端末での鍵登録には暗号化バックアップが必要です。"
+          error: Number(existingKey?.identity_backup_version) === 2 ? "IDENTITY_LEGACY_KEY_LOCKED" : "IDENTITY_BACKUP_REQUIRED",
+          message: Number(existingKey?.identity_backup_version) === 2
+            ? "この旧形式の暗号鍵は元の端末内だけに保存されています。鍵の安全な復旧手段がないため、自動変更を禁止しています。元の端末と保存データを保持してください。"
+            : "この端末のアプリが古い可能性があります。ページを再読み込みしてください。新しい端末での鍵登録には暗号化バックアップが必要です。"
         }, 400);
       }
       if (!validIdentityBackup(body.identityBackup)) {
@@ -934,6 +1019,11 @@ async function handleApi(request, env) {
           error: "IDENTITY_BACKUP_INVALID",
           message: "暗号化バックアップの形式が正しくありません。ページを再読み込みして再度ログインしてください。"
         }, 400);
+      }
+
+      if (existingKey && Number(existingKey.identity_backup_version) === 2 &&
+          (existingKey.identity_public_key !== pub || existingKey.identity_signing_public_key !== signingPub)) {
+        return json({ error: "IDENTITY_LEGACY_KEY_LOCKED", message: "この旧形式の暗号鍵は元の端末内だけに保存されています。自動鍵変更はできません。元の端末と保存データを保持してください。" }, 409);
       }
 
       let transitionFrom = null, transitionSignature = null;
@@ -1199,6 +1289,72 @@ export class ChatRoom extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/identity-legacy/challenge" && request.method === "POST") {
+      let body;
+      try { body = await readJson(request); } catch { return json({ error: "INVALID_JSON" }, 400); }
+      if (typeof body?.userId !== "string" || !/^[a-z0-9_]{3,32}$/.test(body.userId) ||
+          typeof body.challengeId !== "string" || body.challengeId.length < 32 || body.challengeId.length > 64 ||
+          typeof body.identityPublicKey !== "string" || body.identityPublicKey.length < 80 || body.identityPublicKey.length > 128 ||
+          !body.serverPrivateJwk || typeof body.serverPrivateJwk.d !== "string" ||
+          typeof body.challenge !== "string" || body.challenge.length < 32 || body.challenge.length > 64 ||
+          !Number.isSafeInteger(body.expiresAt) || body.expiresAt <= Date.now() ||
+          body.expiresAt > Date.now() + 5 * 60 * 1000) {
+        return json({ error: "INVALID_LEGACY_CHALLENGE" }, 400);
+      }
+      await this.ctx.storage.put("identity-legacy:" + body.userId, {
+        challengeId: body.challengeId,
+        identityPublicKey: body.identityPublicKey,
+        serverPrivateJwk: body.serverPrivateJwk,
+        challenge: body.challenge,
+        expiresAt: body.expiresAt
+      });
+      await this.scheduleNextExpiry();
+      return json({ stored: true });
+    }
+
+    if (url.pathname === "/identity-legacy/verify" && request.method === "POST") {
+      let body;
+      try { body = await readJson(request); } catch { return json({ error: "INVALID_JSON" }, 400); }
+      if (typeof body?.userId !== "string" || !/^[a-z0-9_]{3,32}$/.test(body.userId) ||
+          typeof body.challengeId !== "string" || typeof body.identityPublicKey !== "string" ||
+          typeof body.proof !== "string") {
+        return json({ valid: false }, 400);
+      }
+      const storageKey = "identity-legacy:" + body.userId;
+      const pending = await this.ctx.storage.get(storageKey);
+      // Challenges are one-use, even when the proof is invalid.
+      await this.ctx.storage.delete(storageKey);
+      await this.scheduleNextExpiry();
+      if (!pending || pending.expiresAt <= Date.now() ||
+          pending.challengeId !== body.challengeId ||
+          pending.identityPublicKey !== body.identityPublicKey) {
+        return json({ valid: false });
+      }
+      try {
+        const privateKey = await crypto.subtle.importKey(
+          "jwk", pending.serverPrivateJwk, { name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]
+        );
+        const legacyPublicKey = await crypto.subtle.importKey(
+          "raw", fromBase64url(pending.identityPublicKey), { name: "ECDH", namedCurve: "P-256" }, false, []
+        );
+        const shared = await crypto.subtle.deriveBits({ name: "ECDH", public: legacyPublicKey }, privateKey, 256);
+        const proofKey = await crypto.subtle.importKey(
+          "raw", shared, { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
+        );
+        const proofBytes = fromBase64url(body.proof);
+        if (proofBytes.length !== 32) return json({ valid: false });
+        const message = encoder.encode(
+          "SecureChat legacy-identity-possession:v1\\n" +
+          body.userId + "\\n" + pending.challengeId + "\\n" +
+          pending.identityPublicKey + "\\n" + pending.challenge
+        );
+        const valid = await crypto.subtle.verify("HMAC", proofKey, proofBytes, message);
+        return json({ valid });
+      } catch {
+        return json({ valid: false });
+      }
+    }
+
     if (url.pathname === "/revoke" && request.method === "POST") {
       const tokenHash = request.headers.get("X-Session-Hash");
       if (!tokenHash) return new Response("Unauthorized", { status: 401 });
@@ -1336,6 +1492,10 @@ export class ChatRoom extends DurableObject {
         socket.close(4001, "Session expired");
       }
     }
+    const pendingLegacyChallenges = await this.ctx.storage.list({ prefix: "identity-legacy:" });
+    for (const [key, challenge] of pendingLegacyChallenges) {
+      if (!challenge || challenge.expiresAt <= now) await this.ctx.storage.delete(key);
+    }
     await this.scheduleNextExpiry();
   }
 
@@ -1343,6 +1503,12 @@ export class ChatRoom extends DurableObject {
     const expiries = this.ctx.getWebSockets()
       .map((socket) => socket.deserializeAttachment()?.expiresAt)
       .filter((value) => Number.isFinite(value) && value > Date.now());
+    const pendingLegacyChallenges = await this.ctx.storage.list({ prefix: "identity-legacy:" });
+    for (const challenge of pendingLegacyChallenges.values()) {
+      if (challenge && Number.isFinite(challenge.expiresAt) && challenge.expiresAt > Date.now()) {
+        expiries.push(challenge.expiresAt);
+      }
+    }
     if (expiries.length === 0) {
       await this.ctx.storage.deleteAlarm();
       return;
