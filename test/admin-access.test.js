@@ -30,6 +30,8 @@ test("admin console verifies role and recent authentication before revealing pri
   assert.match(initializer, /api\("\/api\/admin\/overview"\)/);
   assert.match(admin, /window\.addEventListener\("pagehide",clearSensitiveConsole\)/);
   assert.match(admin, /window\.addEventListener\("pageshow",event=>\s*\{\s*if\(event\.persisted\)initializeAdminConsole\(\)/);
+  assert.match(admin, /window\.addEventListener\("focus",revalidateVisibleAdminConsole\)/);
+  assert.match(admin, /document\.addEventListener\("visibilitychange"/);
   assert.match(admin, /function clearSensitiveConsole\(\)[\s\S]*?lastSecurityCheck=null/);
 });
 
