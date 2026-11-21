@@ -187,6 +187,72 @@ async function checkDatabaseIntegrity(env,checks) {
   });
 }
 
+async function checkKeyRotation(env,checks,keyStatus) {
+  await runIsolated(checks,"key-rotation","暗号鍵ローテーション",async()=>{
+    if(!keyStatus.activeKeyReady) {
+      return {status:"error",detail:"現行鍵 v"+keyStatus.activeVersion+" が未設定です。"};
+    }
+    const usage=rows(await env.DB.prepare(`
+      SELECT key_version, SUM(record_count) AS record_count
+      FROM (
+        SELECT CAST(substr(title_ciphertext,6,instr(substr(title_ciphertext,6),':')-1) AS INTEGER) AS key_version,
+               COUNT(*) AS record_count
+        FROM announcements WHERE title_ciphertext LIKE 'enc:v%:%' GROUP BY key_version
+        UNION ALL
+        SELECT CAST(substr(body_ciphertext,6,instr(substr(body_ciphertext,6),':')-1) AS INTEGER) AS key_version,
+               COUNT(*) AS record_count
+        FROM announcements WHERE body_ciphertext LIKE 'enc:v%:%' GROUP BY key_version
+        UNION ALL
+        SELECT CAST(substr(details_json,6,instr(substr(details_json,6),':')-1) AS INTEGER) AS key_version,
+               COUNT(*) AS record_count
+        FROM admin_audit_logs WHERE details_json LIKE 'enc:v%:%' GROUP BY key_version
+        UNION ALL
+        SELECT CAST(substr(encrypted_payload,6,instr(substr(encrypted_payload,6),':')-1) AS INTEGER) AS key_version,
+               COUNT(*) AS record_count
+        FROM bug_reports WHERE encrypted_payload LIKE 'enc:v%:%' GROUP BY key_version
+      )
+      GROUP BY key_version
+      ORDER BY key_version
+    `).all()).map(item=>({
+      version:Number(item.key_version),
+      count:Number(item.record_count||0)
+    })).filter(item=>Number.isSafeInteger(item.version)&&item.version>0&&item.count>0);
+    const oldRows=usage.filter(item=>item.version<keyStatus.activeVersion);
+    const futureRows=usage.filter(item=>item.version>keyStatus.activeVersion);
+    const oldCount=oldRows.reduce((sum,item)=>sum+item.count,0);
+    const missingOldKeys=oldRows.filter(item=>!keyStatus.configuredVersions.includes(item.version));
+    if(missingOldKeys.length) {
+      return {
+        status:"critical",
+        detail:"旧鍵で暗号化されたデータが "+oldCount+" 件残っていますが、必要な鍵世代 v"+missingOldKeys.map(item=>item.version).join(", v")+" が未設定です。旧鍵を復元するまで移行を止めてください。"
+      };
+    }
+    if(oldCount>0) {
+      return {
+        status:"warning",
+        detail:"現行鍵 v"+keyStatus.activeVersion+" への移行中です。旧世代データが "+oldCount+" 件残っています（"+oldRows.map(item=>"v"+item.version+":"+item.count+"件").join(", ")+"）。旧鍵を削除しないでください。"
+      };
+    }
+    if(futureRows.length) {
+      return {
+        status:"warning",
+        detail:"現行鍵 v"+keyStatus.activeVersion+" より新しい鍵世代のデータが "+futureRows.reduce((sum,item)=>sum+item.count,0)+" 件あります。ACTIVE_VERSIONの設定を確認してください。"
+      };
+    }
+    if(keyStatus.activeVersion===1) {
+      return {
+        status:"warning",
+        detail:"現行鍵 v1、設定済み世代: "+(keyStatus.configuredVersions.map(value=>"v"+value).join(", ")||"なし")+
+          "。ローテーションはまだ開始されていません。v2のSecretを追加し、ACTIVE_VERSIONを切り替えてから残件数を確認してください。"
+      };
+    }
+    return {
+      status:"ok",
+      detail:"現行鍵 v"+keyStatus.activeVersion+" で暗号化されたデータを確認しました。旧世代の暗号化データは0件です。旧鍵はバックアップと保持方針を確認するまで削除しないでください。"
+    };
+  });
+}
+
 async function checkDataState(env,checks,keyStatus) {
   await runIsolated(checks,"sensitive-data-migration","機密データ暗号化状態",async()=>{
     const prefix="enc:v"+keyStatus.activeVersion+":%";
@@ -309,13 +375,13 @@ export async function summarizeSecurityDiagnostics(env) {
   await checkDatabaseIntegrity(env,checks);
   await checkSchema(env,checks);
   await checkDataState(env,checks,keyStatus);
-  add(checks,"key-rotation","暗号鍵ローテーション",keyStatus.activeKeyReady&&keyStatus.configuredVersions.length>=2?"ok":keyStatus.activeKeyReady?"warning":"error",
-    keyStatus.activeKeyReady
-      ?"現行鍵 v"+keyStatus.activeVersion+"。登録済み鍵世代: "+keyStatus.configuredVersions.join(", ")+"。移行完了前に旧鍵を削除しないでください。"
-      :"現行鍵が未設定です。");
-  add(checks,"forward-secrecy","前方秘匿性","critical","Double Ratchet 等による鍵更新・前方秘匿性は未実装です。");
-  add(checks,"passkeys","管理者パスキー","warning","現状はパスワード認証です。パスキーと予備キーは未実装です。");
-  add(checks,"cloudflare-logs","Cloudflare Invocation Logs","warning","プラットフォームログの保存・閲覧権限はこの診断から検証できません。Workerログに秘密情報やメッセージ本文を出力しない運用が必要です。",{complete:false});
+  await checkKeyRotation(env,checks,keyStatus);
+  add(checks,"forward-secrecy","前方秘匿性","critical",
+    "現行チャット鍵は長期ECDH鍵から会話ごとに導出するv1方式です。メッセージ単位のRatchet / Double Ratchet は未実装です。既存会話・複数端末の互換性を保つv2移行と独立レビューが完了するまで、新方式へ自動切替しません。");
+  add(checks,"passkeys","管理者パスキー","warning",
+    "管理者ログインはパスワード認証のみです。WebAuthnパスキーによる追加認証、予備認証器、回復手順は未実装です。");
+  add(checks,"cloudflare-logs","Cloudflare Invocation Logs","warning",
+    "wrangler.jsonc では自動Invocation Logsを無効化し、Workerのconsole出力は固定ラベルのみとする検査を追加しています。ただしCloudflareアカウント側のログ保持・閲覧権限と本番設定の反映はこの診断から確認できません。",{complete:false});
   await checkExternalEngines(env,checks);
   return summarize(checks);
 }
