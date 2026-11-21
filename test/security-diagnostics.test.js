@@ -29,7 +29,12 @@ class FakeStatement {
   async all() {
     const sql=this.sql;
     if(sql.includes("sqlite_master")&&sql.includes("type IN ('table','view','trigger')")) {
-      return {results:[...Object.keys(securityDiagnosticSchema.tables.reduce((a,t)=>(a[t]=true,a),{})).map(name=>({name,type:"table",sql:this.db.tableSql[name]||"CREATE TABLE "+name+" (id TEXT)"})),{name:"d1_migrations",type:"table",sql:"CREATE TABLE d1_migrations (name TEXT)"}]};
+      const objects=[
+        ...Object.keys(securityDiagnosticSchema.tables.reduce((a,t)=>(a[t]=true,a),{})).map(name=>({name,type:"table",sql:this.db.tableSql[name]||"CREATE TABLE "+name+" (id TEXT)"})),
+        {name:"d1_migrations",type:"table",sql:"CREATE TABLE d1_migrations (name TEXT)"}
+      ];
+      if(this.db.extraObject)objects.push({name:this.db.extraObject,type:"table",sql:"CREATE TABLE "+this.db.extraObject+" (id TEXT)"});
+      return {results:objects};
     }
     if(sql.includes("sqlite_master")&&sql.includes("type='table'")) {
       return {results:Object.keys(this.db.tableSql).map(name=>({name,type:"table",sql:this.db.tableSql[name]}))};
@@ -62,8 +67,9 @@ class FakeStatement {
 }
 
 class FakeDB {
-  constructor({failQuickCheck=false,missingColumn=null}={}) {
+  constructor({failQuickCheck=false,missingColumn=null,extraObject=null}={}) {
     this.failQuickCheck=failQuickCheck;
+    this.extraObject=extraObject;
     this.columns=Object.fromEntries(securityDiagnosticSchema.tables.map(table=>[table,[...knownColumns[table]]]));
     if(missingColumn) {
       const [table,column]=missingColumn;
@@ -112,7 +118,7 @@ test("diagnostics cover SQL schema, indexes, migration history and runtime integ
   const result=await summarizeSecurityDiagnostics(environment());
   const ids=new Set(result.checks.map(check=>check.id));
   for(const id of [
-    "db-quick-check","db-foreign-key-check","schema-inventory","schema-constraints",
+    "db-quick-check","db-foreign-key-check","schema-inventory","schema-unexpected-objects","schema-constraints",
     "schema-indexes","schema-foreign-keys","schema-migrations","message-retention",
     "identity-key-proofs","external-engines"
   ])assert.ok(ids.has(id),`Missing diagnostic: ${id}`);
@@ -173,4 +179,12 @@ test("the admin endpoint continues reporting secret and scanner checks when D1 i
   assert.equal(result.checks.find(check => check.id === "db-quick-check").status, "error");
   assert.equal(result.checks.find(check => check.id === "external-engines").complete, false);
   assert.ok(result.coverage.notCompleted > 0);
+});
+
+
+test("unexpected database objects are visible as a warning", async () => {
+  const result=await summarizeSecurityDiagnostics(environment({extraObject:"legacy_debug_table"}));
+  const check=result.checks.find(item=>item.id==="schema-unexpected-objects");
+  assert.equal(check.status,"warning");
+  assert.match(check.detail,/legacy_debug_table/);
 });
