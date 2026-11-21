@@ -23,7 +23,7 @@ test("multi-device identity backup is password-encrypted and never stored as pla
 });
 
 test("identity transition proof is checked before a public identity key can be changed", () => {
-  const conflict = worker.indexOf("if (!await verifyIdentityKeyTransition(");
+  const conflict = worker.indexOf("!await verifyIdentityKeyTransition(");
   const update = worker.indexOf("UPDATE user_keys SET identity_public_key=");
   assert.ok(conflict >= 0);
   assert.ok(update > conflict);
