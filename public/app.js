@@ -300,15 +300,28 @@ async function preserveLegacyLocalIdentity(saved,remote) {
   // the server, so a network interruption cannot strand the one-time upgrade.
   await saveIdentity(currentUser.userId,record);
   if(!remote.identitySigningPublicKey) {
-    const signature=await crypto.subtle.sign(
-      {name:"ECDSA",hash:"SHA-256"},signingPrivateKey,
-      identityProofMessage(currentUser.userId,saved.publicKey)
+    const challenge=await api("/api/keys/legacy-challenge",{method:"POST",body:{}});
+    if(challenge.identityPublicKey!==saved.publicKey) {
+      throw appError("IDENTITY_KEY_CONFLICT","この端末の旧暗号鍵とサーバーの鍵が一致しません。");
+    }
+    const serverPublicKey=await crypto.subtle.importKey(
+      "raw",fromB64(challenge.serverPublicKey),{name:"ECDH",namedCurve:"P-256"},false,[]
     );
+    const shared=await crypto.subtle.deriveBits({name:"ECDH",public:serverPublicKey},saved.privateKey,256);
+    const proofKey=await crypto.subtle.importKey("raw",shared,{name:"HMAC",hash:"SHA-256"},false,["sign"]);
+    const proofMessage=new TextEncoder().encode(
+      "SecureChat legacy-identity-possession:v1\\n"+currentUser.userId+"\\n"+
+      challenge.challengeId+"\\n"+saved.publicKey+"\\n"+challenge.challenge
+    );
+    const possessionProof=await crypto.subtle.sign("HMAC",proofKey,proofMessage);
     await api("/api/keys",{method:"PUT",body:{
       identityPublicKey:saved.publicKey,
       identitySigningPublicKey:signingPublicKey,
-      identityKeySignature:toB64(new Uint8Array(signature)),
-      legacyUpgrade:true
+      identityKeySignature:toB64(new Uint8Array(await crypto.subtle.sign(
+        {name:"ECDSA",hash:"SHA-256"},signingPrivateKey,
+        identityProofMessage(currentUser.userId,saved.publicKey)
+      ))),
+      legacyUpgrade:{challengeId:challenge.challengeId,proof:toB64(new Uint8Array(possessionProof))}
     }});
   } else {
     const verifyKey=await crypto.subtle.importKey("raw",fromB64(signingPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]);
