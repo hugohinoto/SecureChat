@@ -65,4 +65,6 @@ test("a legacy client may reuse only the exact existing identity without rewriti
   assert.match(worker, /existingKey\.identity_signing_public_key === signingPub/);
   assert.match(worker, /backupUnchanged: true/);
   assert.match(worker, /IDENTITY_BACKUP_INVALID/);
+  assert.match(app, /Ctrl\+Shift\+R/);
+  assert.match(app, /サイトデータや保存済み暗号鍵は削除しないでください/);
 });
