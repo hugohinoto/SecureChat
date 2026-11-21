@@ -14,7 +14,7 @@ rules:
       confidence: HIGH
     pattern-sources:
       - pattern: await readJson($REQUEST)
-      - pattern: $URL.searchParams.get(...)
+      - pattern: $URL.searchParams.get("q")
       - pattern: $REQUEST.headers.get(...)
     pattern-sinks:
       - patterns:
