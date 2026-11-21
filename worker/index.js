@@ -875,12 +875,13 @@ async function handleApi(request, env) {
       const key = await env.DB.prepare(
         "SELECT identity_public_key, identity_signing_public_key, identity_key_signature, identity_transition_from, identity_transition_signature, identity_backup_version, identity_backup_salt, identity_backup_iv, identity_backup_ciphertext FROM user_keys WHERE user_id=?"
       ).bind(me).first();
-      if (!key) return json({ identityRegistered: false, backupAvailable: false });
+      if (!key) return json({ identityRegistered: false, backupAvailable: false, identityMode: "unregistered" });
       const backupAvailable = Number(key.identity_backup_version) === 1 &&
         !!key.identity_backup_salt && !!key.identity_backup_iv && !!key.identity_backup_ciphertext;
       return json({
         identityRegistered: true,
         backupAvailable,
+        identityMode: backupAvailable ? "portable" : Number(key.identity_backup_version) === 2 ? "legacy-local-only" : "setup-required",
         identityPublicKey: key.identity_public_key,
         identitySigningPublicKey: key.identity_signing_public_key,
         identityKeySignature: key.identity_key_signature,
@@ -912,21 +913,43 @@ async function handleApi(request, env) {
       if (!validProof) return json({ error: "IDENTITY_KEY_PROOF_INVALID" }, 400);
 
       const existingKey = await env.DB.prepare(
-        "SELECT identity_public_key, identity_signing_public_key FROM user_keys WHERE user_id=?"
+        "SELECT identity_public_key, identity_signing_public_key, identity_key_signature, identity_backup_version FROM user_keys WHERE user_id=?"
       ).bind(me).first();
 
-      // Older cached clients do not send identityBackup. Allow them to reuse an
-      // already-registered identical identity, but never create or rotate a key
-      // without a valid password-encrypted backup.
+      // A pre-signed-key account may attach a signer to its existing ECDH key
+      // once, but only without changing that ECDH key. Version 2 marks this
+      // legacy identity as local-device-only and prevents later silent rotation.
+      if ((body?.identityBackup === undefined || body?.identityBackup === null) &&
+          body?.legacyUpgrade === true &&
+          existingKey &&
+          existingKey.identity_public_key === pub &&
+          !existingKey.identity_signing_public_key &&
+          Number(existingKey.identity_backup_version || 0) === 0) {
+        const upgrade = await env.DB.prepare(
+          "UPDATE user_keys SET identity_signing_public_key=?, identity_key_signature=?, identity_backup_version=2, key_version=key_version+1, updated_at=? WHERE user_id=? AND identity_public_key=? AND (identity_signing_public_key IS NULL OR identity_signing_public_key='') AND identity_backup_version=0"
+        ).bind(signingPub, signature, now, me, pub).run();
+        if (Number(upgrade.meta?.changes || 0) === 1) {
+          return json({ saved: true, legacyLocalOnly: true, backupAvailable: false });
+        }
+        return json({
+          error: "IDENTITY_KEY_CONFLICT",
+          message: "別端末で旧形式の鍵移行が完了しました。ページを再読み込みしてください。"
+        }, 409);
+      }
+
+      // Older cached clients may only reuse the exact identity already stored.
+      // Legacy-local-only records may not be rotated without a portable backup.
       if (body?.identityBackup === undefined || body?.identityBackup === null) {
         if (existingKey &&
             existingKey.identity_public_key === pub &&
             existingKey.identity_signing_public_key === signingPub) {
-          return json({ saved: true, backupUnchanged: true });
+          return json({ saved: true, backupUnchanged: true, legacyLocalOnly: Number(existingKey.identity_backup_version) === 2 });
         }
         return json({
-          error: "IDENTITY_BACKUP_REQUIRED",
-          message: "この端末のアプリが古い可能性があります。ページを再読み込みしてください。新しい端末での鍵登録には暗号化バックアップが必要です。"
+          error: Number(existingKey?.identity_backup_version) === 2 ? "IDENTITY_LEGACY_KEY_LOCKED" : "IDENTITY_BACKUP_REQUIRED",
+          message: Number(existingKey?.identity_backup_version) === 2
+            ? "この旧形式の暗号鍵は元の端末内だけに保存されています。鍵の安全な復旧手段がないため、自動変更を禁止しています。元の端末と保存データを保持してください。"
+            : "この端末のアプリが古い可能性があります。ページを再読み込みしてください。新しい端末での鍵登録には暗号化バックアップが必要です。"
         }, 400);
       }
       if (!validIdentityBackup(body.identityBackup)) {
@@ -934,6 +957,11 @@ async function handleApi(request, env) {
           error: "IDENTITY_BACKUP_INVALID",
           message: "暗号化バックアップの形式が正しくありません。ページを再読み込みして再度ログインしてください。"
         }, 400);
+      }
+
+      if (existingKey && Number(existingKey.identity_backup_version) === 2 &&
+          (existingKey.identity_public_key !== pub || existingKey.identity_signing_public_key !== signingPub)) {
+        return json({ error: "IDENTITY_LEGACY_KEY_LOCKED", message: "この旧形式の暗号鍵は元の端末内だけに保存されています。自動鍵変更はできません。元の端末と保存データを保持してください。" }, 409);
       }
 
       let transitionFrom = null, transitionSignature = null;
