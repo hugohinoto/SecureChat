@@ -1,0 +1,25 @@
+rules:
+  - id: securechat-untrusted-data-in-sql
+    languages:
+      - javascript
+    mode: taint
+    severity: ERROR
+    message: >-
+      Untrusted request data reaches a D1 SQL statement. Keep SQL structure
+      constant and pass user values through D1 .bind() parameters.
+    metadata:
+      category: security
+      cwe:
+        - "CWE-89: SQL Injection"
+      confidence: HIGH
+    pattern-sources:
+      - pattern: await readJson($REQUEST)
+      - pattern: $URL.searchParams.get(...)
+      - pattern: $REQUEST.headers.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.prepare($QUERY)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: $DB.exec($QUERY)
+          - focus-metavariable: $QUERY
