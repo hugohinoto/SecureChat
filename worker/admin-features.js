@@ -1,4 +1,5 @@
 import { encryptStored, decryptStored, encryptAnnouncement, decodeAnnouncement } from "./data-crypto.js";
+import { summarizeSecurityDiagnostics } from "./security-diagnostics.js";
 const DEFAULT_NOTICE_HOURS = 48, MAX_NOTICE_HOURS = 720, encoder = new TextEncoder();
 function json(data, status = 200) { return Response.json(data, { status, headers: { "Cache-Control": "no-store" } }); }
 function expiryHours(value, fallback = DEFAULT_NOTICE_HOURS) {
@@ -16,7 +17,6 @@ async function adminAuth(request, env, deps) {
   return admin;
 }
 async function checkSecurity(env) {
-  const { summarizeSecurityDiagnostics } = await import("./security-diagnostics.js");
   return summarizeSecurityDiagnostics(env);
 }
 
