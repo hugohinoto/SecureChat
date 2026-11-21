@@ -100,7 +100,8 @@ export async function handleAdminFeatures(request, env, deps) {
         return json({ updated: true, expiresAt });
       }
       if (securityRoute) {
-        try { await env.DB.prepare("SELECT 1").first(); } catch { return json({ overall: "error", checks: [{ id: "db", label: "D1接続", status: "error", detail: "D1へ接続できません。" }], checkedAt: Date.now() }, 503); }
+        // Let each database check report its own failure; even when D1 is down,
+        // secret checks and external scanner status must still be returned.
         return json(await checkSecurity(env));
       }
       if (path === "/api/admin/bug-reports" && method === "GET") {
