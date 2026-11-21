@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { handleAdminFeatures } from "./admin-features.js";
 import { encryptStored, migrateSensitiveRows } from "./data-crypto.js";
-import { verifyIdentityKeyProof } from "./identity-keys.js";
+import { identityKeyTransitionMessage, verifyIdentityKeyProof, verifyIdentityKeyTransition } from "./identity-keys.js";
 
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PASSWORD_ITERATIONS = 100_000;
@@ -70,6 +70,22 @@ function validPassword(value) {
     Array.from(value).length >= 12 &&
     Array.from(value).length <= 128 &&
     encoder.encode(value).byteLength <= 512;
+}
+
+function validIdentityBackup(value) {
+  if (!value || typeof value !== "object" || value.version !== 1) return false;
+  const validBase64 = (input, maxLength) =>
+    typeof input === "string" &&
+    input.length <= maxLength &&
+    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input);
+  try {
+    const salt = validBase64(value.salt, 64) ? atob(value.salt) : "";
+    const iv = validBase64(value.iv, 32) ? atob(value.iv) : "";
+    const ciphertext = validBase64(value.ciphertext, 16000) ? atob(value.ciphertext) : "";
+    return salt.length === 16 && iv.length === 12 && ciphertext.length >= 64 && ciphertext.length <= 12000;
+  } catch {
+    return false;
+  }
 }
 
 async function derivePassword(password, salt, iterations = PASSWORD_ITERATIONS) {
@@ -607,6 +623,9 @@ async function handleApi(request, env) {
     const newPassword = body?.newPassword;
     if (!validPassword(currentPassword) || !validPassword(newPassword)) return json({ error: "INVALID_PASSWORD", message: "現在のパスワードと新しいパスワードはそれぞれ12〜128文字で入力してください。" }, 400);
     if (currentPassword === newPassword) return json({ error: "PASSWORD_UNCHANGED", message: "新しいパスワードは現在のものと異なるものにしてください。" }, 400);
+    if (body?.identityBackup !== undefined && !validIdentityBackup(body.identityBackup)) {
+      return json({ error: "IDENTITY_BACKUP_INVALID", message: "暗号鍵バックアップの形式が正しくありません。パスワードは変更されていません。" }, 400);
+    }
     try {
       const user = await env.DB.prepare("SELECT password_salt, password_hash, password_iterations FROM users WHERE id=? AND is_admin=1").bind(session.id).first();
       if (!user) return json({ error: "ADMIN_REQUIRED" }, 403);
@@ -618,10 +637,16 @@ async function handleApi(request, env) {
       const oldSessions = await env.DB.prepare("SELECT token_hash FROM sessions WHERE user_id=?").bind(session.id).all();
       const room = env.CHAT_ROOM.get(env.CHAT_ROOM.idFromName("open-lounge"));
       await Promise.allSettled((oldSessions.results || []).map(({token_hash}) => room.fetch("https://chat-room.internal/revoke", { method:"POST", headers:{"X-Session-Hash":token_hash} })));
-      await env.DB.batch([
+      const statements = [
         env.DB.prepare("UPDATE users SET password_salt=?, password_hash=?, password_iterations=?, password_changed_at=? WHERE id=? AND is_admin=1").bind(base64url(salt), base64url(hash), PASSWORD_ITERATIONS, now, session.id),
         env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(session.id)
-      ]);
+      ];
+      if (body?.identityBackup) {
+        statements.push(env.DB.prepare(
+          "UPDATE user_keys SET identity_backup_version=1, identity_backup_salt=?, identity_backup_iv=?, identity_backup_ciphertext=?, updated_at=? WHERE user_id=?"
+        ).bind(body.identityBackup.salt, body.identityBackup.iv, body.identityBackup.ciphertext, now, session.id));
+      }
+      await env.DB.batch(statements);
       const freshSession = await createSession(env, session.id);
       await writeAdminAudit(env, session, "admin.password.change", session.id, { changedAt: now, maxAgeDays: 90 });
       const response = json({ changed: true, user: { id: session.id, userId: session.user_id, isAdmin: true, mustChangePassword: false } });
@@ -846,6 +871,29 @@ async function handleApi(request, env) {
       await env.DB.batch(statements);
       return json({ removed: true, userId, conversationsRemoved: rows.results.length });
     }
+    if (path === "/api/keys/backup" && method === "GET") {
+      const key = await env.DB.prepare(
+        "SELECT identity_public_key, identity_signing_public_key, identity_key_signature, identity_transition_from, identity_transition_signature, identity_backup_version, identity_backup_salt, identity_backup_iv, identity_backup_ciphertext FROM user_keys WHERE user_id=?"
+      ).bind(me).first();
+      if (!key) return json({ identityRegistered: false, backupAvailable: false });
+      const backupAvailable = Number(key.identity_backup_version) === 1 &&
+        !!key.identity_backup_salt && !!key.identity_backup_iv && !!key.identity_backup_ciphertext;
+      return json({
+        identityRegistered: true,
+        backupAvailable,
+        identityPublicKey: key.identity_public_key,
+        identitySigningPublicKey: key.identity_signing_public_key,
+        identityKeySignature: key.identity_key_signature,
+        ...(backupAvailable ? {
+          backup: {
+            version: 1,
+            salt: key.identity_backup_salt,
+            iv: key.identity_backup_iv,
+            ciphertext: key.identity_backup_ciphertext
+          }
+        } : {})
+      });
+    }
     if (path === "/api/keys" && method === "PUT") {
       let body;
       try { body = await readJson(request); } catch { return json({ error: "INVALID_JSON" }, 400); }
@@ -855,6 +903,9 @@ async function handleApi(request, env) {
           typeof signature !== "string" || signature.length < 80 || signature.length > 128) {
         return json({ error: "IDENTITY_KEY_PROOF_REQUIRED", message: "署名付き公開鍵が必要です。アプリを更新して再ログインしてください。" }, 400);
       }
+      if (!validIdentityBackup(body?.identityBackup)) {
+        return json({ error: "IDENTITY_BACKUP_REQUIRED", message: "複数端末で同じ暗号鍵を使うための暗号化バックアップが必要です。" }, 400);
+      }
       const validProof = await verifyIdentityKeyProof({
         userId: session.user_id,
         identityPublicKey: pub,
@@ -862,22 +913,72 @@ async function handleApi(request, env) {
         identityKeySignature: signature
       });
       if (!validProof) return json({ error: "IDENTITY_KEY_PROOF_INVALID" }, 400);
-      await env.DB.prepare(
-        "INSERT INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, identity_signing_public_key, identity_key_signature, key_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?) ON CONFLICT(user_id) DO UPDATE SET identity_public_key=excluded.identity_public_key, signed_prekey=excluded.signed_prekey, signed_prekey_signature=excluded.signed_prekey_signature, identity_signing_public_key=excluded.identity_signing_public_key, identity_key_signature=excluded.identity_key_signature, key_version=user_keys.key_version+1, updated_at=excluded.updated_at"
-      ).bind(me, pub, pub, "legacy-placeholder-not-used", signingPub, signature, now).run();
-      return json({ saved: true });
+
+      const existingKey = await env.DB.prepare(
+        "SELECT identity_public_key, identity_signing_public_key FROM user_keys WHERE user_id=?"
+      ).bind(me).first();
+      let transitionFrom = null, transitionSignature = null;
+      if (existingKey) {
+        const sameIdentity = existingKey.identity_public_key === pub &&
+          existingKey.identity_signing_public_key === signingPub;
+        if (!sameIdentity) {
+          transitionFrom = body?.previousIdentitySigningPublicKey;
+          transitionSignature = body?.identityTransitionSignature;
+          if (typeof transitionFrom !== "string" ||
+              transitionFrom !== existingKey.identity_signing_public_key ||
+              typeof transitionSignature !== "string" ||
+              !await verifyIdentityKeyTransition({
+                userId: session.user_id,
+                previousSigningPublicKey: transitionFrom,
+                identityPublicKey: pub,
+                identitySigningPublicKey: signingPub,
+                identityTransitionSignature: transitionSignature
+              })) {
+            return json({
+              error: "IDENTITY_KEY_CONFLICT",
+              message: "このアカウントには別端末の暗号鍵が登録されています。元の端末で再ログインして同期バックアップを作成してください。"
+            }, 409);
+          }
+        }
+      }
+
+      if (!existingKey) {
+        try {
+          await env.DB.prepare(
+            "INSERT INTO user_keys (user_id, identity_public_key, signed_prekey, signed_prekey_signature, identity_signing_public_key, identity_key_signature, identity_transition_from, identity_transition_signature, identity_backup_version, identity_backup_salt, identity_backup_iv, identity_backup_ciphertext, key_version, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 1, ?, ?, ?, 1, ?)"
+          ).bind(me, pub, pub, "legacy-placeholder-not-used", signingPub, signature,
+            body.identityBackup.salt, body.identityBackup.iv, body.identityBackup.ciphertext, now).run();
+        } catch (error) {
+          if (String(error?.message || error).includes("UNIQUE")) {
+            return json({ error: "IDENTITY_KEY_CONFLICT", message: "別端末で暗号鍵の初期設定が完了しました。もう一度ログインしてください。" }, 409);
+          }
+          throw error;
+        }
+      } else {
+        const update = await env.DB.prepare(
+          "UPDATE user_keys SET identity_public_key=?, signed_prekey=?, signed_prekey_signature=?, identity_signing_public_key=?, identity_key_signature=?, identity_transition_from=COALESCE(?, identity_transition_from), identity_transition_signature=COALESCE(?, identity_transition_signature), identity_backup_version=1, identity_backup_salt=?, identity_backup_iv=?, identity_backup_ciphertext=?, key_version=key_version+1, updated_at=? WHERE user_id=? AND identity_signing_public_key=?"
+        ).bind(pub, pub, "legacy-placeholder-not-used", signingPub, signature,
+          transitionFrom, transitionSignature, body.identityBackup.salt, body.identityBackup.iv,
+          body.identityBackup.ciphertext, now, me, existingKey.identity_signing_public_key).run();
+        if (Number(update.meta?.changes || 0) !== 1) {
+          return json({ error: "IDENTITY_KEY_CONFLICT", message: "別端末で暗号鍵の更新が完了しました。もう一度ログインしてください。" }, 409);
+        }
+      }
+      return json({ saved: true, transition: !!transitionFrom });
     }
     if (path.startsWith("/api/keys/") && method === "GET") {
       const userId = normalizeUserId(decodeURIComponent(path.slice("/api/keys/".length)));
       if (!userId) return json({ error: "INVALID_USER_ID" }, 400);
       const key = await env.DB.prepare(
-        "SELECT k.identity_public_key, k.identity_signing_public_key, k.identity_key_signature, k.key_version FROM user_keys k JOIN users u ON u.id=k.user_id WHERE u.user_id=?"
+        "SELECT k.identity_public_key, k.identity_signing_public_key, k.identity_key_signature, k.identity_transition_from, k.identity_transition_signature, k.key_version FROM user_keys k JOIN users u ON u.id=k.user_id WHERE u.user_id=?"
       ).bind(userId).first();
       return key ? json({
         userId,
         identityPublicKey: key.identity_public_key,
         identitySigningPublicKey: key.identity_signing_public_key,
         identityKeySignature: key.identity_key_signature,
+        previousIdentitySigningPublicKey: key.identity_transition_from,
+        identityTransitionSignature: key.identity_transition_signature,
         keyVersion: Number(key.key_version)
       }) : json({ error: "KEY_NOT_FOUND" }, 404);
     }
@@ -917,8 +1018,10 @@ async function handleApi(request, env) {
       return json({ conversationId: canonical.conversation_id, existing: !created }, created ? 201 : 200);
     }
     if (path === "/api/conversations" && method === "GET") {
-      const rows = await env.DB.prepare("SELECT c.id, u.user_id AS peer_user_id, c.created_at FROM conversations c JOIN conversation_pairs cp ON cp.conversation_id=c.id JOIN conversation_members mine ON mine.conversation_id=c.id AND mine.user_id=? JOIN conversation_members peer ON peer.conversation_id=c.id AND peer.user_id<>? JOIN users u ON u.id=peer.user_id JOIN verified_contact_pairs p ON p.user_a_id=CASE WHEN mine.user_id<peer.user_id THEN mine.user_id ELSE peer.user_id END AND p.user_b_id=CASE WHEN mine.user_id<peer.user_id THEN peer.user_id ELSE mine.user_id END ORDER BY c.created_at DESC").bind(me, me).all();
-      return json({ conversations: rows.results });
+      const rows = await env.DB.prepare(
+        "SELECT c.id, u.user_id AS peer_user_id, c.created_at, (SELECT COUNT(*) FROM encrypted_messages em LEFT JOIN conversation_reads cr ON cr.conversation_id=em.conversation_id AND cr.user_id=? WHERE em.conversation_id=c.id AND em.sender_user_id<>? AND em.expires_at>? AND (cr.last_read_at IS NULL OR em.created_at>cr.last_read_at OR (em.created_at=cr.last_read_at AND em.id>COALESCE(cr.last_read_message_id,'')))) AS unread_count FROM conversations c JOIN conversation_pairs cp ON cp.conversation_id=c.id JOIN conversation_members mine ON mine.conversation_id=c.id AND mine.user_id=? JOIN conversation_members peer ON peer.conversation_id=c.id AND peer.user_id<>? JOIN users u ON u.id=peer.user_id JOIN verified_contact_pairs p ON p.user_a_id=CASE WHEN mine.user_id<peer.user_id THEN mine.user_id ELSE peer.user_id END AND p.user_b_id=CASE WHEN mine.user_id<peer.user_id THEN peer.user_id ELSE mine.user_id END ORDER BY c.created_at DESC"
+      ).bind(me, me, now, me, me).all();
+      return json({ conversations: (rows.results || []).map(row => ({ ...row, unread_count: Number(row.unread_count || 0) })) });
     }
     const match = path.match(/^\/api\/conversations\/([a-f0-9-]+)(?:\/(messages|key))?$/i);
     if (match) {
@@ -946,7 +1049,14 @@ async function handleApi(request, env) {
         } else {
           rows = await env.DB.prepare("SELECT id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at FROM encrypted_messages WHERE conversation_id=? AND expires_at>? ORDER BY created_at, id LIMIT 500").bind(id, now).all();
         }
-        return json({ messages: rows.results });
+        const messages = rows.results || [];
+        const lastRead = messages[messages.length - 1];
+        if (lastRead) {
+          await env.DB.prepare(
+            "INSERT INTO conversation_reads (conversation_id, user_id, last_read_at, last_read_message_id, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(conversation_id, user_id) DO UPDATE SET last_read_at=excluded.last_read_at, last_read_message_id=excluded.last_read_message_id, updated_at=excluded.updated_at WHERE excluded.last_read_at>conversation_reads.last_read_at OR (excluded.last_read_at=conversation_reads.last_read_at AND excluded.last_read_message_id>conversation_reads.last_read_message_id)"
+          ).bind(id, me, Number(lastRead.created_at), lastRead.id, now).run();
+        }
+        return json({ messages });
       }
       if (sub === "messages" && method === "POST") {
         let body;

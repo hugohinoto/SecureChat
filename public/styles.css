@@ -1293,3 +1293,76 @@ body {
     min-height: 0;
   }
 }
+
+
+/* Unread message indicators and browser notification preference. */
+.sidebar-heading-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.unread-total {
+  color: #f5d69b;
+  border-color: rgba(241,190,112,.28);
+  background: rgba(211,154,76,.10);
+}
+.sidebar-user-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  min-width: 0;
+}
+.sidebar-user-button > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unread-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 19px;
+  height: 19px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: #08131d;
+  background: #87e0d1;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
+.unread-badge[hidden] { display: none; }
+.notification-enable-button {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 11px;
+  border: 1px solid rgba(116,190,226,.22);
+  border-radius: 10px;
+  color: #bfe8fa;
+  background: rgba(61,130,166,.12);
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.notification-enable-button:hover:not(:disabled) {
+  background: rgba(61,130,166,.22);
+}
+.notification-enable-button:disabled {
+  opacity: .65;
+  cursor: default;
+}
+@media (max-width: 680px) {
+  .notification-enable-button {
+    min-height: 42px;
+    font-size: 12px;
+  }
+  .unread-badge {
+    min-width: 22px;
+    height: 22px;
+    font-size: 10px;
+  }
+}

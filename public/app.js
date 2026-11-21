@@ -1,3 +1,4 @@
+import { decryptIdentityBackup, encryptIdentityBackup } from "./identity-backup.js";
 const $ = (s) => document.querySelector(s);
 const el = {
   connection: $("#connection-pill"), connectionLabel: $("#connection-label"),
@@ -17,7 +18,8 @@ const el = {
   chatSubtitle: $("#chat-subtitle"), securityTitle: $("#security-title"),
   securityDescription: $("#security-description"), securityTag: $("#security-tag"),
   composerHint: $("#composer-hint"), fingerprint: $("#key-fingerprint"),
-  mobileBack: $("#mobile-back-button")
+  mobileBack: $("#mobile-back-button"),
+  unreadTotal: $("#unread-total"), notificationButton: $("#notification-enable-button")
 };
 const MAX_MESSAGE_LENGTH = 2000;
 const DB_NAME = "securechat-local-keys";
@@ -28,6 +30,9 @@ let activeConversation = null, activeKey = null, busy = false, refreshTimer = nu
 const openingConversationPeers = new Set();
 let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", sidebarRefreshTick = 0;
 const displayedOtpCodes = new Map();
+const previousUnreadCounts = new Map();
+const originalDocumentTitle = document.title;
+let unreadCountsInitialized = false;
 
 function toast(message, duration = 3200) {
   el.toast.textContent = message;
@@ -57,6 +62,57 @@ function state(value, label) {
   el.connection.dataset.state = value;
   el.connectionLabel.textContent = label;
   updateSend();
+}
+function updateNotificationButton() {
+  if(!el.notificationButton)return;
+  if(!("Notification" in window)) {
+    el.notificationButton.hidden=true;
+    return;
+  }
+  el.notificationButton.hidden=false;
+  if(Notification.permission==="granted") {
+    el.notificationButton.textContent="ブラウザー通知は有効です";
+    el.notificationButton.disabled=true;
+  } else if(Notification.permission==="denied") {
+    el.notificationButton.textContent="通知はブラウザー設定で許可してください";
+    el.notificationButton.disabled=true;
+  } else {
+    el.notificationButton.textContent="ブラウザー通知を有効にする";
+    el.notificationButton.disabled=false;
+  }
+}
+async function enableBrowserNotifications() {
+  if(!("Notification" in window)) {
+    toast("このブラウザーは通知に対応していません。");
+    return;
+  }
+  if(Notification.permission==="granted") {
+    updateNotificationButton();toast("ブラウザー通知は既に有効です。");return;
+  }
+  try {
+    const permission=await Notification.requestPermission();
+    updateNotificationButton();
+    toast(permission==="granted"?"新着メッセージのブラウザー通知を有効にしました。":
+      "通知は許可されませんでした。ブラウザーのサイト設定から変更できます。",5000);
+  } catch {
+    toast("通知の許可を確認できませんでした。ブラウザーの設定を確認してください。",5000);
+  }
+}
+function notifyUnreadConversation(conversation) {
+  const peer=conversation.peer_user_id;
+  toast("@"+peer+" から新着メッセージがあります。",4500);
+  if(!("Notification" in window) || Notification.permission!=="granted")return;
+  try {
+    const notification=new Notification("SecureChat — 新着メッセージ",{
+      body:"@"+peer+" から新着メッセージがあります。",
+      tag:"securechat-conversation-"+conversation.id
+    });
+    notification.onclick=()=>{
+      window.focus();
+      notification.close();
+      selectConversation({id:conversation.id,peer_user_id:peer});
+    };
+  } catch { /* Browser notification display can be blocked by platform settings. */ }
 }
 function setMobileView(view) {
   mobileView = view;
@@ -151,7 +207,12 @@ async function api(path, options={}) {
       INVITE_CODE_REQUIRED:"新規登録には招待コードが必要です。",
       INVITE_CODE_INVALID:"招待コードが無効・使用済み・期限切れです。",
       INVITE_LIMIT_REACHED:"有効な招待コードは最大5件までです。",
-      CONVERSATION_NOT_FOUND:"チャットが見つかりません。"
+      CONVERSATION_NOT_FOUND:"チャットが見つかりません。",
+      IDENTITY_KEY_CONFLICT:"このアカウントの暗号鍵が別端末で変更されています。元の端末で同期の初期設定を完了してください。",
+      IDENTITY_BACKUP_REQUIRED:"複数端末同期用の暗号化バックアップが必要です。アプリを更新して再ログインしてください。",
+      IDENTITY_BACKUP_PASSWORD_REQUIRED:"暗号鍵を同期するため、パスワードを入力して再ログインしてください。",
+      IDENTITY_BACKUP_PASSWORD_MISMATCH:"暗号鍵バックアップを復号できません。パスワードを確認してください。",
+      IDENTITY_BACKUP_SETUP_REQUIRED:"このアカウントの暗号鍵は別端末にあります。先に元の端末で再ログインして同期バックアップを作成してください。"
     };
     const code=typeof data.error==="string"&&/^[A-Z][A-Z0-9_]{1,63}$/.test(data.error)
       ? data.error : "HTTP_"+response.status;
@@ -162,31 +223,121 @@ async function api(path, options={}) {
 function identityProofMessage(userId,identityPublicKey) {
   return new TextEncoder().encode("SecureChat identity-key-proof:v1\n"+userId+"\n"+identityPublicKey);
 }
-async function ensureIdentity() {
-  const saved=await storedIdentity(currentUser.userId);
-  if(saved && saved.privateKey && saved.publicKey) {
-    identityPrivateKey=saved.privateKey;
-    identityPublicKey=saved.publicKey;
-  } else {
-    const pair=await crypto.subtle.generateKey({name:"ECDH",namedCurve:"P-256"},false,["deriveBits"]);
-    const raw=await crypto.subtle.exportKey("raw",pair.publicKey);
-    identityPrivateKey=pair.privateKey;
-    identityPublicKey=toB64(new Uint8Array(raw));
+async function createPortableIdentity(password,peerPins={}) {
+  const ecdh=await crypto.subtle.generateKey({name:"ECDH",namedCurve:"P-256"},true,["deriveBits"]);
+  const signing=await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},true,["sign","verify"]);
+  const ecdhPrivateJwk=await crypto.subtle.exportKey("jwk",ecdh.privateKey);
+  const signingPrivateJwk=await crypto.subtle.exportKey("jwk",signing.privateKey);
+  const publicKey=toB64(new Uint8Array(await crypto.subtle.exportKey("raw",ecdh.publicKey)));
+  const signingPublicKey=toB64(new Uint8Array(await crypto.subtle.exportKey("raw",signing.publicKey)));
+  const privateKey=await crypto.subtle.importKey("jwk",ecdhPrivateJwk,{name:"ECDH",namedCurve:"P-256"},false,["deriveBits"]);
+  const signingPrivateKey=await crypto.subtle.importKey("jwk",signingPrivateJwk,{name:"ECDSA",namedCurve:"P-256"},false,["sign"]);
+  const signature=await crypto.subtle.sign(
+    {name:"ECDSA",hash:"SHA-256"},signingPrivateKey,
+    identityProofMessage(currentUser.userId,publicKey)
+  );
+  const identityBackup=await encryptIdentityBackup({
+    version:1,identityPublicKey:publicKey,identitySigningPublicKey:signingPublicKey,
+    ecdhPrivateJwk,signingPrivateJwk
+  },password);
+  return {
+    record:{privateKey,publicKey,signingPrivateKey,signingPublicKey,peerPins},
+    identityPublicKey:publicKey,identitySigningPublicKey:signingPublicKey,
+    identityKeySignature:toB64(new Uint8Array(signature)),identityBackup
+  };
+}
+function setIdentityRecord(record) {
+  identityPrivateKey=record.privateKey;
+  identityPublicKey=record.publicKey;
+  identitySigningPublicKey=record.signingPublicKey;
+}
+async function registerPortableIdentity(portable,previousRecord=null) {
+  let previousIdentitySigningPublicKey=null,identityTransitionSignature=null;
+  if(previousRecord?.signingPrivateKey && previousRecord?.signingPublicKey) {
+    previousIdentitySigningPublicKey=previousRecord.signingPublicKey;
+    const transitionMessage=new TextEncoder().encode(
+      "SecureChat identity-key-transition:v1\n"+currentUser.userId+"\n"+
+      previousIdentitySigningPublicKey+"\n"+portable.identityPublicKey+"\n"+portable.identitySigningPublicKey
+    );
+    identityTransitionSignature=toB64(new Uint8Array(await crypto.subtle.sign(
+      {name:"ECDSA",hash:"SHA-256"},previousRecord.signingPrivateKey,transitionMessage
+    )));
   }
-  let signingPrivateKey=saved?.signingPrivateKey, signingPublicKey=saved?.signingPublicKey;
-  if(!signingPrivateKey || !signingPublicKey) {
-    const signingPair=await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},false,["sign","verify"]);
-    signingPrivateKey=signingPair.privateKey;
-    signingPublicKey=toB64(new Uint8Array(await crypto.subtle.exportKey("raw",signingPair.publicKey)));
-  }
-  identitySigningPublicKey=signingPublicKey;
-  await saveIdentity(currentUser.userId,{privateKey:identityPrivateKey,publicKey:identityPublicKey,signingPrivateKey,signingPublicKey,peerPins:saved?.peerPins||{}});
-  const signature=await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},signingPrivateKey,identityProofMessage(currentUser.userId,identityPublicKey));
   await api("/api/keys",{method:"PUT",body:{
-    identityPublicKey,
-    identitySigningPublicKey:signingPublicKey,
-    identityKeySignature:toB64(new Uint8Array(signature))
+    identityPublicKey:portable.identityPublicKey,
+    identitySigningPublicKey:portable.identitySigningPublicKey,
+    identityKeySignature:portable.identityKeySignature,
+    identityBackup:portable.identityBackup,
+    ...(previousIdentitySigningPublicKey?{previousIdentitySigningPublicKey,identityTransitionSignature}:{})
   }});
+  await saveIdentity(currentUser.userId,portable.record);
+  setIdentityRecord(portable.record);
+}
+async function ensureIdentity(password=null) {
+  const saved=await storedIdentity(currentUser.userId);
+  let remote=await api("/api/keys/backup");
+  if(remote.backupAvailable) {
+    if(!password) {
+      if(saved?.privateKey && saved.publicKey===remote.identityPublicKey &&
+         saved.signingPublicKey===remote.identitySigningPublicKey) {
+        setIdentityRecord(saved);
+        return;
+      }
+      throw appError("IDENTITY_BACKUP_PASSWORD_REQUIRED","暗号鍵を同期するため、パスワードを入力して再ログインしてください。");
+    }
+    const restored=await decryptIdentityBackup(remote.backup,password);
+    if(restored.publicKey!==remote.identityPublicKey || restored.signingPublicKey!==remote.identitySigningPublicKey) {
+      throw appError("IDENTITY_BACKUP_INVALID","バックアップの公開鍵がサーバー登録情報と一致しません。");
+    }
+    const {backupPayload,...restoredIdentity}=restored;
+    const record={...restoredIdentity,peerPins:saved?.peerPins||{}};
+    await saveIdentity(currentUser.userId,record);
+    setIdentityRecord(record);
+    return;
+  }
+
+  if(remote.identityRegistered && !saved?.privateKey) {
+    // A second device must never create and silently overwrite a different identity.
+    // Retry once to cover two devices reaching the setup endpoint at nearly the same time.
+    await new Promise(resolve=>setTimeout(resolve,400));
+    remote=await api("/api/keys/backup");
+    if(remote.backupAvailable && password) {
+      const restored=await decryptIdentityBackup(remote.backup,password);
+      if(restored.publicKey!==remote.identityPublicKey || restored.signingPublicKey!==remote.identitySigningPublicKey) {
+        throw appError("IDENTITY_BACKUP_INVALID","バックアップの公開鍵がサーバー登録情報と一致しません。");
+      }
+      const {backupPayload,...restoredIdentity}=restored;
+      const record={...restoredIdentity,peerPins:{}};
+      await saveIdentity(currentUser.userId,record);setIdentityRecord(record);return;
+    }
+    throw appError("IDENTITY_BACKUP_SETUP_REQUIRED","このアカウントの暗号鍵は別端末にあります。元の端末で再ログインして同期バックアップを作成してください。");
+  }
+  if(!password) {
+    throw appError("IDENTITY_BACKUP_PASSWORD_REQUIRED","複数端末同期の初期設定にはパスワードの再入力が必要です。");
+  }
+  if(remote.identityRegistered && saved?.privateKey &&
+     (saved.publicKey!==remote.identityPublicKey || saved.signingPublicKey!==remote.identitySigningPublicKey)) {
+    throw appError("IDENTITY_KEY_CONFLICT","サーバーの暗号鍵とこの端末の鍵が異なります。以前の端末で鍵が上書きされている可能性があります。安全のため自動上書きを停止しました。");
+  }
+
+  const portable=await createPortableIdentity(password,saved?.peerPins||{});
+  try {
+    await registerPortableIdentity(portable,remote.identityRegistered?saved:null);
+  } catch(error) {
+    if(error.code==="IDENTITY_KEY_CONFLICT") {
+      const latest=await api("/api/keys/backup");
+      if(latest.backupAvailable) {
+        const restored=await decryptIdentityBackup(latest.backup,password);
+        if(restored.publicKey!==latest.identityPublicKey || restored.signingPublicKey!==latest.identitySigningPublicKey) {
+          throw appError("IDENTITY_BACKUP_INVALID","バックアップの公開鍵がサーバー登録情報と一致しません。");
+        }
+        const {backupPayload,...restoredIdentity}=restored;
+        const record={...restoredIdentity,peerPins:saved?.peerPins||{}};
+        await saveIdentity(currentUser.userId,record);setIdentityRecord(record);return;
+      }
+    }
+    throw error;
+  }
 }
 async function deriveKey(conversationId,peerUserId) {
   if(activeKey && activeConversation && activeConversation.id===conversationId)return activeKey;
@@ -200,9 +351,25 @@ async function deriveKey(conversationId,peerUserId) {
   const ownRecord=await storedIdentity(currentUser.userId);
   const peerPins=ownRecord?.peerPins||{};
   if(peerPins[peerUserId] && peerPins[peerUserId]!==peer.identitySigningPublicKey) {
-    throw appError("IDENTITY_SIGNING_KEY_CHANGED","相手の署名鍵が以前の登録から変更されています。別経路で指紋を確認するまで接続を中止しました。");
-  }
-  if(!peerPins[peerUserId]) {
+    const previousSigningPublicKey=peer.previousIdentitySigningPublicKey;
+    if(previousSigningPublicKey!==peerPins[peerUserId] || !peer.identityTransitionSignature) {
+      throw appError("IDENTITY_SIGNING_KEY_CHANGED","相手の署名鍵が以前の登録から変更されています。別経路で指紋を確認するまで接続を中止しました。");
+    }
+    const previousSigningKey=await crypto.subtle.importKey(
+      "raw",fromB64(previousSigningPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]
+    );
+    const transitionMessage=new TextEncoder().encode(
+      "SecureChat identity-key-transition:v1\n"+peerUserId+"\n"+
+      previousSigningPublicKey+"\n"+peer.identityPublicKey+"\n"+peer.identitySigningPublicKey
+    );
+    const transitionValid=await crypto.subtle.verify(
+      {name:"ECDSA",hash:"SHA-256"},previousSigningKey,
+      fromB64(peer.identityTransitionSignature),transitionMessage
+    );
+    if(!transitionValid)throw appError("IDENTITY_KEY_TRANSITION_INVALID","相手の暗号鍵移行証明を検証できません。安全のため接続を中止しました。");
+    peerPins[peerUserId]=peer.identitySigningPublicKey;
+    await saveIdentity(currentUser.userId,{...ownRecord,peerPins});
+  } else if(!peerPins[peerUserId]) {
     peerPins[peerUserId]=peer.identitySigningPublicKey;
     await saveIdentity(currentUser.userId,{...ownRecord,peerPins});
   }
@@ -294,7 +461,7 @@ async function loadPublicAnnouncements() {
     el.announcements.hidden=!(data.announcements||[]).length;
   } catch { el.announcements.hidden=true; }
 }
-async function signIn(user) {
+async function signIn(user,password=null) {
   const sessionState=await checkSession();
   user.isAdmin=!!sessionState.user?.isAdmin;
   user.mustChangePassword=!!sessionState.user?.mustChangePassword;
@@ -310,7 +477,7 @@ async function signIn(user) {
   el.passwordChangeGate.hidden=true;
   await loadPublicAnnouncements();
   try {
-    await ensureIdentity();
+    await ensureIdentity(password);
     await refreshSidebar();
   } catch (error) {
     currentUser=null;
@@ -327,8 +494,8 @@ async function signIn(user) {
   startAuthCheck();
   clearInterval(refreshTimer);
   refreshTimer=setInterval(()=>{
-    if(document.visibilityState==="visible" && activeConversation) loadMessages(false).catch(()=>{});
-    if(document.visibilityState==="visible" && ++sidebarRefreshTick % 5 === 0) refreshSidebar().catch(()=>{});
+    if(document.visibilityState==="visible" && document.hasFocus() && activeConversation) loadMessages(false).catch(()=>{});
+    if(++sidebarRefreshTick % 5 === 0) refreshSidebar().catch(()=>{});
   },1000);
 }
 function startAuthCheck() {
@@ -351,10 +518,18 @@ async function submitAdminPasswordChange(event) {
   if(newPassword===currentPassword) {setError(el.passwordChangeError,appError("PASSWORD_UNCHANGED","現在とは異なるパスワードを設定してください。"));return;}
   el.passwordChangeSubmit.disabled=true;
   try {
-    const result=await api("/api/auth/admin/change-password",{method:"POST",body:{currentPassword,newPassword}});
+    const backupState=await api("/api/keys/backup");
+    let identityBackup=null;
+    if(backupState.backupAvailable) {
+      const restored=await decryptIdentityBackup(backupState.backup,currentPassword);
+      identityBackup=await encryptIdentityBackup(restored.backupPayload,newPassword);
+    }
+    const result=await api("/api/auth/admin/change-password",{
+      method:"POST",body:{currentPassword,newPassword,...(identityBackup?{identityBackup}:{})}
+    });
     el.passwordChangeForm.reset();
     el.passwordChangeGate.hidden=true;
-    await signIn(result.user);
+    await signIn(result.user,newPassword);
     toast("管理者パスワードを変更しました。次回の変更期限は90日後です。");
   } catch(error) {setError(el.passwordChangeError,error);}
   finally {el.passwordChangeSubmit.disabled=false;}
@@ -370,7 +545,7 @@ async function submitAuth(event) {
   el.submit.disabled=true;
   try {
     const data=await api(registering?"/api/auth/register":"/api/auth/login",{method:"POST",body:registering?{userId,password,inviteCode:el.inviteCode.value.trim()}:{userId,password}});
-    await signIn(data.user); toast(registering?"アカウントを作成しました。":"ログインしました。");
+    await signIn(data.user,password); toast(registering?"アカウントを作成しました。":"ログインしました。");
   } catch(e) {setError(el.error,e);}
   finally {el.submit.disabled=false;el.submit.textContent=authMode==="register"?"アカウントを作成":"ログイン";}
 }
@@ -505,6 +680,22 @@ async function refreshSidebar() {
   const contacts=data[0].contacts||[],conversations=data[1].conversations||[];
   renderInvitations(data[2].invitations||[]);
   el.contactCount.textContent=String(contacts.length);el.conversationCount.textContent=String(conversations.length);
+  const unreadTotal=conversations.reduce((sum,c)=>sum+Number(c.unread_count||0),0);
+  el.unreadTotal.textContent="未読 "+unreadTotal;
+  el.unreadTotal.hidden=unreadTotal===0;
+  document.title=unreadTotal ? "("+unreadTotal+") "+originalDocumentTitle : originalDocumentTitle;
+
+  const nextUnreadCounts=new Map();
+  for(const conversation of conversations) {
+    const count=Number(conversation.unread_count||0);
+    nextUnreadCounts.set(conversation.id,count);
+    const previous=previousUnreadCounts.get(conversation.id)||0;
+    if(unreadCountsInitialized && count>previous) notifyUnreadConversation(conversation);
+  }
+  previousUnreadCounts.clear();
+  for(const [id,count] of nextUnreadCounts)previousUnreadCounts.set(id,count);
+  unreadCountsInitialized=true;
+
   el.contacts.replaceChildren();el.conversations.replaceChildren();
   if(!contacts.length){const p=document.createElement("p");p.className="sidebar-empty";p.textContent="連絡先はまだありません。";el.contacts.append(p);}
   for(const c of contacts){
@@ -535,8 +726,16 @@ async function refreshSidebar() {
   }
   if(!conversations.length){const p=document.createElement("p");p.className="sidebar-empty";p.textContent="チャットはまだありません。";el.conversations.append(p);}
   for(const c of conversations){
-    const b=document.createElement("button");b.type="button";b.className="sidebar-user-button";b.textContent=c.peer_user_id;
-    b.classList.toggle("active",activeConversation?.id===c.id);b.addEventListener("click",()=>selectConversation(c));el.conversations.append(b);
+    const b=document.createElement("button");b.type="button";b.className="sidebar-user-button";
+    const label=document.createElement("span");label.textContent=c.peer_user_id;
+    const badge=document.createElement("span");badge.className="unread-badge";
+    const unread=Number(c.unread_count||0);
+    badge.textContent=unread>99?"99+":String(unread);
+    badge.hidden=unread===0;
+    b.append(label,badge);
+    b.classList.toggle("active",activeConversation?.id===c.id);
+    b.addEventListener("click",()=>selectConversation(c));
+    el.conversations.append(b);
   }
 }
 async function openConversation(peerUserId, triggerButton = null) {
@@ -621,6 +820,8 @@ el.registerTab.addEventListener("click",()=>setAuthMode("register"));
 el.form.addEventListener("submit",submitAuth);
 el.passwordChangeForm.addEventListener("submit",submitAdminPasswordChange);
 el.logout.addEventListener("click",logout);
+el.notificationButton?.addEventListener("click",enableBrowserNotifications);
+updateNotificationButton();
 el.deleteAccount.addEventListener("click",deleteAccount);
 el.registrationInviteButton.addEventListener("click",issueRegistrationInvite);
 el.searchButton.addEventListener("click",searchUsers);
@@ -634,8 +835,8 @@ window.addEventListener("focus",()=>{
   refreshSidebar().catch(()=>{});
 });
 document.addEventListener("visibilitychange",()=>{
-  if(document.visibilityState!=="visible"||!currentUser)return;
-  if(activeConversation)loadMessages(false).catch(()=>{});
+  if(!currentUser)return;
+  if(document.visibilityState==="visible" && document.hasFocus() && activeConversation)loadMessages(false).catch(()=>{});
   refreshSidebar().catch(()=>{});
 });
 
