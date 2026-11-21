@@ -146,6 +146,15 @@ test("key rotation passes only after all encrypted rows use the active generatio
   assert.equal(result.checks.find(item=>item.id==="key-rotation").status,"ok");
 });
 
+test("forward secrecy and admin passkeys remain explicitly incomplete until implemented", async () => {
+  const result=await summarizeSecurityDiagnostics(environment());
+  assert.equal(result.checks.find(item=>item.id==="forward-secrecy").status,"critical");
+  assert.equal(result.checks.find(item=>item.id==="passkeys").status,"warning");
+  const logs=result.checks.find(item=>item.id==="cloudflare-logs");
+  assert.equal(logs.status,"warning");
+  assert.equal(logs.complete,false);
+});
+
 test("diagnostics cover SQL schema, indexes, migration history and runtime integrity", async () => {
   const result=await summarizeSecurityDiagnostics(environment());
   const ids=new Set(result.checks.map(check=>check.id));
