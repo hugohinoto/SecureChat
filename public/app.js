@@ -274,9 +274,68 @@ async function registerPortableIdentity(portable,previousRecord=null) {
   await saveIdentity(currentUser.userId,portable.record);
   setIdentityRecord(portable.record);
 }
+async function preserveLegacyLocalIdentity(saved,remote) {
+  if(!saved?.privateKey || saved.publicKey!==remote.identityPublicKey) {
+    throw appError("IDENTITY_LEGACY_DEVICE_REQUIRED","この暗号鍵は旧形式です。鍵を持つ元の端末でログインしてください。新しい端末で鍵を作り直すと、既存の会話を復号できなくなります。");
+  }
+  let signingPrivateKey=saved.signingPrivateKey;
+  let signingPublicKey=saved.signingPublicKey;
+  if(!signingPrivateKey || !signingPublicKey) {
+    if(remote.identitySigningPublicKey) {
+      throw appError("IDENTITY_LEGACY_DEVICE_KEY_MISSING","サーバーには署名鍵がありますが、この端末に対応する秘密鍵がありません。元の端末・ブラウザーデータを保持してください。");
+    }
+    const pair=await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},true,["sign","verify"]);
+    signingPublicKey=toB64(new Uint8Array(await crypto.subtle.exportKey("raw",pair.publicKey)));
+    const privateJwk=await crypto.subtle.exportKey("jwk",pair.privateKey);
+    signingPrivateKey=await crypto.subtle.importKey("jwk",privateJwk,{name:"ECDSA",namedCurve:"P-256"},false,["sign"]);
+  }
+  if(remote.identitySigningPublicKey && remote.identitySigningPublicKey!==signingPublicKey) {
+    throw appError("IDENTITY_KEY_CONFLICT","この端末の署名秘密鍵とサーバーの登録情報が一致しません。鍵を上書きせず、元の端末データを保持してください。");
+  }
+  const record={
+    ...saved,privateKey:saved.privateKey,publicKey:saved.publicKey,
+    signingPrivateKey,signingPublicKey,peerPins:saved.peerPins||{},legacyLocalOnly:true
+  };
+  // Save the non-exportable legacy ECDH key and its signer before contacting
+  // the server, so a network interruption cannot strand the one-time upgrade.
+  await saveIdentity(currentUser.userId,record);
+  if(!remote.identitySigningPublicKey) {
+    const signature=await crypto.subtle.sign(
+      {name:"ECDSA",hash:"SHA-256"},signingPrivateKey,
+      identityProofMessage(currentUser.userId,saved.publicKey)
+    );
+    await api("/api/keys",{method:"PUT",body:{
+      identityPublicKey:saved.publicKey,
+      identitySigningPublicKey:signingPublicKey,
+      identityKeySignature:toB64(new Uint8Array(signature)),
+      legacyUpgrade:true
+    }});
+  } else {
+    const verifyKey=await crypto.subtle.importKey("raw",fromB64(signingPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]);
+    const proofValid=await crypto.subtle.verify(
+      {name:"ECDSA",hash:"SHA-256"},verifyKey,fromB64(remote.identityKeySignature),
+      identityProofMessage(currentUser.userId,saved.publicKey)
+    );
+    if(!proofValid) throw appError("IDENTITY_KEY_SIGNATURE_INVALID","旧形式鍵の署名を検証できません。安全のため接続を中止しました。");
+  }
+  await saveIdentity(currentUser.userId,record);
+  setIdentityRecord(record);
+  el.fingerprint.hidden=false;
+  el.fingerprint.textContent="旧形式の暗号鍵を、この端末に保存されている秘密鍵を維持したまま署名付き形式へ移行しました。\nこの鍵は旧端末内のみで利用できます。暗号化バックアップは作成されていないため、サイトデータを削除したり別端末でログインしたりしないでください。";
+}
 async function ensureIdentity(password=null) {
   const saved=await storedIdentity(currentUser.userId);
   let remote=await api("/api/keys/backup");
+  if(remote.identityRegistered && !remote.backupAvailable &&
+     saved?.privateKey && saved.publicKey===remote.identityPublicKey &&
+     (!remote.identitySigningPublicKey || remote.identityMode==="legacy-local-only")) {
+    await preserveLegacyLocalIdentity(saved,remote);
+    return;
+  }
+  if(remote.identityMode==="legacy-local-only" &&
+     (!saved?.privateKey || saved.publicKey!==remote.identityPublicKey)) {
+    throw appError("IDENTITY_LEGACY_DEVICE_REQUIRED","このアカウントの旧形式鍵は元の端末にのみ保存されています。元の端末とブラウザーのサイトデータを保持して利用してください。新しい端末では鍵を復元できません。");
+  }
   if(remote.backupAvailable) {
     if(!password) {
       if(saved?.privateKey && saved.publicKey===remote.identityPublicKey &&
@@ -311,7 +370,7 @@ async function ensureIdentity(password=null) {
       const record={...restoredIdentity,peerPins:{}};
       await saveIdentity(currentUser.userId,record);setIdentityRecord(record);return;
     }
-    throw appError("IDENTITY_BACKUP_SETUP_REQUIRED","このアカウントの暗号鍵は別端末にあります。元の端末で再ログインして同期バックアップを作成してください。");
+    throw appError(remote.identityMode==="legacy-local-only"?"IDENTITY_LEGACY_DEVICE_REQUIRED":"IDENTITY_BACKUP_SETUP_REQUIRED",remote.identityMode==="legacy-local-only"?"この旧形式鍵は元の端末にのみ保存されています。元の端末から利用してください。ブラウザーのサイトデータを削除しないでください。":"このアカウントの暗号鍵は別端末にあります。元の端末で再ログインして同期バックアップを作成してください。");
   }
   if(!password) {
     throw appError("IDENTITY_BACKUP_PASSWORD_REQUIRED","複数端末同期の初期設定にはパスワードの再入力が必要です。");
