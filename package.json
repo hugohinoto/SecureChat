@@ -13,10 +13,11 @@
     "db:migrate": "node scripts/migrate.js",
     "test": "node --test",
     "cf:dev": "wrangler dev",
-    "cf:deploy": "wrangler deploy",
+    "cf:deploy": "npm run deploy",
     "cf:d1:create": "wrangler d1 create securechat-db",
-    "cf:d1:migrate:local": "wrangler d1 migrations apply securechat-db --local",
-    "cf:d1:migrate:remote": "wrangler d1 migrations apply securechat-db --remote"
+    "cf:d1:migrate:local": "wrangler d1 migrations apply DB --local",
+    "cf:d1:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "deploy": "npm run cf:d1:migrate:remote && wrangler deploy"
   },
   "dependencies": {
     "express": "^5.1.0",
