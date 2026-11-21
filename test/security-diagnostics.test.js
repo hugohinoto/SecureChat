@@ -28,6 +28,7 @@ class FakeStatement {
   }
   async all() {
     const sql=this.sql;
+    if(sql.includes("AS key_version"))return {results:this.db.keyUsageRows};
     if(sql.includes("sqlite_master")&&sql.includes("type IN ('table','view','trigger')")) {
       const objects=[
         ...Object.keys(securityDiagnosticSchema.tables.reduce((a,t)=>(a[t]=true,a),{})).map(name=>({name,type:"table",sql:this.db.tableSql[name]||"CREATE TABLE "+name+" (id TEXT)"})),
