@@ -462,7 +462,7 @@ async function deriveKey(conversationId,peerUserId) {
   if(activeKey && activeConversation && activeConversation.id===conversationId)return activeKey;
   const peer=await api("/api/keys/"+encodeURIComponent(peerUserId));
   if(!peer.identitySigningPublicKey || !peer.identityKeySignature) {
-    throw appError("IDENTITY_KEY_LEGACY_FORMAT","相手の公開鍵は旧形式です。相手に最新版でログインし直してもらい、署名付き公開鍵を登録してください。");
+    throw appError("IDENTITY_KEY_LEGACY_FORMAT","相手の公開鍵は旧形式です。相手に元の端末でSecureChatを強制再読み込みしてからログインしてもらってください。元の端末のブラウザーデータを削除せず、旧形式鍵の移行完了後にもう一度接続してください。");
   }
   const signingKey=await crypto.subtle.importKey("raw",fromB64(peer.identitySigningPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]);
   const proofValid=await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"},signingKey,fromB64(peer.identityKeySignature),identityProofMessage(peerUserId,peer.identityPublicKey));
