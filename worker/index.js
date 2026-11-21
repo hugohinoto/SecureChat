@@ -623,6 +623,9 @@ async function handleApi(request, env) {
     const newPassword = body?.newPassword;
     if (!validPassword(currentPassword) || !validPassword(newPassword)) return json({ error: "INVALID_PASSWORD", message: "現在のパスワードと新しいパスワードはそれぞれ12〜128文字で入力してください。" }, 400);
     if (currentPassword === newPassword) return json({ error: "PASSWORD_UNCHANGED", message: "新しいパスワードは現在のものと異なるものにしてください。" }, 400);
+    if (body?.identityBackup !== undefined && !validIdentityBackup(body.identityBackup)) {
+      return json({ error: "IDENTITY_BACKUP_INVALID", message: "暗号鍵バックアップの形式が正しくありません。パスワードは変更されていません。" }, 400);
+    }
     try {
       const user = await env.DB.prepare("SELECT password_salt, password_hash, password_iterations FROM users WHERE id=? AND is_admin=1").bind(session.id).first();
       if (!user) return json({ error: "ADMIN_REQUIRED" }, 403);
@@ -634,10 +637,16 @@ async function handleApi(request, env) {
       const oldSessions = await env.DB.prepare("SELECT token_hash FROM sessions WHERE user_id=?").bind(session.id).all();
       const room = env.CHAT_ROOM.get(env.CHAT_ROOM.idFromName("open-lounge"));
       await Promise.allSettled((oldSessions.results || []).map(({token_hash}) => room.fetch("https://chat-room.internal/revoke", { method:"POST", headers:{"X-Session-Hash":token_hash} })));
-      await env.DB.batch([
+      const statements = [
         env.DB.prepare("UPDATE users SET password_salt=?, password_hash=?, password_iterations=?, password_changed_at=? WHERE id=? AND is_admin=1").bind(base64url(salt), base64url(hash), PASSWORD_ITERATIONS, now, session.id),
         env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(session.id)
-      ]);
+      ];
+      if (body?.identityBackup) {
+        statements.push(env.DB.prepare(
+          "UPDATE user_keys SET identity_backup_version=1, identity_backup_salt=?, identity_backup_iv=?, identity_backup_ciphertext=?, updated_at=? WHERE user_id=?"
+        ).bind(body.identityBackup.salt, body.identityBackup.iv, body.identityBackup.ciphertext, now, session.id));
+      }
+      await env.DB.batch(statements);
       const freshSession = await createSession(env, session.id);
       await writeAdminAudit(env, session, "admin.password.change", session.id, { changedAt: now, maxAgeDays: 90 });
       const response = json({ changed: true, user: { id: session.id, userId: session.user_id, isAdmin: true, mustChangePassword: false } });
