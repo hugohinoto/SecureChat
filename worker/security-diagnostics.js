@@ -101,6 +101,17 @@ async function checkSchema(env,checks) {
     return {status:"ok",detail:"必須 "+Object.keys(EXPECTED_TABLES).length+" テーブルと定義済み必須カラムをすべて確認しました。追加テーブル: "+Math.max(0,tableNames.size-Object.keys(EXPECTED_TABLES).length)+"。"};
   });
 
+  await runIsolated(checks,"schema-unexpected-objects","未登録のD1スキーマオブジェクト",async()=>{
+    const objects=rows(await env.DB.prepare(
+      "SELECT name,type FROM sqlite_master WHERE type IN ('table','view','trigger') AND name NOT LIKE 'sqlite_%'"
+    ).all());
+    const known=new Set([...Object.keys(EXPECTED_TABLES),"d1_migrations"]);
+    const extras=objects.filter(item=>!known.has(item.name));
+    return extras.length
+      ? {status:"warning",detail:"リポジトリの想定スキーマにないDBオブジェクトがあります。用途を確認してください: "+extras.map(item=>item.type+":"+item.name).join(", ")}
+      : {status:"ok",detail:"未登録のテーブル・ビュー・トリガーはありません。"};
+  });
+
   await runIsolated(checks,"schema-constraints","SQL制約・データ保持ルール",async()=>{
     const objects=rows(await env.DB.prepare("SELECT name,type,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all());
     const definitions=new Map(objects.map(item=>[item.name,String(item.sql||"").toLowerCase().replace(/\s|["\x60]/g,"")]));
@@ -144,7 +155,7 @@ async function checkSchema(env,checks) {
 
   await runIsolated(checks,"schema-migrations","D1マイグレーション履歴",async()=>{
     const exists=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='d1_migrations'").first();
-    if(!exists)return {status:"error",detail:"d1_migrations が存在せず、適用済みマイグレーションを検証できません。手動変更DBの場合も履歴を整備するまで未判定です。",extra:{complete:false}};
+    if(!exists)return {status:"warning",detail:"d1_migrations が存在せず、適用済みマイグレーション履歴を確認できません。SQLエディターで手動適用したDBの場合は履歴の整備が必要です。スキーマ検査は別途実施しています。",extra:{complete:false}};
     const applied=rows(await env.DB.prepare("SELECT name FROM d1_migrations").all()).map(x=>String(x.name||"").split("/").pop());
     const appliedNormalized=new Set(applied.map(x=>x.replace(/\.sql$/,"")));
     const missing=EXPECTED_MIGRATIONS.filter(name=>!appliedNormalized.has(name.replace(/\.sql$/,"")));
