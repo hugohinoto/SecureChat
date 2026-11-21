@@ -53,7 +53,7 @@
       <div class="invitation-list" id="invitation-list" aria-live="polite"><p class="sidebar-empty">進行中の招待はありません。</p></div>
       <div class="sidebar-heading"><span>連絡先</span><span class="count-pill" id="contact-count">0</span></div>
       <div class="contact-list" id="contact-list"><p class="sidebar-empty">連絡先はまだありません。</p></div>
-      <div class="sidebar-heading"><span>個別チャット</span><span class="count-pill" id="conversation-count">0</span></div>
+      <div class="sidebar-heading"><span>個別チャット</span><span class="sidebar-heading-counts"><span class="count-pill" id="conversation-count">0</span><span class="count-pill unread-total" id="unread-total" hidden>未読 0</span></span></div>
       <div class="conversation-list" id="conversation-list"><p class="sidebar-empty">チャットはまだありません。</p></div>
       <div class="sidebar-note">
         <span class="note-icon" aria-hidden="true">ⓘ</span>
@@ -76,6 +76,7 @@
       </div>
       <a class="admin-link" id="admin-link" href="/admin" hidden>管理者コンソール</a>
       <a class="admin-link" id="bug-report-link" href="/bug-report">バグ報告・不具合連絡</a>
+      <button class="notification-enable-button" id="notification-enable-button" type="button">ブラウザー通知を有効にする</button>
       <button class="delete-account-button" id="delete-account-button" type="button">アカウントを削除</button>
     </aside>
 
