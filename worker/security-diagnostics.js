@@ -3,7 +3,7 @@ import { dataKeyStatus } from "./data-crypto.js";
 const EXPECTED_TABLES = {
   users: ["id","user_id","password_salt","password_hash","password_iterations","created_at","last_login_at","is_admin","password_changed_at"],
   sessions: ["token_hash","user_id","expires_at","created_at"],
-  user_keys: ["user_id","identity_public_key","signed_prekey","signed_prekey_signature","key_version","updated_at","identity_signing_public_key","identity_key_signature"],
+  user_keys: ["user_id","identity_public_key","signed_prekey","signed_prekey_signature","key_version","updated_at","identity_signing_public_key","identity_key_signature","identity_transition_from","identity_transition_signature","identity_backup_version","identity_backup_salt","identity_backup_iv","identity_backup_ciphertext"],
   contacts: ["owner_user_id","contact_user_id","created_at"],
   conversations: ["id","created_by","created_at","expires_in_seconds"],
   conversation_members: ["conversation_id","user_id","joined_at"],
@@ -16,7 +16,8 @@ const EXPECTED_TABLES = {
   announcements: ["id","title","body","published","created_by_user_id","created_at","updated_at","published_at","title_ciphertext","body_ciphertext","encryption_version","expires_at"],
   admin_audit_logs: ["id","admin_user_id","action","target_user_id","details_json","created_at"],
   bug_reports: ["id","reporter_user_id","encrypted_payload","status","created_at","updated_at","resolved_at"],
-  conversation_pairs: ["user_a_id","user_b_id","conversation_id","created_at"]
+  conversation_pairs: ["user_a_id","user_b_id","conversation_id","created_at"],
+  conversation_reads: ["conversation_id","user_id","last_read_at","last_read_message_id","updated_at"]
 };
 
 const EXPECTED_INDEXES = [
@@ -28,14 +29,15 @@ const EXPECTED_INDEXES = [
   "rate_limit_buckets_expiry_idx","announcements_published_idx",
   "admin_audit_logs_created_at_idx","admin_audit_logs_admin_user_idx",
   "announcements_expiry_idx","bug_reports_status_created_idx","bug_reports_reporter_idx",
-  "users_created_at_admin_idx","users_last_login_idx"
+  "users_created_at_admin_idx","users_last_login_idx","conversation_reads_user_idx"
 ];
 
 const EXPECTED_MIGRATIONS = [
   "0001_initial.sql","0002_private_chat_e2ee.sql","0003_mutual_otp_contacts.sql",
   "0004_registration_invites.sql","0005_persistent_rate_limits.sql","0006_admin_console.sql",
   "0007_admin_password_rotation.sql","0008_admin_security_reports.sql",
-  "0009_signed_identity_keys.sql","0010_unique_conversation_pairs.sql"
+  "0009_signed_identity_keys.sql","0010_unique_conversation_pairs.sql",
+  "0011_multi_device_identity_backup_and_reads.sql"
 ];
 
 const EXPECTED_FOREIGN_KEYS = [
@@ -51,7 +53,9 @@ const EXPECTED_FOREIGN_KEYS = [
   ["registration_invites","created_by_user_id","users","id"],
   ["bug_reports","reporter_user_id","users","id"],
   ["conversation_pairs","user_a_id","users","id"],["conversation_pairs","user_b_id","users","id"],
-  ["conversation_pairs","conversation_id","conversations","id"]
+  ["conversation_pairs","conversation_id","conversations","id"],
+  ["conversation_reads","conversation_id","conversations","id"],
+  ["conversation_reads","user_id","users","id"]
 ];
 
 function add(checks,id,label,status,detail,extra={}) {
