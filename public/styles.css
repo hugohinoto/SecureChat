@@ -1127,3 +1127,39 @@ body {
     min-height: 44px;
   }
 }
+
+
+/* Desktop: prevent sidebar sections from collapsing inside the flex column. */
+@media (min-width: 681px) {
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .sidebar > .sidebar-heading,
+  .sidebar > .invitation-list,
+  .sidebar > .contact-list,
+  .sidebar > .conversation-list,
+  .sidebar > .sidebar-note,
+  .sidebar > .profile-card {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
+  .sidebar > .invitation-list,
+  .sidebar > .contact-list,
+  .sidebar > .conversation-list {
+    max-height: 180px;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .sidebar > .sidebar-spacer {
+    flex: 0 0 12px;
+    min-height: 12px;
+  }
+}
