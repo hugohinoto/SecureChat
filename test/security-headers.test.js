@@ -25,6 +25,7 @@ test("static assets publish the expected browser security headers", async () => 
 test("HTML entrypoints run through the Worker for HTTPS redirects", async () => {
   const config = JSON.parse(await read("../wrangler.jsonc"));
   const routes = config.assets?.run_worker_first || [];
+  assert.equal(config.assets?.html_handling, "none", "Worker rewrites /admin to /admin.html, so the asset router must not redirect .html back to /admin");
   for (const route of ["/", "/index.html", "/admin", "/admin/", "/admin.html", "/bug-report", "/bug-report/", "/bug-report.html"]) {
     assert.ok(routes.includes(route), `Missing Worker-first route: ${route}`);
   }
