@@ -10,6 +10,7 @@ const migration = await readFile(
   "utf8"
 );
 const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
+const assetHeaders = await readFile(new URL("../public/_headers", import.meta.url), "utf8");
 
 test("multi-device identity backup is password-encrypted and never stored as plaintext private keys", () => {
   assert.match(backupModule, /PBKDF2/);
@@ -51,4 +52,17 @@ test("unread badges and browser notifications are wired in the client", () => {
 
 test("the client explicitly scopes periodic message fetching to the focused visible tab", () => {
   assert.match(app, /document\.visibilityState==="visible" && document\.hasFocus\(\) && activeConversation/);
+});
+
+
+test("identity and authentication assets are never served from a stale browser cache", () => {
+  assert.match(assetHeaders, /^\/\*[\s\S]*?Cache-Control:\s*no-store/m);
+});
+
+test("a legacy client may reuse only the exact existing identity without rewriting its backup", () => {
+  assert.match(worker, /body\?\.identityBackup === undefined \|\| body\?\.identityBackup === null/);
+  assert.match(worker, /existingKey\.identity_public_key === pub/);
+  assert.match(worker, /existingKey\.identity_signing_public_key === signingPub/);
+  assert.match(worker, /backupUnchanged: true/);
+  assert.match(worker, /IDENTITY_BACKUP_INVALID/);
 });
