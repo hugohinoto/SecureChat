@@ -167,6 +167,11 @@ function toB64(bytes) {
   let s=""; for(const b of bytes)s+=String.fromCharCode(b); return btoa(s);
 }
 function fromB64(s) { return Uint8Array.from(atob(s),c=>c.charCodeAt(0)); }
+function fromB64Url(s) {
+  const normalized=s.replace(/-/g,"+").replace(/_/g,"/");
+  const padded=normalized+"=".repeat((4-normalized.length%4)%4);
+  return Uint8Array.from(atob(padded),c=>c.charCodeAt(0));
+}
 async function publicKeyFingerprint(base64Key) {
   const digest=await crypto.subtle.digest("SHA-256",fromB64(base64Key));
   const hex=Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,"0")).join("").toUpperCase();
@@ -305,7 +310,7 @@ async function preserveLegacyLocalIdentity(saved,remote) {
       throw appError("IDENTITY_KEY_CONFLICT","この端末の旧暗号鍵とサーバーの鍵が一致しません。");
     }
     const serverPublicKey=await crypto.subtle.importKey(
-      "raw",fromB64(challenge.serverPublicKey),{name:"ECDH",namedCurve:"P-256"},false,[]
+      "raw",fromB64Url(challenge.serverPublicKey),{name:"ECDH",namedCurve:"P-256"},false,[]
     );
     const shared=await crypto.subtle.deriveBits({name:"ECDH",public:serverPublicKey},saved.privateKey,256);
     const proofKey=await crypto.subtle.importKey("raw",shared,{name:"HMAC",hash:"SHA-256"},false,["sign"]);
@@ -383,7 +388,8 @@ async function ensureIdentity(password=null) {
       const record={...restoredIdentity,peerPins:{}};
       await saveIdentity(currentUser.userId,record);setIdentityRecord(record);return;
     }
-    throw appError(remote.identityMode==="legacy-local-only"?"IDENTITY_LEGACY_DEVICE_REQUIRED":"IDENTITY_BACKUP_SETUP_REQUIRED",remote.identityMode==="legacy-local-only"?"この旧形式鍵は元の端末にのみ保存されています。元の端末から利用してください。ブラウザーのサイトデータを削除しないでください。":"このアカウントの暗号鍵は別端末にあります。元の端末で再ログインして同期バックアップを作成してください。");
+    const isLegacyLocalOnly=remote.identityMode==="legacy-local-only" || !remote.identitySigningPublicKey;
+    throw appError(isLegacyLocalOnly?"IDENTITY_LEGACY_DEVICE_REQUIRED":"IDENTITY_BACKUP_SETUP_REQUIRED",isLegacyLocalOnly?"この旧形式鍵は元の端末にのみ保存されています。元の端末でSecureChatを更新してログインしてください。ブラウザーのサイトデータを削除しないでください。":"このアカウントの暗号鍵は別端末にあります。元の端末で再ログインして同期バックアップを作成してください。");
   }
   if(!password) {
     throw appError("IDENTITY_BACKUP_PASSWORD_REQUIRED","複数端末同期の初期設定にはパスワードの再入力が必要です。");
