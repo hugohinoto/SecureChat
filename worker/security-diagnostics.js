@@ -101,6 +101,23 @@ async function checkSchema(env,checks) {
     return {status:"ok",detail:"必須 "+Object.keys(EXPECTED_TABLES).length+" テーブルと定義済み必須カラムをすべて確認しました。追加テーブル: "+Math.max(0,tableNames.size-Object.keys(EXPECTED_TABLES).length)+"。"};
   });
 
+  await runIsolated(checks,"schema-constraints","SQL制約・データ保持ルール",async()=>{
+    const objects=rows(await env.DB.prepare("SELECT name,type,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all());
+    const definitions=new Map(objects.map(item=>[item.name,String(item.sql||"").toLowerCase().replace(/[\\s"`\\[\\]]/g,"")]));
+    const requirements=[
+      ["users","useridtextnotnullunique"],
+      ["conversations","check(expires_in_seconds=3600)"],
+      ["encrypted_messages","check(expires_at=created_at+3600000)"],
+      ["contact_invitations","check(inviter_attemptsbetween0and5)"],
+      ["contact_invitations","check(invitee_attemptsbetween0and5)"],
+      ["conversation_pairs","check(user_a_id<user_b_id)"]
+    ];
+    const missing=requirements.filter(([table,fragment])=>!definitions.get(table)?.includes(fragment));
+    return missing.length
+      ? {status:"critical",detail:"必須SQL制約が見つかりません: "+missing.map(([table,fragment])=>table+" ("+fragment+")").join(", ")}
+      : {status:"ok",detail:"ユーザーID一意性、保存期限、OTP試行回数、会話ペア順序のSQL制約を確認しました。"};
+  });
+
   await runIsolated(checks,"schema-indexes","SQLインデックス構成",async()=>{
     const result=rows(await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'").all());
     const found=new Set(result.map(x=>x.name));
