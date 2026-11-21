@@ -105,9 +105,20 @@ async function runSecurityCheck(){
   const d=await api("/api/admin/security-check");
   lastSecurityCheck=d;exportButton.disabled=!Array.isArray(d.checks)||d.checks.length===0;
   const labels={ok:"問題なし",warning:"要確認",critical:"重大",error:"エラー"};
-  summary.textContent="総合判定："+({ok:"問題なし",warning:"要確認",critical:"重大な未実装項目あり",error:"設定エラー"})[d.overall]+" · "+date(d.checkedAt);
+  const coverage=d.coverage?(" · 検査完了 "+d.coverage.completed+"/"+d.coverage.total+" · 未完了 "+d.coverage.notCompleted+" 件"):"";
+  summary.textContent="総合判定："+({ok:"問題なし",warning:"要確認",critical:"重大な問題あり",error:"診断エラー"})[d.overall]+" · "+date(d.checkedAt)+coverage;
   summary.dataset.status=d.overall;
-  for(const item of d.checks){const row=document.createElement("div");row.className="security-check-item";const strong=document.createElement("strong"),badge=document.createElement("span"),detail=document.createElement("p");strong.textContent=item.label;badge.textContent=labels[item.status]||item.status;badge.className="security-status "+item.status;detail.textContent=item.detail;row.append(strong,badge,detail);root.append(row);}
+  for(const item of d.checks){
+   const row=document.createElement("div");row.className="security-check-item";
+   const strong=document.createElement("strong"),badge=document.createElement("span"),detail=document.createElement("p");
+   strong.textContent=item.label;badge.textContent=labels[item.status]||item.status;badge.className="security-status "+item.status;
+   detail.textContent=item.detail;row.append(strong,badge,detail);
+   if(typeof item.url==="string" && item.url.startsWith("https://github.com/hugohinoto/SecureChat/actions/")){
+    const link=document.createElement("a");link.href=item.url;link.target="_blank";link.rel="noopener noreferrer";link.textContent="実行結果を確認";
+    link.className="security-result-link";row.append(link);
+   }
+   root.append(row);
+  }
  }catch(e){summary.textContent="診断に失敗しました："+e.message;summary.dataset.status="error";}
 }
 async function loadLogs(){
