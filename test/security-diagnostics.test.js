@@ -126,7 +126,7 @@ test("key rotation remains warning until old ciphertext is migrated", async () =
   const result=await summarizeSecurityDiagnostics(env);
   const check=result.checks.find(item=>item.id==="key-rotation");
   assert.equal(check.status,"warning");
-  assert.match(check.detail,/2件残っています/);
+  assert.match(check.detail,/2 件残っています/);
 });
 
 test("key rotation is critical when old ciphertext remains but its old key is missing", async () => {
