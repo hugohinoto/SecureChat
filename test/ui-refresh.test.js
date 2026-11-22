@@ -15,8 +15,8 @@ test("refreshed UI stylesheet is loaded after the legacy stylesheet", () => {
 });
 
 test("all static DOM IDs referenced by the application remain present", () => {
-  const ids = new Set([...html.matchAll(/\\bid="([^"]+)"/g)].map(match => match[1]));
-  const selectors = [...app.matchAll(/\\$\\("#([^"]+)"\\)/g)].map(match => match[1]);
+  const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]));
+  const selectors = [...app.matchAll(/\$\("#([^"]+)"\)/g)].map(match => match[1]);
   assert.ok(selectors.length > 0, "expected to find application DOM selectors");
   const missing = [...new Set(selectors)].filter(id => !ids.has(id));
   assert.deepEqual(missing, []);
@@ -25,8 +25,8 @@ test("all static DOM IDs referenced by the application remain present", () => {
 test("refreshed UI includes keyboard focus, reduced-motion, and mobile navigation styles", () => {
   assert.match(refreshCss, /:focus-visible/);
   assert.match(refreshCss, /prefers-reduced-motion/);
-  assert.match(refreshCss, /body\\.mobile-chat/);
-  assert.match(refreshCss, /body\\.mobile-list/);
+  assert.match(refreshCss, /body\.mobile-chat/);
+  assert.match(refreshCss, /body\.mobile-list/);
 });
 
 test("UI clearly states that the current messaging prototype has no forward secrecy", () => {
