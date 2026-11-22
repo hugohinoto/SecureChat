@@ -4,15 +4,26 @@
 
 - Application data encryption supports versioned keys. The diagnostic checks encrypted-row usage by generation and does not treat a staged second key as a completed rotation.
 - Automatic Cloudflare Invocation Logs are disabled in Wrangler configuration. Application logging remains available only through fixed, non-sensitive labels.
-- Chat forward secrecy is not implemented in production. The current account-level ECDH identity scheme is not a Double Ratchet.
-- Administrator passkey / WebAuthn authentication is not implemented. The current administrator authentication remains password-based with the existing recent-login and password-age controls.
+- The production chat default remains protocol v1. A device-scoped Matrix Olm / Megolm v2 implementation, authenticated device registration, one-time-prekey transport, opaque to-device inbox, versioned message storage, and bilateral migration controls have been added behind `SECURECHAT_CRYPTO_V2_ENABLED=false`.
+- The production security diagnostic deliberately keeps `forward-secrecy` at **critical**. Code being present or a feature flag being switched on is not proof that the complete protocol and deployment meet the security gate.
+- Administrator passkey / WebAuthn authentication is not implemented. Administrator authentication remains password-based with the existing recent-login and password-age controls.
 
-## Forward secrecy release gate
+## Forward-secrecy implementation and production gate
 
-Do not replace the v1 messaging path until a separately versioned v2 protocol can pass end-to-end tests across two browser profiles and multiple devices. Required work includes persistent device-local ratchet state, authenticated prekey/session establishment, one-time prekey replenishment, out-of-order and replay handling, device addition/removal, account recovery, safety-number changes, and a relay that stores opaque envelopes only. Existing v1 messages must remain on the v1 decrypt path. Obtain an independent protocol review before calling the feature production-ready.
+The v2 implementation uses the Matrix Rust/WASM crypto state machine. Each browser profile/device receives its own device ID and local encrypted Olm state; the existing account identity backup does not clone live ratchet state. The server stores device public-key records, one-time keys, opaque encrypted to-device events, and versioned opaque Megolm messages. New conversations must be approved by both account owners before the protocol mode can become v2. Once v2 is selected, the legacy v1 message POST is rejected for that conversation; retained v1 messages remain on the v1 decryption path.
 
-The isolated `security-lab` SDK demo uses temporary in-memory identities and an external Sandbox relay. It is not a production integration, has no durable session store, and is not evidence that SecureChat has forward secrecy.
+The feature flag is intentionally **false** in the checked-in production Wrangler configuration. Do not enable it for real users or claim production forward secrecy until all of the following pass:
+
+1. Build and pin the exact WASM artifacts/dependencies reproducibly and verify the license and supply chain.
+2. Review the exact vodozemac / SDK / WASM source path for X25519 low-order and all-zero DH rejection and add a negative test for the initial Olm handshake.
+3. Run end-to-end browser tests with two users and at least two independent browser profiles/devices per user. Cover first-contact prekey establishment, bidirectional DH ratchets, one-time-prekey single-consumption under concurrency, group-key distribution, out-of-order and duplicate delivery, skipped-key limits, concurrent sends, reload/restart and IndexedDB persistence.
+4. Implement and test immediate room-key rotation on device revocation. The current revocation endpoint blocks future device access and deletes queued/unclaimed key material, but an already shared Megolm outbound session can remain usable until SDK rotation. This is not sufficient for immediate revocation.
+5. Test device loss, device replacement, recovery, prekey replenishment, fingerprint changes, and account root-key changes.
+6. Verify that old v1 ciphertext remains readable after migration, that v2 never silently downgrades, and that a protocol-mode transition cannot race a concurrent v1 write.
+7. Obtain an independent review of the current SDK versions, compiled WASM artifacts, Worker adapter, D1 schema, local persistence, and transport/recovery logic. The public 2022 vodozemac audit does not cover all of these components.
+
+The production `forward-secrecy` diagnostic remains critical until these gates are met. Do not set `SECURECHAT_CRYPTO_V2_ENABLED=true` merely to clear the diagnostic.
 
 ## Administrator passkey release gate
 
-Passkey support must use WebAuthn challenges bound to the admin account, origin, RP ID, and purpose; persist credential public keys and counters; prevent replay; require user verification; provide a second recovery authenticator or a carefully designed recovery path; and enforce the passkey step before issuing an administrator session. Enrollment and removal must require recent password reauthentication and produce audit events. Do not mark the diagnostic passed until login and account-recovery flows are covered by browser-based tests.
+Passkey support must use WebAuthn challenges bound to the admin account, origin, RP ID, and purpose; persist credential public keys and counters; prevent replay; require user verification; provide a second recovery authenticator or carefully designed recovery; enforce the passkey step before issuing an administrator session; and require recent password reauthentication for enrollment/removal with audit events. Do not mark it complete until browser tests cover login and recovery.
