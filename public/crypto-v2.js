@@ -601,6 +601,25 @@ export async function decryptConversationMessage(userId, conversationId, expecte
   }
 }
 
+export async function listCryptoDevices(userId) {
+  const context = machines.get(String(userId).toLowerCase());
+  if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
+  return api("/api/crypto/devices", { deviceId: context.deviceId });
+}
+
+export async function revokeCryptoDevice(userId, targetDeviceId) {
+  const context = machines.get(String(userId).toLowerCase());
+  if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
+  if (targetDeviceId === context.deviceId) {
+    throw cryptoError("CRYPTO_CANNOT_REVOKE_CURRENT_DEVICE", "現在使用中の端末はここから失効できません。");
+  }
+  return api("/api/crypto/devices/" + encodeURIComponent(targetDeviceId) + "/revoke", {
+    deviceId: context.deviceId,
+    method: "POST",
+    body: {}
+  });
+}
+
 export async function getCryptoDeviceState(userId) {
   const context = machines.get(String(userId).toLowerCase());
   if (!context) return { initialized: false, deviceId: null };
