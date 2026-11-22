@@ -399,6 +399,5 @@ export const securityDiagnosticSchema = {
   tables:Object.keys(EXPECTED_TABLES),
   indexes:EXPECTED_INDEXES,
   migrations:EXPECTED_MIGRATIONS,
-  foreignKeys:EXPECTED_FOREIGN_KEYS,
-  reservedObjects:[...SYSTEM_RESERVED_D1_OBJECTS]
+  foreignKeys:EXPECTED_FOREIGN_KEYS
 };
