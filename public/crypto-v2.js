@@ -407,14 +407,15 @@ export async function syncCryptoV2(userId) {
     if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
     const data = await api("/api/crypto/sync", { deviceId: context.deviceId });
     const events = [];
-    const revokedConversations = [];
+    const affectedAccounts = new Set();
     for (const item of data.events || []) {
       if (!item?.event || typeof item.id !== "string") continue;
       if (item.event.type === "org.securechat.device_revoked") {
-        const conversationId = item.event.content?.conversation_id;
-        if (typeof conversationId === "string" && /^[a-f0-9-]{36}$/i.test(conversationId)) {
-          revokedConversations.push(conversationId);
+        const affectedUser = parseMatrixUserId(item.event.content?.affected_user_id);
+        if (!affectedUser) {
+          throw cryptoError("CRYPTO_REVOCATION_EVENT_INVALID", "端末失効通知の対象アカウントを検証できません。");
         }
+        affectedAccounts.add(affectedUser);
         continue;
       }
       events.push({
@@ -425,20 +426,29 @@ export async function syncCryptoV2(userId) {
         content: item.event.content
       });
     }
-    // A revocation notification invalidates every surviving participant's
-    // active Megolm sender session. The next send must query devices again and
-    // distribute a fresh room key only to the still-authorized device set.
-    for (const conversationId of new Set(revokedConversations)) {
-      await withRoomLock(conversationId, async () => {
-        const room = roomId(conversationId);
-        try {
-          await context.machine.invalidateGroupSession(room);
-        } finally {
-          room.free();
+    // Each surviving device receives one control event per affected account.
+    // Owners invalidate every outbound session; the other participant devices
+    // invalidate only the direct conversations with the affected account.
+    if (affectedAccounts.size) {
+      const conversations = await api("/api/conversations");
+      const roomsToInvalidate = new Set();
+      for (const affectedUser of affectedAccounts) {
+        for (const conversation of conversations.conversations || []) {
+          if (affectedUser === context.userId || conversation.peer_user_id === affectedUser) {
+            roomsToInvalidate.add(conversation.id);
+          }
         }
-      });
-    }
-    if (revokedConversations.length) {
+      }
+      for (const conversationId of roomsToInvalidate) {
+        await withRoomLock(conversationId, async () => {
+          const room = roomId(conversationId);
+          try {
+            await context.machine.invalidateGroupSession(room);
+          } finally {
+            room.free();
+          }
+        });
+      }
       await context.machine.markAllTrackedUsersAsDirty();
     }
     const counts = new Map([["signed_curve25519", Number(data.one_time_key_counts?.signed_curve25519 || 0)]]);
