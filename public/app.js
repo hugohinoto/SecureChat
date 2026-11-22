@@ -484,8 +484,27 @@ async function toggleCryptoDeviceList() {
 async function refreshCryptoConversationMode() {
   activeProtocolVersion=1;
   activeCryptoMode={protocolVersion:1,approvedByMe:false,approvedByPeer:false};
-  if(!cryptoV2Ready || !activeConversation) {
+  if(!activeConversation) {
     updateCryptoV2Controls();
+    updateSend();
+    return;
+  }
+  if(!cryptoV2Ready) {
+    try {
+      const mode=await api("/api/crypto/conversations/"+encodeURIComponent(activeConversation.id)+"/mode");
+      activeCryptoMode=mode;
+      activeProtocolVersion=Number(mode.protocolVersion||1);
+      if(activeProtocolVersion===2) {
+        cryptoV2StatusMessage="この会話は前方秘匿性v2です。このタブでは端末鍵を開けていないため送信・復号できません。端末を使用中のタブへ戻るか、先にそのタブを閉じてから再ログインしてください。";
+      }
+    } catch(error) {
+      activeProtocolVersion=1;
+      if(error.code!=="CRYPTO_V2_DISABLED") {
+        cryptoV2StatusMessage="前方秘匿性v2状態を確認できません: "+(error.code||"CRYPTO_STATUS_ERROR");
+      }
+    }
+    updateCryptoV2Controls();
+    updateSend();
     return;
   }
   try {
