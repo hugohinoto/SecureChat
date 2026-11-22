@@ -41,10 +41,10 @@ test("device-scoped crypto vault uses a single IndexedDB readwrite transaction",
     cryptoClient.indexOf("async function createDeviceVault"),
     cryptoClient.indexOf("async function api(")
   );
-  assert.match(creation, /db\\.transaction\\(VAULT_STORE, "readwrite"\\)/);
-  assert.match(creation, /store\\.get\\(userId\\)/);
-  assert.match(creation, /store\\.add\\(candidate\\)/);
-  assert.doesNotMatch(creation, /await readVault\\(userId\\)/);
+  assert.ok(creation.includes('db.transaction(VAULT_STORE, "readwrite")'));
+  assert.ok(creation.includes("store.get(userId)"));
+  assert.ok(creation.includes("store.add(candidate)"));
+  assert.equal(creation.includes("await readVault(userId)"), false);
 });
 
 test("device revocation controls are present and the current device cannot be revoked", () => {
@@ -52,5 +52,5 @@ test("device revocation controls are present and the current device cannot be re
   assert.match(html, /id="crypto-v2-devices-toggle"/);
   assert.match(html, /id="crypto-v2-device-list"/);
   assert.match(cryptoClient, /CRYPTO_CANNOT_REVOKE_CURRENT_DEVICE/);
-  assert.match(cryptoClient, /org\\.securechat\\.device_revoked/);
+  assert.ok(cryptoClient.includes("org.securechat.device_revoked"));
 });
