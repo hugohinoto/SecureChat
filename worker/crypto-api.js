@@ -301,8 +301,7 @@ const ALLOWED_TO_DEVICE_TYPES = new Set([
   "m.key.verification.mac",
   "m.key.verification.done",
   "m.secret.request",
-  "m.secret.send",
-  "org.securechat.device_revoked"
+  "m.secret.send"
 ]);
 
 async function sendToDevice(request, env, session, now) {
