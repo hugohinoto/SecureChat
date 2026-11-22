@@ -205,7 +205,9 @@ async function uploadKeys(request, env, session, now) {
   });
 }
 
-async function queryKeys(request, env, session) {
+async function queryKeys(request, env, session, now) {
+  const requesterDeviceId = requestDeviceId(request);
+  if (!await requireDevice(env, session.id, requesterDeviceId, now)) return json({ error: "CRYPTO_DEVICE_NOT_REGISTERED" }, 409);
   let body;
   try { body = await readBody(request); } catch (error) { return json({ error: error.message }, 400); }
   if (!validJsonObject(body.device_keys, 8000)) return json({ error: "CRYPTO_KEYS_QUERY_INVALID" }, 400);
@@ -259,22 +261,13 @@ async function claimKeys(request, env, session, now) {
         "SELECT 1 AS ok FROM crypto_devices WHERE user_id=? AND device_id=? AND revoked_at IS NULL"
       ).bind(target.id, deviceId).first();
       if (!device) continue;
-      let key = await env.DB.prepare(
-        "SELECT id, key_id, key_json FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND algorithm=? AND is_fallback=0 AND claimed_at IS NULL ORDER BY created_at, id LIMIT 1"
-      ).bind(target.id, deviceId, algorithm).first();
-      if (!key) {
-        key = await env.DB.prepare(
-          "SELECT id, key_id, key_json FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND algorithm=? AND is_fallback=1 AND claimed_at IS NULL ORDER BY created_at, id LIMIT 1"
-        ).bind(target.id, deviceId, algorithm).first();
-      }
-      if (!key) continue;
       const claimed = await env.DB.prepare(
-        "UPDATE crypto_one_time_keys SET claimed_at=?, claimed_by_user_id=?, claimed_by_device_id=? WHERE id=? AND claimed_at IS NULL"
-      ).bind(now, session.id, requesterDeviceId, key.id).run();
-      if (Number(claimed.meta?.changes || 0) !== 1) continue;
+        "UPDATE crypto_one_time_keys SET claimed_at=?, claimed_by_user_id=?, claimed_by_device_id=? WHERE id=(SELECT id FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND algorithm=? AND claimed_at IS NULL ORDER BY is_fallback ASC, created_at, id LIMIT 1) AND claimed_at IS NULL RETURNING key_id, key_json"
+      ).bind(now, session.id, requesterDeviceId, target.id, deviceId, algorithm).first();
+      if (!claimed) continue;
       let value;
-      try { value = JSON.parse(key.key_json); } catch { continue; }
-      oneTimeKeys[matrixId][deviceId] = { [key.key_id]: value };
+      try { value = JSON.parse(claimed.key_json); } catch { continue; }
+      oneTimeKeys[matrixId][deviceId] = { [claimed.key_id]: value };
     }
   }
   return json({ one_time_keys: oneTimeKeys, failures: {} });
@@ -424,6 +417,8 @@ async function conversationCryptoMode(env, session, conversationId) {
 }
 
 async function enableConversationV2(request, env, session, conversationId, now) {
+  const requesterDeviceId = requestDeviceId(request);
+  if (!await requireDevice(env, session.id, requesterDeviceId, now)) return json({ error: "CRYPTO_DEVICE_NOT_REGISTERED" }, 409);
   const context = await conversationContext(env, conversationId, session.id);
   if (!context) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
   const [self, peer] = await Promise.all([
@@ -529,7 +524,7 @@ export async function handleCryptoApi(request, env, session, { url, now = Date.n
     return json({ revoked: true, deviceId: targetDeviceId });
   }
   if (path === "/api/crypto/keys/upload" && method === "POST") return uploadKeys(request, env, session, now);
-  if (path === "/api/crypto/keys/query" && method === "POST") return queryKeys(request, env, session);
+  if (path === "/api/crypto/keys/query" && method === "POST") return queryKeys(request, env, session, now);
   if (path === "/api/crypto/keys/claim" && method === "POST") return claimKeys(request, env, session, now);
   if (path === "/api/crypto/to-device" && method === "POST") return sendToDevice(request, env, session, now);
   if (path === "/api/crypto/sync" && method === "GET") return syncInbox(request, env, session, now);
