@@ -33,3 +33,24 @@ test("UI clearly states that the current messaging prototype has no forward secr
   assert.match(html, /メッセージごとの鍵更新（前方秘匿性）は未対応/);
   assert.match(html, /機密情報の送信には使用しないでください/);
 });
+
+
+test("device-scoped crypto vault uses a single IndexedDB readwrite transaction", () => {
+  const cryptoClient = readFileSync(new URL("../public/crypto-v2.js", import.meta.url), "utf8");
+  const creation = cryptoClient.slice(
+    cryptoClient.indexOf("async function createDeviceVault"),
+    cryptoClient.indexOf("async function api(")
+  );
+  assert.match(creation, /db\\.transaction\\(VAULT_STORE, "readwrite"\\)/);
+  assert.match(creation, /store\\.get\\(userId\\)/);
+  assert.match(creation, /store\\.add\\(candidate\\)/);
+  assert.doesNotMatch(creation, /await readVault\\(userId\\)/);
+});
+
+test("device revocation controls are present and the current device cannot be revoked", () => {
+  const cryptoClient = readFileSync(new URL("../public/crypto-v2.js", import.meta.url), "utf8");
+  assert.match(html, /id="crypto-v2-devices-toggle"/);
+  assert.match(html, /id="crypto-v2-device-list"/);
+  assert.match(cryptoClient, /CRYPTO_CANNOT_REVOKE_CURRENT_DEVICE/);
+  assert.match(cryptoClient, /org\\.securechat\\.device_revoked/);
+});
