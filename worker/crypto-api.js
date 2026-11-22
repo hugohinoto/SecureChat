@@ -399,6 +399,29 @@ async function conversationContext(env, conversationId, userId) {
   return contact ? { peerId } : null;
 }
 
+async function conversationCryptoMode(env, session, conversationId) {
+  const context = await conversationContext(env, conversationId, session.id);
+  if (!context) return null;
+  const [mode, mine, peer] = await Promise.all([
+    env.DB.prepare(
+      "SELECT protocol_version, enabled_at FROM conversation_crypto_modes WHERE conversation_id=?"
+    ).bind(conversationId).first(),
+    env.DB.prepare(
+      "SELECT 1 AS approved FROM conversation_crypto_approvals WHERE conversation_id=? AND user_id=?"
+    ).bind(conversationId, session.id).first(),
+    env.DB.prepare(
+      "SELECT 1 AS approved FROM conversation_crypto_approvals WHERE conversation_id=? AND user_id=?"
+    ).bind(conversationId, context.peerId).first()
+  ]);
+  return {
+    protocolVersion: Number(mode?.protocol_version || 1),
+    enabledAt: Number(mode?.enabled_at || 0),
+    approvedByMe: !!mine,
+    approvedByPeer: !!peer,
+    pendingApproval: !mode && !!mine
+  };
+}
+
 async function enableConversationV2(request, env, session, conversationId, now) {
   const context = await conversationContext(env, conversationId, session.id);
   if (!context) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
@@ -410,12 +433,18 @@ async function enableConversationV2(request, env, session, conversationId, now) 
     return json({ error: "CRYPTO_V2_DEVICES_REQUIRED", message: "双方の端末で新しい暗号化デバイスを登録する必要があります。" }, 409);
   }
   await env.DB.prepare(
-    "INSERT OR IGNORE INTO conversation_crypto_modes (conversation_id, protocol_version, enabled_by_user_id, enabled_at) VALUES (?, 2, ?, ?)"
+    "INSERT OR IGNORE INTO conversation_crypto_approvals (conversation_id, user_id, approved_at) VALUES (?, ?, ?)"
   ).bind(conversationId, session.id, now).run();
-  const mode = await env.DB.prepare(
-    "SELECT protocol_version, enabled_at FROM conversation_crypto_modes WHERE conversation_id=?"
-  ).bind(conversationId).first();
-  return json({ protocolVersion: Number(mode?.protocol_version || 1), enabledAt: Number(mode?.enabled_at || 0) });
+  const approvals = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM conversation_crypto_approvals WHERE conversation_id=? AND user_id IN (?, ?)"
+  ).bind(conversationId, session.id, context.peerId).first();
+  if (Number(approvals?.count || 0) === 2) {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO conversation_crypto_modes (conversation_id, protocol_version, enabled_by_user_id, enabled_at) VALUES (?, 2, ?, ?)"
+    ).bind(conversationId, session.id, now).run();
+  }
+  const result = await conversationCryptoMode(env, session, conversationId);
+  return json(result || { protocolVersion: 1 });
 }
 
 async function sendRoomMessage(request, env, session, conversationId, now) {
@@ -471,12 +500,8 @@ export async function handleCryptoApi(request, env, session, { url, now = Date.n
   if (path === "/api/crypto/sync/ack" && method === "POST") return acknowledgeInbox(request, env, session);
   const modeMatch = path.match(/^\/api\/crypto\/conversations\/([a-f0-9-]{36})\/mode$/i);
   if (modeMatch && method === "GET") {
-    const context = await conversationContext(env, modeMatch[1], session.id);
-    if (!context) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
-    const row = await env.DB.prepare(
-      "SELECT protocol_version, enabled_at FROM conversation_crypto_modes WHERE conversation_id=?"
-    ).bind(modeMatch[1]).first();
-    return json({ protocolVersion: Number(row?.protocol_version || 1), enabledAt: Number(row?.enabled_at || 0) });
+    const result = await conversationCryptoMode(env, session, modeMatch[1]);
+    return result ? json(result) : json({ error: "CONVERSATION_NOT_FOUND" }, 404);
   }
   if (modeMatch && method === "POST") return enableConversationV2(request, env, session, modeMatch[1], now);
   const messageMatch = path.match(/^\/api\/crypto\/conversations\/([a-f0-9-]{36})\/messages$/i);
