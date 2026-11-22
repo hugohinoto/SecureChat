@@ -352,20 +352,51 @@ export async function syncCryptoV2(userId) {
     const context = machines.get(key);
     if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
     const data = await api("/api/crypto/sync", { deviceId: context.deviceId });
-    const events = (data.events || []).map(item => {
-      if (!item?.event || typeof item.id !== "string") return null;
-      return {
+    const events = [];
+    const revokedConversations = [];
+    for (const item of data.events || []) {
+      if (!item?.event || typeof item.id !== "string") continue;
+      if (item.event.type === "org.securechat.device_revoked") {
+        const conversationId = item.event.content?.conversation_id;
+        if (typeof conversationId === "string" && /^[a-f0-9-]{36}$/i.test(conversationId)) {
+          revokedConversations.push(conversationId);
+        }
+        continue;
+      }
+      events.push({
         event_id: "$" + item.id.replace(/-/g, ""),
         type: item.event.type,
         sender: item.event.sender,
         origin_server_ts: Number(item.event.origin_server_ts || item.event.created_at || Date.now()),
         content: item.event.content
-      };
-    }).filter(Boolean);
+      });
+    }
+    // A revocation notification invalidates every surviving participant's
+    // active Megolm sender session. The next send must query devices again and
+    // distribute a fresh room key only to the still-authorized device set.
+    for (const conversationId of new Set(revokedConversations)) {
+      await withRoomLock(conversationId, async () => {
+        const room = roomId(conversationId);
+        try {
+          await context.machine.invalidateGroupSession(room);
+        } finally {
+          room.free();
+        }
+      });
+    }
+    if (revokedConversations.length) {
+      await context.machine.markAllTrackedUsersAsDirty();
+    }
     const counts = new Map([["signed_curve25519", Number(data.one_time_key_counts?.signed_curve25519 || 0)]]);
+    const unusedFallbackKeys = new Set(data.unused_fallback_key_types || []);
     const deviceLists = new DeviceLists([], []);
     try {
-      await context.machine.receiveSyncChanges(JSON.stringify(events), deviceLists, counts);
+      await context.machine.receiveSyncChanges(
+        JSON.stringify(events),
+        deviceLists,
+        counts,
+        unusedFallbackKeys
+      );
     } finally {
       deviceLists.free();
     }
