@@ -239,6 +239,8 @@ async function queryKeys(request, env, session) {
 }
 
 async function claimKeys(request, env, session, now) {
+  const requesterDeviceId = requestDeviceId(request);
+  if (!await requireDevice(env, session.id, requesterDeviceId, now)) return json({ error: "CRYPTO_DEVICE_NOT_REGISTERED" }, 409);
   let body;
   try { body = await readBody(request); } catch (error) { return json({ error: error.message }, 400); }
   if (!validJsonObject(body.one_time_keys, 8000)) return json({ error: "CRYPTO_KEYS_CLAIM_INVALID" }, 400);
@@ -268,7 +270,7 @@ async function claimKeys(request, env, session, now) {
       if (!key) continue;
       const claimed = await env.DB.prepare(
         "UPDATE crypto_one_time_keys SET claimed_at=?, claimed_by_user_id=?, claimed_by_device_id=? WHERE id=? AND claimed_at IS NULL"
-      ).bind(now, session.id, requestDeviceId(request), key.id).run();
+      ).bind(now, session.id, requesterDeviceId, key.id).run();
       if (Number(claimed.meta?.changes || 0) !== 1) continue;
       let value;
       try { value = JSON.parse(key.key_json); } catch { continue; }
@@ -431,8 +433,11 @@ async function sendRoomMessage(request, env, session, conversationId, now) {
       body.encrypted_event.algorithm !== "m.megolm.v1.aes-sha2" ||
       typeof body.encrypted_event.ciphertext !== "string" ||
       typeof body.encrypted_event.session_id !== "string" ||
-      !/^[A-Za-z0-9_-]{40,64}$/.test(body.encrypted_event.session_id) ||
-      !Number.isSafeInteger(body.encrypted_event.message_index) || body.encrypted_event.message_index < 0) {
+      !/^[A-Za-z0-9_-]{8,128}$/.test(body.encrypted_event.session_id) ||
+      typeof body.encrypted_event.sender_key !== "string" ||
+      !/^[A-Za-z0-9_-]{43}$/.test(body.encrypted_event.sender_key) ||
+      typeof body.encrypted_event.device_id !== "string" ||
+      !validDeviceId(body.encrypted_event.device_id)) {
     return json({ error: "CRYPTO_ENVELOPE_INVALID" }, 400);
   }
   const encoded = JSON.stringify(body.encrypted_event);
