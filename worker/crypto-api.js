@@ -471,7 +471,8 @@ async function enableConversationV2(request, env, session, conversationId, now) 
 
 async function sendRoomMessage(request, env, session, conversationId, now) {
   const deviceId = requestDeviceId(request);
-  if (!await requireDevice(env, session.id, deviceId, now)) return json({ error: "CRYPTO_DEVICE_NOT_REGISTERED" }, 409);
+  const senderDevice = await requireDevice(env, session.id, deviceId, now);
+  if (!senderDevice) return json({ error: "CRYPTO_DEVICE_NOT_REGISTERED" }, 409);
   const context = await conversationContext(env, conversationId, session.id);
   if (!context) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
   const mode = await env.DB.prepare(
@@ -491,6 +492,14 @@ async function sendRoomMessage(request, env, session, conversationId, now) {
       body.encrypted_event.device_id !== requestDeviceId(request) ||
       !validDeviceId(body.encrypted_event.device_id)) {
     return json({ error: "CRYPTO_ENVELOPE_INVALID" }, 400);
+  }
+  let registeredDeviceKeys;
+  try { registeredDeviceKeys = JSON.parse(senderDevice.device_keys_json); } catch {
+    return json({ error: "CRYPTO_DEVICE_CORRUPT" }, 503);
+  }
+  const registeredSenderKey = registeredDeviceKeys?.keys?.["curve25519:" + deviceId];
+  if (registeredSenderKey !== body.encrypted_event.sender_key) {
+    return json({ error: "CRYPTO_SENDER_KEY_MISMATCH", message: "暗号化イベントの送信鍵が登録済み端末の公開鍵と一致しません。" }, 400);
   }
   const encoded = JSON.stringify(body.encrypted_event);
   if (encoded.length < 80 || encoded.length > 12000) return json({ error: "CRYPTO_ENVELOPE_SIZE_INVALID" }, 400);
