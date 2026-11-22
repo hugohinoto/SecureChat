@@ -20,6 +20,9 @@ const VAULT_DB = "securechat-crypto-v2-vault";
 const VAULT_STORE = "devices";
 const DEVICE_HEADER = "X-SecureChat-Device";
 const machines = new Map();
+const initializers = new Map();
+const roomLocks = new Map();
+const syncLocks = new Map();
 
 function toBase64(bytes) {
   let binary = "";
@@ -266,38 +269,77 @@ async function flushOutgoing(context) {
   for (const request of requests) await processOutgoingRequest(context, request);
 }
 
+async function withRoomLock(roomKey, callback) {
+  const previous = roomLocks.get(roomKey) || Promise.resolve();
+  let release;
+  const current = new Promise(resolve => { release = resolve; });
+  roomLocks.set(roomKey, previous.then(() => current));
+  await previous;
+  try {
+    return await callback();
+  } finally {
+    release();
+    if (roomLocks.get(roomKey) === current) roomLocks.delete(roomKey);
+  }
+}
+
+async function withSyncLock(userKey, callback) {
+  const previous = syncLocks.get(userKey) || Promise.resolve();
+  let release;
+  const current = new Promise(resolve => { release = resolve; });
+  syncLocks.set(userKey, previous.then(() => current));
+  await previous;
+  try {
+    return await callback();
+  } finally {
+    release();
+    if (syncLocks.get(userKey) === current) syncLocks.delete(userKey);
+  }
+}
+
 export async function initializeCryptoV2(options) {
   const userId = String(options.userId || "").toLowerCase();
   if (!/^[a-z0-9_]{3,32}$/.test(userId)) throw cryptoError("CRYPTO_USER_ID_INVALID", "ユーザーIDが不正です。");
-  if (typeof options.authorizeDevice !== "function" || !options.signingPrivateKey) {
+  if (typeof options.internalUserId !== "string" ||
+      typeof options.authorizeDevice !== "function" || !options.signingPrivateKey) {
     throw cryptoError("CRYPTO_IDENTITY_REQUIRED", "アカウント本人確認鍵を読み込めません。");
   }
   if (machines.has(userId)) return machines.get(userId);
-  await initAsync();
-  const vault = await createDeviceVault(userId);
-  const machine = await OlmMachine.initialize(
-    new UserId(matrixUserId(userId)),
-    new DeviceId(vault.deviceId),
-    vault.storeName,
-    vault.storePassphrase
-  );
-  const context = {
-    userId,
-    matrixUserId: matrixUserId(userId),
-    deviceId: vault.deviceId,
-    signingPrivateKey: options.signingPrivateKey,
-    authorizeDevice: options.authorizeDevice,
-    machine
-  };
-  machines.set(userId, context);
+  if (initializers.has(userId)) return initializers.get(userId);
+  const initializer = (async () => {
+    await initAsync();
+    const vault = await createDeviceVault(userId);
+    const machine = await OlmMachine.initialize(
+      new UserId(matrixUserId(userId)),
+      new DeviceId(vault.deviceId),
+      vault.storeName,
+      vault.storePassphrase
+    );
+    const context = {
+      userId,
+      internalUserId: options.internalUserId,
+      matrixUserId: matrixUserId(userId),
+      deviceId: vault.deviceId,
+      signingPrivateKey: options.signingPrivateKey,
+      authorizeDevice: options.authorizeDevice,
+      machine
+    };
+    machines.set(userId, context);
+    try {
+      await flushOutgoing(context);
+    } catch (error) {
+      machines.delete(userId);
+      machine.close();
+      throw error;
+    }
+    return context;
+  })();
+  initializers.set(userId, initializer);
   try {
-    await flushOutgoing(context);
-  } catch (error) {
-    machines.delete(userId);
-    machine.close();
-    throw error;
+    return await initializer;
+  } finally {
+    initializers.delete(userId);
   }
-  return context;
 }
 
 export function cryptoDeviceId(userId) {
@@ -317,11 +359,16 @@ export async function syncCryptoV2(userId) {
   const data = await api("/api/crypto/sync", { deviceId: context.deviceId });
   const events = (data.events || []).map(item => item.event).filter(Boolean);
   const counts = new Map([["signed_curve25519", Number(data.one_time_key_counts?.signed_curve25519 || 0)]]);
-  await context.machine.receiveSyncChanges(
-    JSON.stringify(events),
-    new DeviceLists([], []),
-    counts
-  );
+  const deviceLists = new DeviceLists([], []);
+  try {
+    await context.machine.receiveSyncChanges(
+      JSON.stringify(events),
+      deviceLists,
+      counts
+    );
+  } finally {
+    deviceLists.free();
+  }
   const eventIds = (data.events || []).map(item => item.id).filter(Boolean);
   if (eventIds.length) {
     await api("/api/crypto/sync/ack", {
@@ -353,26 +400,36 @@ function roomId(conversationId) {
 async function prepareRoom(context, conversationId, peerUserId) {
   const room = roomId(conversationId);
   const roomSettings = new RoomSettings();
-  roomSettings.algorithm = EncryptionAlgorithm.MegolmV1AesSha2;
-  roomSettings.sessionRotationPeriodMessages = 100;
-  roomSettings.sessionRotationPeriodMs = 60 * 60 * 1000;
-  await context.machine.setRoomSettings(room, roomSettings);
-  roomSettings.free();
+  try {
+    roomSettings.algorithm = EncryptionAlgorithm.MegolmV1AesSha2;
+    roomSettings.onlyAllowTrustedDevices = true;
+    roomSettings.sessionRotationPeriodMessages = 100;
+    roomSettings.sessionRotationPeriodMs = 60 * 60 * 1000;
+    await context.machine.setRoomSettings(room, roomSettings);
+  } finally {
+    roomSettings.free();
+  }
 
   await registerAndTrustParticipants(context, peerUserId);
 
   const settings = new EncryptionSettings();
-  settings.algorithm = EncryptionAlgorithm.MegolmV1AesSha2;
-  settings.rotationPeriod = 60n * 60n * 1_000_000n;
-  settings.rotationPeriodMessages = 100n;
-  settings.sharingStrategy = CollectStrategy.onlyTrustedDevices();
-  const requests = await context.machine.shareRoomKey(
-    room,
-    [new UserId(context.matrixUserId), new UserId(matrixUserId(peerUserId))],
-    settings
-  );
-  for (const request of requests) await processOutgoingRequest(context, request);
-  settings.free();
+  const sharingStrategy = CollectStrategy.onlyTrustedDevices();
+  try {
+    settings.algorithm = EncryptionAlgorithm.MegolmV1AesSha2;
+    settings.rotationPeriod = 60n * 60n * 1_000_000n;
+    settings.rotationPeriodMessages = 100n;
+    settings.sharingStrategy = sharingStrategy;
+    const requests = await context.machine.shareRoomKey(
+      room,
+      [new UserId(context.matrixUserId), new UserId(matrixUserId(peerUserId))],
+      settings
+    );
+    for (const request of requests) await processOutgoingRequest(context, request);
+  } finally {
+    sharingStrategy.free();
+    settings.free();
+    room.free();
+  }
   await flushOutgoing(context);
 }
 
@@ -385,7 +442,9 @@ export async function approveAndPrepareConversation(userId, conversationId, peer
     method: "POST",
     body: {}
   });
-  if (mode.protocolVersion === 2) await prepareRoom(context, conversationId, peerUserId);
+  if (mode.protocolVersion === 2) {
+    await withRoomLock(conversationId, () => prepareRoom(context, conversationId, peerUserId));
+  }
   return mode;
 }
 
@@ -393,20 +452,27 @@ export async function encryptConversationMessage(userId, conversationId, peerUse
   const context = machines.get(String(userId).toLowerCase());
   if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
   await syncCryptoV2(userId);
-  await prepareRoom(context, conversationId, peerUserId);
-  const encryptedJson = await context.machine.encryptRoomEvent(
-    roomId(conversationId),
-    "m.room.message",
-    JSON.stringify({ msgtype: "m.text", body: text })
-  );
-  let encryptedEvent;
-  try { encryptedEvent = JSON.parse(encryptedJson); }
-  catch { throw cryptoError("CRYPTO_ENVELOPE_INVALID", "暗号SDKのメッセージ形式を確認できません。"); }
-  const result = await api(
-    "/api/crypto/conversations/" + encodeURIComponent(conversationId) + "/messages",
-    { deviceId: context.deviceId, method: "POST", body: { encrypted_event: encryptedEvent } }
-  );
-  return result;
+  return withRoomLock(conversationId, async () => {
+    await prepareRoom(context, conversationId, peerUserId);
+    const room = roomId(conversationId);
+    try {
+      const encryptedJson = await context.machine.encryptRoomEvent(
+        room,
+        "m.room.message",
+        JSON.stringify({ msgtype: "m.text", body: text })
+      );
+      let encryptedEvent;
+      try { encryptedEvent = JSON.parse(encryptedJson); }
+      catch { throw cryptoError("CRYPTO_ENVELOPE_INVALID", "暗号SDKのメッセージ形式を確認できません。"); }
+      const result = await api(
+        "/api/crypto/conversations/" + encodeURIComponent(conversationId) + "/messages",
+        { deviceId: context.deviceId, method: "POST", body: { encrypted_event: encryptedEvent } }
+      );
+      return result;
+    } finally {
+      room.free();
+    }
+  });
 }
 
 export async function decryptConversationMessage(userId, conversationId, expectedPeerUserId, message) {
@@ -415,7 +481,7 @@ export async function decryptConversationMessage(userId, conversationId, expecte
   let encryptedEvent;
   try { encryptedEvent = JSON.parse(message.ciphertext); }
   catch { throw cryptoError("CRYPTO_ENVELOPE_INVALID", "保存された暗号化メッセージの形式が不正です。"); }
-  const senderUserId = message.sender_user_id === userId
+  const senderUserId = message.sender_user_id === context.internalUserId
     ? context.matrixUserId
     : matrixUserId(expectedPeerUserId);
   const room = roomId(conversationId);
@@ -427,37 +493,44 @@ export async function decryptConversationMessage(userId, conversationId, expecte
     room_id: room.toString(),
     content: encryptedEvent
   };
-  const decrypted = await context.machine.decryptRoomEvent(
-    JSON.stringify(event),
-    room,
-    new DecryptionSettings(TrustRequirement.Untrusted)
-  );
+  const settings = new DecryptionSettings(TrustRequirement.Untrusted);
   try {
-    if (decrypted.sender.toString() !== senderUserId) {
-      throw cryptoError("CRYPTO_SENDER_MISMATCH", "暗号化イベントの送信者が会話参加者と一致しません。");
+    const decrypted = await context.machine.decryptRoomEvent(JSON.stringify(event), room, settings);
+    try {
+      if (decrypted.sender.toString() !== senderUserId) {
+        throw cryptoError("CRYPTO_SENDER_MISMATCH", "暗号化イベントの送信者が会話参加者と一致しません。");
+      }
+      const senderDeviceId = decrypted.senderDevice?.toString();
+      if (!senderDeviceId || senderDeviceId !== message.sender_device_id ||
+          encryptedEvent.device_id !== message.sender_device_id) {
+        throw cryptoError("CRYPTO_SENDER_DEVICE_MISMATCH", "暗号化メッセージの送信端末IDが一致しません。");
+      }
+      if (typeof encryptedEvent.sender_key !== "string" ||
+          decrypted.senderCurve25519Key !== encryptedEvent.sender_key) {
+        throw cryptoError("CRYPTO_SENDER_KEY_MISMATCH", "暗号化メッセージの送信公開鍵が一致しません。");
+      }
+      const senderDevice = await context.machine.getDevice(
+        new UserId(senderUserId),
+        new DeviceId(senderDeviceId)
+      );
+      if (!senderDevice) throw cryptoError("CRYPTO_SENDER_DEVICE_UNKNOWN", "送信端末が登録されていません。");
+      let trusted = false;
+      try { trusted = senderDevice.isLocallyTrusted() || senderDevice.isCrossSigningTrusted(); }
+      finally { senderDevice.free(); }
+      if (!trusted) {
+        throw cryptoError("CRYPTO_SENDER_DEVICE_UNVERIFIED", "送信端末の本人確認ができていません。端末指紋を確認するまで本文を表示しません。");
+      }
+      const payload = JSON.parse(decrypted.event);
+      if (payload.type !== "m.room.message" || typeof payload.content?.body !== "string") {
+        throw cryptoError("CRYPTO_MESSAGE_FORMAT_INVALID", "復号したメッセージ形式が不正です。");
+      }
+      return payload.content.body;
+    } finally {
+      decrypted.free();
     }
-    const senderDeviceId = decrypted.senderDevice?.toString();
-    if (!senderDeviceId) {
-      throw cryptoError("CRYPTO_SENDER_DEVICE_UNKNOWN", "送信端末を特定できません。安全のため表示しません。");
-    }
-    const senderDevice = await context.machine.getDevice(
-      new UserId(senderUserId),
-      new DeviceId(senderDeviceId)
-    );
-    if (!senderDevice) throw cryptoError("CRYPTO_SENDER_DEVICE_UNKNOWN", "送信端末が登録されていません。");
-    let trusted = false;
-    try { trusted = senderDevice.isLocallyTrusted() || senderDevice.isCrossSigningTrusted(); }
-    finally { senderDevice.free(); }
-    if (!trusted) {
-      throw cryptoError("CRYPTO_SENDER_DEVICE_UNVERIFIED", "送信端末の本人確認ができていません。端末指紋を確認するまで本文を表示しません。");
-    }
-    const payload = JSON.parse(decrypted.event);
-    if (payload.type !== "m.room.message" || typeof payload.content?.body !== "string") {
-      throw cryptoError("CRYPTO_MESSAGE_FORMAT_INVALID", "復号したメッセージ形式が不正です。");
-    }
-    return payload.content.body;
   } finally {
-    decrypted.free();
+    settings.free();
+    room.free();
   }
 }
 
