@@ -5,7 +5,7 @@
 The repository now contains a first integrated v2 implementation behind a server-side feature flag:
 
 - Pinned `@matrix-org/matrix-sdk-crypto-wasm@19.0.1` and an esbuild bundle pipeline for a self-hosted browser WASM asset.
-- Device-scoped OlmMachine initialization and encrypted IndexedDB-backed SDK state, with a unique device ID per browser profile.
+- Device-scoped OlmMachine initialization and encrypted IndexedDB-backed SDK state, with a unique device ID per browser profile. Device ID creation is atomic across tabs. Web Locks grants one active v2 owner per account/browser profile; unsupported browsers and concurrent tabs fail closed rather than opening the same persistent ratchet store twice. Stateful SDK operations are serialized per device.
 - Account-root-signed device authorization, server-side device registry, signed/one-time key upload and claim, and opaque to-device inbox/ack transport.
 - Room-key sharing via the SDK with `OnlyTrustedDevices`, one-hour / 100-message session rotation configuration, and a Megolm-encrypted message envelope.
 - Explicit `protocol_version` on stored messages, a bilateral account approval gate for conversation cutover, and a Worker-side prohibition on sending v1 messages once a conversation is v2.
