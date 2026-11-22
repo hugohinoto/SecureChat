@@ -378,6 +378,11 @@ async function initializeCryptoV2IfEnabled() {
     const deviceState=await cryptoV2Module.getCryptoDeviceState(currentUser.userId);
     cryptoV2StatusMessage="この端末のv2暗号鍵を準備しました。端末ID: "+deviceState.deviceId;
   } catch(error) {
+    if(cryptoV2Module?.closeCryptoV2 && currentUser) {
+      try { await cryptoV2Module.closeCryptoV2(currentUser.userId); } catch {}
+    }
+    cryptoV2Module=null;
+    cryptoV2Ready=false;
     if(error.code==="CRYPTO_V2_DISABLED") {
       cryptoV2StatusMessage="前方秘匿性v2は現在無効です（安全確認中）。";
     } else {
