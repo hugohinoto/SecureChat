@@ -53,6 +53,7 @@ class RevokeTestStatement {
   constructor(db, sql) { this.db=db; this.sql=sql; this.values=[]; }
   bind(...values) { this.values=values; return this; }
   async first() {
+    if (this.sql.includes("SELECT revoked_at FROM crypto_devices")) return { revoked_at: null };
     if (this.sql.includes("SELECT device_id, device_keys_json FROM crypto_devices")) {
       return {
         device_id: this.values[1],
@@ -75,7 +76,7 @@ class RevokeTestStatement {
   }
   async run() {
     this.db.statements.push({ sql: this.sql, values: this.values });
-    return { meta: { changes: 1 } };
+    return { meta: { changes: this.sql.includes("INSERT OR IGNORE INTO crypto_to_device_inbox") ? 2 : 1 } };
   }
 }
 
@@ -104,7 +105,7 @@ test("device revocation rejects revoking the current device", async () => {
   assert.equal(db.batches.length, 0);
 });
 
-test("device revocation queues per-conversation invalidation to all surviving devices", async () => {
+test("device revocation uses one set-based query to notify every surviving account device", async () => {
   const db = new RevokeTestDB();
   const response = await handleCryptoApi(
     new Request("https://securechat.invalid/api/crypto/devices/revoked-device-0001/revoke", {
@@ -121,15 +122,18 @@ test("device revocation queues per-conversation invalidation to all surviving de
     deviceId: "revoked-device-0001",
     notifiedDevices: 2
   });
-  assert.equal(db.batches.length, 2);
-  const notificationSql = db.batches[1].map(statement => statement.sql);
-  assert.equal(notificationSql.length, 2);
-  assert.ok(notificationSql.every(sql => sql.includes("'org.securechat.device_revoked'")));
-  const recipients = db.batches[1].map(statement => statement.values.slice(1, 3));
-  assert.deepEqual(recipients, [
-    ["user-internal", "current-device-01"],
-    ["peer-internal", "peer-device-0001"]
-  ]);
+  assert.equal(db.batches.length, 1);
+  const notification = db.statements.find(statement =>
+    statement.sql.includes("INSERT OR IGNORE INTO crypto_to_device_inbox")
+  );
+  assert.ok(notification);
+  assert.ok(notification.sql.includes("'org.securechat.device_revoked'"));
+  assert.ok(notification.sql.includes("FROM crypto_devices recipient"));
+  assert.ok(notification.sql.includes("UNION"));
+  assert.equal(notification.values[0], "user-internal");
+  assert.equal(notification.values[1], "current-device-01");
+  assert.equal(notification.values[2], "@alice_01:securechat.invalid");
+  assert.equal(notification.values[3], "revoked-device-0001");
 });
 
 
