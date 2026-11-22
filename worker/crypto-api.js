@@ -105,7 +105,7 @@ async function authorizedContact(env, callerId, targetUserId) {
 async function requireDevice(env, userId, deviceId, now) {
   if (!validDeviceId(deviceId)) return null;
   const row = await env.DB.prepare(
-    "SELECT device_id FROM crypto_devices WHERE user_id=? AND device_id=? AND revoked_at IS NULL"
+    "SELECT device_id, device_keys_json FROM crypto_devices WHERE user_id=? AND device_id=? AND revoked_at IS NULL"
   ).bind(userId, deviceId).first();
   if (!row) return null;
   await env.DB.prepare(
@@ -301,7 +301,8 @@ const ALLOWED_TO_DEVICE_TYPES = new Set([
   "m.key.verification.mac",
   "m.key.verification.done",
   "m.secret.request",
-  "m.secret.send"
+  "m.secret.send",
+  "org.securechat.device_revoked"
 ]);
 
 async function sendToDevice(request, env, session, now) {
@@ -534,8 +535,12 @@ export async function handleCryptoApi(request, env, session, { url, now = Date.n
   }
   const revokeDeviceMatch = path.match(/^\/api\/crypto\/devices\/([A-Za-z0-9._=-]{8,64})\/revoke$/);
   if (revokeDeviceMatch && method === "POST") {
+    const senderDeviceId = requestDeviceId(request);
+    if (!await requireDevice(env, session.id, senderDeviceId, now)) {
+      return json({ error: "CRYPTO_DEVICE_NOT_REGISTERED" }, 409);
+    }
     const targetDeviceId = revokeDeviceMatch[1];
-    if (targetDeviceId === requestDeviceId(request)) {
+    if (targetDeviceId === senderDeviceId) {
       return json({ error: "CRYPTO_CANNOT_REVOKE_CURRENT_DEVICE", message: "現在使用中の端末は、別の端末またはアカウント回復手順から失効してください。" }, 409);
     }
     const update = await env.DB.prepare(
@@ -546,7 +551,35 @@ export async function handleCryptoApi(request, env, session, { url, now = Date.n
       env.DB.prepare("DELETE FROM crypto_one_time_keys WHERE user_id=? AND device_id=?").bind(session.id, targetDeviceId),
       env.DB.prepare("DELETE FROM crypto_to_device_inbox WHERE recipient_user_id=? AND recipient_device_id=?").bind(session.id, targetDeviceId)
     ]);
-    return json({ revoked: true, deviceId: targetDeviceId });
+
+    // Tell every surviving participant device to discard its outbound Megolm
+    // session. On its next send it must distribute a fresh room key without
+    // the revoked device in the current device query.
+    const conversations = await env.DB.prepare(
+      "SELECT mine.conversation_id, peer.user_id AS peer_user_id FROM conversation_members mine JOIN conversation_members peer ON peer.conversation_id=mine.conversation_id AND peer.user_id<>mine.user_id WHERE mine.user_id=?"
+    ).bind(session.id).all();
+    const statements = [];
+    for (const conversation of conversations.results || []) {
+      const recipients = await env.DB.prepare(
+        "SELECT device_id FROM crypto_devices WHERE revoked_at IS NULL AND ((user_id=? AND device_id<>?) OR user_id=?)"
+      ).bind(session.id, targetDeviceId, conversation.peer_user_id).all();
+      const content = JSON.stringify({
+        conversation_id: conversation.conversation_id,
+        revoked_device_id: targetDeviceId,
+        issued_at: now
+      });
+      const transactionId = "device-revoked:" + targetDeviceId + ":" + conversation.conversation_id;
+      for (const recipient of recipients.results || []) {
+        statements.push(env.DB.prepare(
+          "INSERT OR IGNORE INTO crypto_to_device_inbox (id, recipient_user_id, recipient_device_id, sender_user_id, sender_device_id, event_type, content_json, transaction_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, 'org.securechat.device_revoked', ?, ?, ?, ?)"
+        ).bind(crypto.randomUUID(),
+          recipient.user_id || (recipient.device_id === senderDeviceId ? session.id : conversation.peer_user_id),
+          recipient.device_id, session.id, senderDeviceId, content, transactionId + ":" + recipient.device_id,
+          now, now + TO_DEVICE_TTL_MS));
+      }
+    }
+    if (statements.length) await env.DB.batch(statements);
+    return json({ revoked: true, deviceId: targetDeviceId, notifiedDevices: statements.length });
   }
   if (path === "/api/crypto/keys/upload" && method === "POST") return uploadKeys(request, env, session, now);
   if (path === "/api/crypto/keys/query" && method === "POST") return queryKeys(request, env, session, now);
