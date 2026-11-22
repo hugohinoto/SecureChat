@@ -561,7 +561,7 @@ export async function handleCryptoApi(request, env, session, { url, now = Date.n
     const statements = [];
     for (const conversation of conversations.results || []) {
       const recipients = await env.DB.prepare(
-        "SELECT device_id FROM crypto_devices WHERE revoked_at IS NULL AND ((user_id=? AND device_id<>?) OR user_id=?)"
+        "SELECT user_id, device_id FROM crypto_devices WHERE revoked_at IS NULL AND ((user_id=? AND device_id<>?) OR user_id=?)"
       ).bind(session.id, targetDeviceId, conversation.peer_user_id).all();
       const content = JSON.stringify({
         conversation_id: conversation.conversation_id,
@@ -573,8 +573,7 @@ export async function handleCryptoApi(request, env, session, { url, now = Date.n
         statements.push(env.DB.prepare(
           "INSERT OR IGNORE INTO crypto_to_device_inbox (id, recipient_user_id, recipient_device_id, sender_user_id, sender_device_id, event_type, content_json, transaction_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, 'org.securechat.device_revoked', ?, ?, ?, ?)"
         ).bind(crypto.randomUUID(),
-          recipient.user_id || (recipient.device_id === senderDeviceId ? session.id : conversation.peer_user_id),
-          recipient.device_id, session.id, senderDeviceId, content, transactionId + ":" + recipient.device_id,
+          recipient.user_id, recipient.device_id, session.id, senderDeviceId, content, transactionId + ":" + recipient.device_id,
           now, now + TO_DEVICE_TTL_MS));
       }
     }
