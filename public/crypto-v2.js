@@ -674,12 +674,15 @@ export async function getCryptoDeviceState(userId) {
 
 export async function closeCryptoV2(userId) {
   const key = String(userId).toLowerCase();
-  await withMachineLock(key, async () => {
-    const context = machines.get(key);
-    if (context) {
-      machines.delete(key);
-      context.machine.close();
-    }
-  });
-  releaseDeviceOwnership(key);
+  try {
+    await withMachineLock(key, async () => {
+      const context = machines.get(key);
+      if (context) {
+        machines.delete(key);
+        context.machine.close();
+      }
+    });
+  } finally {
+    releaseDeviceOwnership(key);
+  }
 }
