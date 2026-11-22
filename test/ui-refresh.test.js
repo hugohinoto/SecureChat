@@ -54,3 +54,18 @@ test("device revocation controls are present and the current device cannot be re
   assert.match(cryptoClient, /CRYPTO_CANNOT_REVOKE_CURRENT_DEVICE/);
   assert.ok(cryptoClient.includes("org.securechat.device_revoked"));
 });
+
+
+test("crypto v2 requires an exclusive Web Lock for each browser-profile device", () => {
+  const cryptoClient = readFileSync(new URL("../public/crypto-v2.js", import.meta.url), "utf8");
+  assert.ok(cryptoClient.includes("globalThis.navigator?.locks"));
+  assert.ok(cryptoClient.includes('mode: "exclusive", ifAvailable: true'));
+  assert.ok(cryptoClient.includes("CRYPTO_DEVICE_ALREADY_OPEN_IN_ANOTHER_TAB"));
+  assert.ok(cryptoClient.includes("CRYPTO_CROSS_TAB_LOCK_UNAVAILABLE"));
+});
+
+test("v2 conversations cannot silently fall back to v1 in a tab without device ownership", () => {
+  assert.ok(app.includes('/api/crypto/conversations/"+encodeURIComponent(activeConversation.id)+"/mode'));
+  assert.ok(app.includes("このタブでは端末鍵を開けていないため送信・復号できません"));
+  assert.ok(app.includes("await closeCryptoV2Session()"));
+});
