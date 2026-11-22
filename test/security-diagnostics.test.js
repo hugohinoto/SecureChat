@@ -153,13 +153,26 @@ test("key rotation passes only after all encrypted rows use the active generatio
   assert.equal(result.checks.find(item=>item.id==="key-rotation").status,"ok");
 });
 
-test("forward secrecy and admin passkeys remain explicitly incomplete until implemented", async () => {
-  const result=await summarizeSecurityDiagnostics(environment());
-  assert.equal(result.checks.find(item=>item.id==="forward-secrecy").status,"critical");
+test("forward secrecy remains critical while the v2 flag is disabled", async () => {
+  const env=environment();
+  env.SECURECHAT_CRYPTO_V2_ENABLED="false";
+  const result=await summarizeSecurityDiagnostics(env);
+  const forward=result.checks.find(item=>item.id==="forward-secrecy");
+  assert.equal(forward.status,"critical");
+  assert.match(forward.detail,/機能フラグは無効/);
   assert.equal(result.checks.find(item=>item.id==="passkeys").status,"warning");
   const logs=result.checks.find(item=>item.id==="cloudflare-logs");
   assert.equal(logs.status,"warning");
   assert.equal(logs.complete,false);
+});
+
+test("forward secrecy remains critical even when the v2 flag is manually enabled", async () => {
+  const env=environment();
+  env.SECURECHAT_CRYPTO_V2_ENABLED="true";
+  const result=await summarizeSecurityDiagnostics(env);
+  const forward=result.checks.find(item=>item.id==="forward-secrecy");
+  assert.equal(forward.status,"critical");
+  assert.match(forward.detail,/独立レビュー/);
 });
 
 test("diagnostics cover SQL schema, indexes, migration history and runtime integrity", async () => {
@@ -183,7 +196,7 @@ test("a failed database check is reported and does not suppress later checks", a
   assert.ok(result.coverage.notCompleted>=1);
 });
 
-test("diagnostics include the multi-device backup and conversation read schema from migration 0011", async () => {
+test("diagnostics include the device-scoped ratchet schema from migration 0012", async () => {
   const result=await summarizeSecurityDiagnostics(environment());
   const missingSchema=result.checks.find(item=>item.id==="schema-inventory");
   const migration=result.checks.find(item=>item.id==="schema-migrations");
@@ -194,7 +207,15 @@ test("diagnostics include the multi-device backup and conversation read schema f
   assert.equal(indexes.status,"ok");
   assert.equal(foreignKeys.status,"ok");
   assert.ok(securityDiagnosticSchema.migrations.includes("0011_multi_device_identity_backup_and_reads.sql"));
-  assert.ok(securityDiagnosticSchema.tables.includes("conversation_reads"));
+  assert.ok(securityDiagnosticSchema.migrations.includes("0012_device_scoped_ratchet_transport.sql"));
+  for(const table of [
+    "conversation_reads","crypto_devices","crypto_one_time_keys","crypto_to_device_inbox",
+    "conversation_crypto_modes","conversation_crypto_approvals"
+  ]) assert.ok(securityDiagnosticSchema.tables.includes(table), "Missing table: "+table);
+  assert.ok(securityDiagnosticSchema.tables.includes("encrypted_messages"));
+  assert.ok(securityDiagnosticSchema.foreignKeys.some(([table,from,to,ref]) =>
+    table==="crypto_one_time_keys" && from==="device_id" && to==="crypto_devices" && ref==="device_id"
+  ));
 });
 
 test("missing required D1 columns are critical rather than passing", async () => {
