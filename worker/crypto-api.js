@@ -551,42 +551,77 @@ export async function handleCryptoApi(request, env, session, { url, now = Date.n
     if (targetDeviceId === senderDeviceId) {
       return json({ error: "CRYPTO_CANNOT_REVOKE_CURRENT_DEVICE", message: "現在使用中の端末は、別の端末またはアカウント回復手順から失効してください。" }, 409);
     }
-    const update = await env.DB.prepare(
-      "UPDATE crypto_devices SET revoked_at=?, updated_at=? WHERE user_id=? AND device_id=? AND revoked_at IS NULL"
-    ).bind(now, now, session.id, targetDeviceId).run();
-    if (Number(update.meta?.changes || 0) !== 1) return json({ error: "CRYPTO_DEVICE_NOT_FOUND" }, 404);
+    const target = await env.DB.prepare(
+      "SELECT revoked_at FROM crypto_devices WHERE user_id=? AND device_id=?"
+    ).bind(session.id, targetDeviceId).first();
+    if (!target) return json({ error: "CRYPTO_DEVICE_NOT_FOUND" }, 404);
+    if (target.revoked_at === null || target.revoked_at === undefined) {
+      await env.DB.prepare(
+        "UPDATE crypto_devices SET revoked_at=?, updated_at=? WHERE user_id=? AND device_id=? AND revoked_at IS NULL"
+      ).bind(now, now, session.id, targetDeviceId).run();
+    }
     await env.DB.batch([
       env.DB.prepare("DELETE FROM crypto_one_time_keys WHERE user_id=? AND device_id=?").bind(session.id, targetDeviceId),
       env.DB.prepare("DELETE FROM crypto_to_device_inbox WHERE recipient_user_id=? AND recipient_device_id=?").bind(session.id, targetDeviceId)
     ]);
 
-    // Tell every surviving participant device to discard its outbound Megolm
-    // session. On its next send it must distribute a fresh room key without
-    // the revoked device in the current device query.
-    const conversations = await env.DB.prepare(
-      "SELECT mine.conversation_id, peer.user_id AS peer_user_id FROM conversation_members mine JOIN conversation_members peer ON peer.conversation_id=mine.conversation_id AND peer.user_id<>mine.user_id WHERE mine.user_id=?"
-    ).bind(session.id).all();
-    const statements = [];
-    for (const conversation of conversations.results || []) {
-      const recipients = await env.DB.prepare(
-        "SELECT user_id, device_id FROM crypto_devices WHERE revoked_at IS NULL AND ((user_id=? AND device_id<>?) OR user_id=?)"
-      ).bind(session.id, targetDeviceId, conversation.peer_user_id).all();
-      const content = JSON.stringify({
-        conversation_id: conversation.conversation_id,
-        revoked_device_id: targetDeviceId,
-        issued_at: now
-      });
-      const transactionId = "device-revoked:" + targetDeviceId + ":" + conversation.conversation_id;
-      for (const recipient of recipients.results || []) {
-        statements.push(env.DB.prepare(
-          "INSERT OR IGNORE INTO crypto_to_device_inbox (id, recipient_user_id, recipient_device_id, sender_user_id, sender_device_id, event_type, content_json, transaction_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, 'org.securechat.device_revoked', ?, ?, ?, ?)"
-        ).bind(crypto.randomUUID(),
-          recipient.user_id, recipient.device_id, session.id, senderDeviceId, content, transactionId + ":" + recipient.device_id,
-          now, now + TO_DEVICE_TTL_MS));
-      }
-    }
-    if (statements.length) await env.DB.batch(statements);
-    return json({ revoked: true, deviceId: targetDeviceId, notifiedDevices: statements.length });
+    // Enqueue one server-originated invalidation event per surviving device
+    // across the affected account and its current conversation participants.
+    // The receiver invalidates all its chats with the affected account (or all
+    // chats on the affected account's own devices). This is set-based and
+    // avoids a conversation × device fan-out loop and oversized D1 batches.
+    const notification = await env.DB.prepare(`
+      INSERT OR IGNORE INTO crypto_to_device_inbox (
+        id, recipient_user_id, recipient_device_id, sender_user_id, sender_device_id,
+        event_type, content_json, transaction_id, created_at, expires_at
+      )
+      SELECT
+        lower(hex(randomblob(16))),
+        recipient.user_id,
+        recipient.device_id,
+        ?,
+        ?,
+        'org.securechat.device_revoked',
+        json_object(
+          'affected_user_id', ?,
+          'revoked_device_id', ?,
+          'issued_at', ?
+        ),
+        'device-revoked:' || ?,
+        ?,
+        ?
+      FROM crypto_devices recipient
+      WHERE recipient.revoked_at IS NULL
+        AND recipient.user_id IN (
+          SELECT peer.user_id
+          FROM conversation_members mine
+          JOIN conversation_members peer
+            ON peer.conversation_id=mine.conversation_id AND peer.user_id<>mine.user_id
+          WHERE mine.user_id=?
+          UNION
+          SELECT ?
+        )
+        AND NOT (recipient.user_id=? AND recipient.device_id=?)
+    `).bind(
+      session.id,
+      senderDeviceId,
+      matrixUserId(session.user_id),
+      targetDeviceId,
+      now,
+      targetDeviceId,
+      now,
+      now + TO_DEVICE_TTL_MS,
+      session.id,
+      session.id,
+      session.id,
+      targetDeviceId
+    ).run();
+    return json({
+      revoked: true,
+      deviceId: targetDeviceId,
+      notifiedDevices: Number(notification.meta?.changes || 0),
+      notificationQueuedAt: now
+    });
   }
   if (path === "/api/crypto/keys/upload" && method === "POST") return uploadKeys(request, env, session, now);
   if (path === "/api/crypto/keys/query" && method === "POST") return queryKeys(request, env, session, now);
