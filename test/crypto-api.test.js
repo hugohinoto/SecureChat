@@ -131,3 +131,28 @@ test("device revocation queues per-conversation invalidation to all surviving de
     ["peer-internal", "peer-device-0001"]
   ]);
 });
+
+
+test("clients cannot forge the server-only device revocation event", async () => {
+  const db = new RevokeTestDB();
+  const response = await handleCryptoApi(
+    new Request("https://securechat.invalid/api/crypto/to-device", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-SecureChat-Device": "current-device-01"
+      },
+      body: JSON.stringify({
+        event_type: "org.securechat.device_revoked",
+        transaction_id: "attacker-generated-event-01",
+        messages: { "@peer_01:securechat.invalid": { "peer-device-0001": { conversation_id: "11111111-1111-4111-8111-111111111111" } } }
+      })
+    }),
+    { DB: db, SECURECHAT_CRYPTO_V2_ENABLED: "true" },
+    { id: "user-internal", user_id: "alice_01" },
+    { url: new URL("https://securechat.invalid/api/crypto/to-device"), now: 1000 }
+  );
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error, "CRYPTO_TO_DEVICE_INVALID");
+  assert.equal(db.batches.length, 0);
+});
