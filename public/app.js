@@ -478,7 +478,7 @@ async function preserveLegacyLocalIdentity(saved,remote) {
   }
   const record={
     ...saved,privateKey:saved.privateKey,publicKey:saved.publicKey,
-    signingPrivateKey,signingPublicKey,peerPins:saved.peerPins||{},legacyLocalOnly:true
+    signingPrivateKey,signingPublicKey,peerPins:saved.peerPins||{},verifiedPeerPins:saved.verifiedPeerPins||{},legacyLocalOnly:true
   };
   // Save the non-exportable legacy ECDH key and its signer before contacting
   // the server, so a network interruption cannot strand the one-time upgrade.
@@ -547,7 +547,7 @@ async function ensureIdentity(password=null) {
       throw appError("IDENTITY_BACKUP_INVALID","バックアップの公開鍵がサーバー登録情報と一致しません。");
     }
     const {backupPayload,...restoredIdentity}=restored;
-    const record={...restoredIdentity,peerPins:saved?.peerPins||{}};
+    const record={...restoredIdentity,peerPins:saved?.peerPins||{},verifiedPeerPins:saved?.verifiedPeerPins||{}};
     await saveIdentity(currentUser.userId,record);
     setIdentityRecord(record);
     return;
@@ -564,7 +564,7 @@ async function ensureIdentity(password=null) {
         throw appError("IDENTITY_BACKUP_INVALID","バックアップの公開鍵がサーバー登録情報と一致しません。");
       }
       const {backupPayload,...restoredIdentity}=restored;
-      const record={...restoredIdentity,peerPins:{}};
+      const record={...restoredIdentity,peerPins:{},verifiedPeerPins:{}};
       await saveIdentity(currentUser.userId,record);setIdentityRecord(record);return;
     }
     const isLegacyLocalOnly=remote.identityMode==="legacy-local-only" || !remote.identitySigningPublicKey;
@@ -642,8 +642,12 @@ async function showPeerKeyChangeVerification(peerUserId,peer,previousSigningPubl
         throw appError("IDENTITY_PIN_CHANGED","保存済みの指紋が別の操作で更新されました。ページを再読み込みしてください。");
       }
       peerPins[peerUserId]=latest.identitySigningPublicKey;
-      await saveIdentity(currentUser.userId,{...ownRecord,peerPins});
+      const verifiedPeerPins={...(ownRecord?.verifiedPeerPins||{}),[peerUserId]:latest.identitySigningPublicKey};
+      await saveIdentity(currentUser.userId,{...ownRecord,peerPins,verifiedPeerPins});
+      activePeerFingerprintVerified=true;
+      activePeerSigningKey=latest.identitySigningPublicKey;
       el.fingerprint.textContent="署名鍵の指紋を別経路で照合して承認しました。\n相手: "+fingerprint+"\nこの承認はこの端末にだけ保存されます。";
+      updateCryptoV2Controls();
       activeKey=null;
       if(activeConversation?.peerUserId===peerUserId)await loadMessages(true);
       updateSend();
@@ -656,6 +660,42 @@ async function showPeerKeyChangeVerification(peerUserId,peer,previousSigningPubl
   el.fingerprint.append(heading,explanation,value,label,button,status);
   el.fingerprint.hidden=false;
 }
+function renderPeerFingerprintPanel(peerUserId,ownFingerprint,peerFingerprint,peer) {
+  const verified=activePeerFingerprintVerified;
+  el.fingerprint.replaceChildren();
+  const heading=document.createElement("strong");
+  heading.textContent="アカウント署名鍵の指紋";
+  const own=document.createElement("p");
+  own.textContent="あなた: "+ownFingerprint;
+  const remote=document.createElement("p");
+  remote.textContent="@"+peerUserId+": "+peerFingerprint;
+  const status=document.createElement("p");
+  status.textContent=verified
+    ? "別経路で確認済み（このブラウザーのみ）"
+    : "未確認 — 連絡先確認とは別に、電話・対面など別経路で照合してください";
+  const button=document.createElement("button");
+  button.type="button";
+  button.className="crypto-v2-button";
+  button.textContent=verified?"本人確認済み":"別経路で指紋を確認して信頼";
+  button.disabled=verified;
+  button.addEventListener("click",async()=>{
+    button.disabled=true;
+    try {
+      const success=await confirmPeerFingerprint(peerUserId,peer);
+      if(success) {
+        activePeerFingerprintVerified=true;
+        status.textContent="別経路で確認済み（このブラウザーのみ）";
+        button.textContent="本人確認済み";
+        updateCryptoV2Controls();
+      } else button.disabled=false;
+    } catch(error) {
+      showError(error);
+      button.disabled=false;
+    }
+  });
+  el.fingerprint.append(heading,own,remote,status,button);
+  el.fingerprint.hidden=false;
+}
 async function deriveKey(conversationId,peerUserId) {
   if(activeKey && activeConversation && activeConversation.id===conversationId)return activeKey;
   const peer=await api("/api/keys/"+encodeURIComponent(peerUserId));
@@ -663,10 +703,14 @@ async function deriveKey(conversationId,peerUserId) {
     throw appError("IDENTITY_KEY_LEGACY_FORMAT","相手の公開鍵は旧形式です。相手に元の端末でSecureChatを強制再読み込みしてからログインしてもらってください。元の端末のブラウザーデータを削除せず、旧形式鍵の移行完了後にもう一度接続してください。");
   }
   const signingKey=await crypto.subtle.importKey("raw",fromB64(peer.identitySigningPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]);
-  const proofValid=await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"},signingKey,fromB64(peer.identityKeySignature),identityProofMessage(peerUserId,peer.identityPublicKey));
-  if(!proofValid) throw appError("IDENTITY_KEY_SIGNATURE_INVALID","相手の公開鍵署名を検証できません。安全のため接続を中止しました。");
+  const proofValid=await crypto.subtle.verify(
+    {name:"ECDSA",hash:"SHA-256"},signingKey,fromB64(peer.identityKeySignature),
+    identityProofMessage(peerUserId,peer.identityPublicKey)
+  );
+  if(!proofValid)throw appError("IDENTITY_KEY_SIGNATURE_INVALID","相手の公開鍵署名を検証できません。安全のため接続を中止しました。");
   const ownRecord=await storedIdentity(currentUser.userId);
-  const peerPins=ownRecord?.peerPins||{};
+  const peerPins={...(ownRecord?.peerPins||{})};
+  const verifiedPeerPins={...(ownRecord?.verifiedPeerPins||{})};
   if(peerPins[peerUserId] && peerPins[peerUserId]!==peer.identitySigningPublicKey) {
     const previousSigningPublicKey=peerPins[peerUserId];
     let transitionValid=false;
@@ -685,20 +729,22 @@ async function deriveKey(conversationId,peerUserId) {
     }
     if(!transitionValid) {
       await showPeerKeyChangeVerification(peerUserId,peer,previousSigningPublicKey);
-      throw appError("IDENTITY_SIGNING_KEY_CHANGED","相手の署名鍵が以前の登録から変更されています。下の指紋を別経路で照合するまで接続を中止しています。");
+      throw appError("IDENTITY_SIGNING_KEY_CHANGED","相手の署名鍵が以前の登録から変更されています。新しい指紋を別経路で照合するまで接続を中止しています。");
     }
     peerPins[peerUserId]=peer.identitySigningPublicKey;
-    await saveIdentity(currentUser.userId,{...ownRecord,peerPins});
+    delete verifiedPeerPins[peerUserId];
+    await saveIdentity(currentUser.userId,{...ownRecord,peerPins,verifiedPeerPins});
   } else if(!peerPins[peerUserId]) {
     peerPins[peerUserId]=peer.identitySigningPublicKey;
-    await saveIdentity(currentUser.userId,{...ownRecord,peerPins});
+    await saveIdentity(currentUser.userId,{...ownRecord,peerPins,verifiedPeerPins});
   }
+  activePeerSigningKey=peer.identitySigningPublicKey;
+  activePeerFingerprintVerified=verifiedPeerPins[peerUserId]===peer.identitySigningPublicKey;
   const [ownFingerprint,peerFingerprint]=await Promise.all([
     publicKeyFingerprint(identitySigningPublicKey),
     publicKeyFingerprint(peer.identitySigningPublicKey)
   ]);
-  el.fingerprint.hidden=false;
-  el.fingerprint.textContent="署名付き公開鍵の指紋（SHA-256）\nあなた: "+ownFingerprint+"\n相手: "+peerFingerprint+"\n署名検証: 成功。初回接続時と指紋変更時は、必ず別の安全な経路で相手と照合してください。";
+  renderPeerFingerprintPanel(peerUserId,ownFingerprint,peerFingerprint,peer);
   const pub=await crypto.subtle.importKey("raw",fromB64(peer.identityPublicKey),{name:"ECDH",namedCurve:"P-256"},false,[]);
   const bits=await crypto.subtle.deriveBits({name:"ECDH",public:pub},identityPrivateKey,256);
   const material=await crypto.subtle.importKey("raw",bits,"HKDF",false,["deriveKey"]);
@@ -707,6 +753,7 @@ async function deriveKey(conversationId,peerUserId) {
     name:"HKDF",hash:"SHA-256",salt,
     info:new TextEncoder().encode("SecureChat E2EE prototype v1:"+conversationId)
   },material,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);
+  updateCryptoV2Controls();
   return activeKey;
 }
 async function encryptText(text,key) {
