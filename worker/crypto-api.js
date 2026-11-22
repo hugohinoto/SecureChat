@@ -67,8 +67,8 @@ async function verifyDeviceAuthorization(env, userId, deviceId, deviceKeys, sign
   const curve25519Key = deviceKeys.keys["curve25519:" + deviceId];
   const ed25519Key = deviceKeys.keys["ed25519:" + deviceId];
   if (typeof curve25519Key !== "string" || typeof ed25519Key !== "string" ||
-      !/^[A-Za-z0-9_-]{43}$/.test(curve25519Key) ||
-      !/^[A-Za-z0-9_-]{43}$/.test(ed25519Key)) return false;
+      !/^[A-Za-z0-9+/_-]{43}=?$/.test(curve25519Key) ||
+      !/^[A-Za-z0-9+/_-]{43}=?$/.test(ed25519Key)) return false;
   const signatureBytes = decodeBase64(signature, 64, 128);
   if (!signatureBytes) return false;
   const row = await env.DB.prepare(
@@ -187,7 +187,7 @@ async function uploadKeys(request, env, session, now) {
     if (separator < 1 || keyId.length > 160 ||
         !["signed_curve25519"].includes(keyId.slice(0, separator)) ||
         !validJsonObject(keyObject, 4096) ||
-        typeof keyObject.key !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(keyObject.key) ||
+        typeof keyObject.key !== "string" || !/^[A-Za-z0-9+/_-]{43}=?$/.test(keyObject.key) ||
         !validJsonObject(keyObject.signatures || {}, 2048)) {
       return json({ error: "CRYPTO_ONE_TIME_KEY_INVALID" }, 400);
     }
@@ -463,9 +463,9 @@ async function sendRoomMessage(request, env, session, conversationId, now) {
       body.encrypted_event.algorithm !== "m.megolm.v1.aes-sha2" ||
       typeof body.encrypted_event.ciphertext !== "string" ||
       typeof body.encrypted_event.session_id !== "string" ||
-      !/^[A-Za-z0-9_-]{8,128}$/.test(body.encrypted_event.session_id) ||
+      !/^[A-Za-z0-9+/_-]{8,128}$/.test(body.encrypted_event.session_id) ||
       typeof body.encrypted_event.sender_key !== "string" ||
-      !/^[A-Za-z0-9_-]{43}$/.test(body.encrypted_event.sender_key) ||
+      !/^[A-Za-z0-9+/_-]{43}=?$/.test(body.encrypted_event.sender_key) ||
       typeof body.encrypted_event.device_id !== "string" ||
       body.encrypted_event.device_id !== requestDeviceId(request) ||
       !validDeviceId(body.encrypted_event.device_id)) {
