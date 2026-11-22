@@ -19,20 +19,23 @@ const el = {
   securityDescription: $("#security-description"), securityTag: $("#security-tag"),
   composerHint: $("#composer-hint"), fingerprint: $("#key-fingerprint"),
   mobileBack: $("#mobile-back-button"),
-  unreadTotal: $("#unread-total"), notificationButton: $("#notification-enable-button")
+  unreadTotal: $("#unread-total"), notificationButton: $("#notification-enable-button"),
+  cryptoV2Approve: $("#crypto-v2-approve-button"), cryptoV2Status: $("#crypto-v2-status")
 };
 const MAX_MESSAGE_LENGTH = 2000;
 const DB_NAME = "securechat-local-keys";
 const STORE = "identity";
 let currentUser = null, authMode = "login", toastTimer = null, authTimer = null;
 let identityPrivateKey = null, identityPublicKey = null, identitySigningPublicKey = null;
-let activeConversation = null, activeKey = null, busy = false, refreshTimer = null, mobileView = "list";
+let activeConversation = null, activeKey = null, activeProtocolVersion = 1, cryptoV2Module = null, cryptoV2Ready = false, cryptoV2StatusMessage = "", busy = false, refreshTimer = null, mobileView = "list";
 const openingConversationPeers = new Set();
 let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", sidebarRefreshTick = 0;
 const displayedOtpCodes = new Map();
 const previousUnreadCounts = new Map();
 const originalDocumentTitle = document.title;
 let unreadCountsInitialized = false;
+let activeCryptoMode = { protocolVersion: 1, approvedByMe: false, approvedByPeer: false };
+let activePeerSigningKey = null, activePeerFingerprintVerified = false;
 
 function toast(message, duration = 3200) {
   el.toast.textContent = message;
@@ -257,6 +260,182 @@ function setIdentityRecord(record) {
   identityPublicKey=record.publicKey;
   identitySigningPublicKey=record.signingPublicKey;
 }
+function deviceAuthorizationMessage(userId,deviceId,curve25519Key,ed25519Key) {
+  return new TextEncoder().encode(
+    "SecureChat device authorization:v2\n"+
+    "@"+userId+":securechat.invalid\n"+deviceId+"\n"+
+    curve25519Key+"\n"+ed25519Key
+  );
+}
+async function verifiedAccountRoot(userId) {
+  if(userId===currentUser.userId)return {identitySigningPublicKey};
+  const peer=await api("/api/keys/"+encodeURIComponent(userId));
+  if(!peer.identitySigningPublicKey || !peer.identityKeySignature) {
+    throw appError("IDENTITY_KEY_LEGACY_FORMAT","相手の署名付きアカウント鍵がありません。");
+  }
+  const verifyKey=await crypto.subtle.importKey("raw",fromB64(peer.identitySigningPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]);
+  const proof=await crypto.subtle.verify(
+    {name:"ECDSA",hash:"SHA-256"},verifyKey,fromB64(peer.identityKeySignature),
+    identityProofMessage(userId,peer.identityPublicKey)
+  );
+  if(!proof)throw appError("IDENTITY_KEY_SIGNATURE_INVALID","相手のアカウント鍵署名が正しくありません。");
+  const ownRecord=await storedIdentity(currentUser.userId);
+  if(ownRecord?.verifiedPeerPins?.[userId]!==peer.identitySigningPublicKey) {
+    throw appError("IDENTITY_FINGERPRINT_NOT_VERIFIED","相手のアカウント指紋を別の安全な経路で確認してください。");
+  }
+  return peer;
+}
+async function authorizeCryptoDevice(matrixId,deviceId,deviceKeys,accountSignature) {
+  const match=typeof matrixId==="string" && matrixId.match(/^@([a-z0-9_]{3,32}):securechat\.invalid$/);
+  if(!match || typeof deviceId!=="string" || !deviceKeys ||
+     deviceKeys.user_id!==matrixId || deviceKeys.device_id!==deviceId) return false;
+  const userId=match[1];
+  let root;
+  try { root=await verifiedAccountRoot(userId); }
+  catch(error) {
+    if(error.code==="IDENTITY_FINGERPRINT_NOT_VERIFIED")return false;
+    throw error;
+  }
+  const curve=deviceKeys.keys?.["curve25519:"+deviceId];
+  const ed=deviceKeys.keys?.["ed25519:"+deviceId];
+  if(typeof curve!=="string" || typeof ed!=="string" ||
+     !/^[A-Za-z0-9_-]{43}$/.test(curve) || !/^[A-Za-z0-9_-]{43}$/.test(ed) ||
+     typeof accountSignature!=="string")return false;
+  const key=await crypto.subtle.importKey("raw",fromB64(root.identitySigningPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]);
+  return crypto.subtle.verify(
+    {name:"ECDSA",hash:"SHA-256"},key,fromB64(accountSignature),
+    deviceAuthorizationMessage(userId,deviceId,curve,ed)
+  );
+}
+async function confirmPeerFingerprint(peerUserId,peer) {
+  const fingerprint=await publicKeyFingerprint(peer.identitySigningPublicKey);
+  const supplied=window.prompt(
+    "@"+peerUserId+" の指紋を電話・対面など別の安全な経路で照合してください。\n\n"+
+    "表示された64桁のSHA-256指紋と完全一致した場合だけ入力してください。\n\n"+fingerprint
+  );
+  if(supplied===null)return false;
+  const normalized=supplied.toUpperCase().replace(/[^A-F0-9]/g,"");
+  const expected=fingerprint.replace(/[^A-F0-9]/g,"");
+  if(normalized.length!==64 || normalized!==expected) {
+    showError(appError("IDENTITY_FINGERPRINT_MISMATCH","指紋が一致しません。端末を信頼済みにしていません。"));
+    return false;
+  }
+  const latest=await api("/api/keys/"+encodeURIComponent(peerUserId));
+  if(latest.identitySigningPublicKey!==peer.identitySigningPublicKey ||
+     latest.identityPublicKey!==peer.identityPublicKey) {
+    throw appError("IDENTITY_KEY_CHANGED_AGAIN","照合中に相手の鍵が変更されました。再読み込みして確認してください。");
+  }
+  const rootKey=await crypto.subtle.importKey("raw",fromB64(latest.identitySigningPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]);
+  const valid=await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"},rootKey,
+    fromB64(latest.identityKeySignature),identityProofMessage(peerUserId,latest.identityPublicKey));
+  if(!valid)throw appError("IDENTITY_KEY_SIGNATURE_INVALID","相手の公開鍵署名を検証できません。");
+  const ownRecord=await storedIdentity(currentUser.userId);
+  const verifiedPeerPins={...(ownRecord?.verifiedPeerPins||{})};
+  verifiedPeerPins[peerUserId]=latest.identitySigningPublicKey;
+  await saveIdentity(currentUser.userId,{...ownRecord,verifiedPeerPins});
+  return true;
+}
+async function initializeCryptoV2IfEnabled() {
+  cryptoV2Ready=false;
+  cryptoV2Module=null;
+  activeProtocolVersion=1;
+  try {
+    const status=await api("/api/crypto/status");
+    if(!status.enabled) {
+      cryptoV2StatusMessage="前方秘匿性v2はサーバー側で無効です。";
+      updateCryptoV2Controls();
+      return;
+    }
+    const ownRecord=await storedIdentity(currentUser.userId);
+    if(!ownRecord?.signingPrivateKey || !identitySigningPublicKey) {
+      throw appError("CRYPTO_IDENTITY_REQUIRED","アカウント署名鍵をこの端末で使用できません。");
+    }
+    cryptoV2Module=await import("/crypto-v2.bundle.js");
+    await cryptoV2Module.initializeCryptoV2({
+      userId:currentUser.userId,
+      internalUserId:currentUser.id,
+      signingPrivateKey:ownRecord.signingPrivateKey,
+      authorizeDevice:authorizeCryptoDevice
+    });
+    cryptoV2Ready=true;
+    const deviceState=await cryptoV2Module.getCryptoDeviceState(currentUser.userId);
+    cryptoV2StatusMessage="この端末のv2暗号鍵を準備しました。端末ID: "+deviceState.deviceId;
+  } catch(error) {
+    if(error.code==="CRYPTO_V2_DISABLED") {
+      cryptoV2StatusMessage="前方秘匿性v2は現在無効です（安全確認中）。";
+    } else {
+      cryptoV2StatusMessage="v2端末の初期化に失敗しました: "+(error.code||"CRYPTO_INIT_ERROR");
+      console.error("SecureChat crypto v2 initialization failed:",error.code||"CRYPTO_INIT_ERROR");
+    }
+  }
+  updateCryptoV2Controls();
+}
+function updateCryptoV2Controls() {
+  if(el.cryptoV2Status)el.cryptoV2Status.textContent=cryptoV2StatusMessage;
+  if(!el.cryptoV2Approve)return;
+  const visible=!!activeConversation && !!cryptoV2Ready && activeProtocolVersion!==2;
+  el.cryptoV2Approve.hidden=!visible;
+  el.cryptoV2Approve.disabled=!activePeerFingerprintVerified;
+  el.cryptoV2Approve.textContent=activeCryptoMode.approvedByMe
+    ? "v2承認済み — 相手の承認待ち"
+    : "前方秘匿性v2へ移行（双方の承認）";
+  if(el.cryptoV2Status && activeProtocolVersion===2) {
+    el.cryptoV2Status.textContent="前方秘匿性v2有効 — 端末別Olm + Megolmメッセージ鍵ラチェット";
+  }
+}
+async function refreshCryptoConversationMode() {
+  activeProtocolVersion=1;
+  activeCryptoMode={protocolVersion:1,approvedByMe:false,approvedByPeer:false};
+  if(!cryptoV2Ready || !activeConversation) {
+    updateCryptoV2Controls();
+    return;
+  }
+  try {
+    const mode=await cryptoV2Module.getConversationCryptoMode(currentUser.userId,activeConversation.id);
+    activeCryptoMode=mode;
+    activeProtocolVersion=Number(mode.protocolVersion||1);
+    if(activeProtocolVersion===2) {
+      await cryptoV2Module.prepareEncryptedConversation(currentUser.userId,activeConversation.id,activeConversation.peerUserId);
+      cryptoV2StatusMessage="前方秘匿性v2有効 — 信頼済み端末間でMegolm鍵を共有します。";
+    } else if(mode.approvedByMe) {
+      cryptoV2StatusMessage="この端末でv2への移行を承認済みです。相手の承認を待っています。";
+    } else if(mode.approvedByPeer) {
+      cryptoV2StatusMessage="相手がv2移行を承認しています。あなたも承認すると有効になります。";
+    } else {
+      cryptoV2StatusMessage="v2移行は双方のアカウント承認が必要です。";
+    }
+  } catch(error) {
+    cryptoV2StatusMessage="前方秘匿性v2状態を確認できません: "+(error.code||"CRYPTO_STATUS_ERROR");
+    activeProtocolVersion=1;
+  }
+  updateCryptoV2Controls();
+}
+async function approveCryptoV2ForActiveConversation() {
+  if(!cryptoV2Ready || !activeConversation)return;
+  if(!activePeerFingerprintVerified) {
+    showError(appError("IDENTITY_FINGERPRINT_NOT_VERIFIED","先に相手のSHA-256指紋を別経路で照合してください。"));
+    return;
+  }
+  el.cryptoV2Approve.disabled=true;
+  try {
+    const result=await cryptoV2Module.approveAndPrepareConversation(
+      currentUser.userId,activeConversation.id,activeConversation.peerUserId
+    );
+    activeCryptoMode=result;
+    activeProtocolVersion=Number(result.protocolVersion||1);
+    if(activeProtocolVersion===2) {
+      cryptoV2StatusMessage="前方秘匿性v2が有効になりました。既存v1メッセージは従来の鍵で復号します。";
+      await loadMessages(true);
+    } else {
+      cryptoV2StatusMessage="この端末の承認を保存しました。相手側の承認を待っています。";
+    }
+  } catch(error) {
+    showError(error,"v2移行を開始できません: ");
+  } finally {
+    updateCryptoV2Controls();
+  }
+}
+
 async function registerPortableIdentity(portable,previousRecord=null) {
   let previousIdentitySigningPublicKey=null,identityTransitionSignature=null;
   if(previousRecord?.signingPrivateKey && previousRecord?.signingPublicKey) {
