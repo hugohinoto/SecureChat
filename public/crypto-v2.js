@@ -1,0 +1,477 @@
+import {
+  initAsync,
+  OlmMachine,
+  UserId,
+  DeviceId,
+  RoomId,
+  RequestType,
+  DeviceLists,
+  EncryptionSettings,
+  EncryptionAlgorithm,
+  CollectStrategy,
+  RoomSettings,
+  DecryptionSettings,
+  TrustRequirement,
+  LocalTrust
+} from "@matrix-org/matrix-sdk-crypto-wasm";
+
+const MATRIX_SERVER = "securechat.invalid";
+const VAULT_DB = "securechat-crypto-v2-vault";
+const VAULT_STORE = "devices";
+const DEVICE_HEADER = "X-SecureChat-Device";
+const machines = new Map();
+
+function toBase64(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function fromBase64(value) {
+  return Uint8Array.from(atob(value), char => char.charCodeAt(0));
+}
+
+function toBase64Url(bytes) {
+  return toBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function matrixUserId(userId) {
+  return "@" + userId + ":" + MATRIX_SERVER;
+}
+
+function parseMatrixUserId(value) {
+  const match = typeof value === "string" && value.match(/^@([a-z0-9_]{3,32}):securechat\.invalid$/);
+  if (!match) throw cryptoError("CRYPTO_USER_ID_INVALID", "暗号化ユーザーIDを確認できません。");
+  return match[1];
+}
+
+function cryptoError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function openVault() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(VAULT_DB, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(VAULT_STORE)) {
+        request.result.createObjectStore(VAULT_STORE, { keyPath: "userId" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function readVault(userId) {
+  const db = await openVault();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(VAULT_STORE, "readonly").objectStore(VAULT_STORE).get(userId);
+    request.onsuccess = () => { db.close(); resolve(request.result || null); };
+    request.onerror = () => { db.close(); reject(request.error); };
+  });
+}
+
+async function writeVault(record) {
+  const db = await openVault();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(VAULT_STORE, "readwrite");
+    transaction.objectStore(VAULT_STORE).put(record);
+    transaction.oncomplete = () => { db.close(); resolve(); };
+    transaction.onerror = () => { db.close(); reject(transaction.error); };
+    transaction.onabort = () => { db.close(); reject(transaction.error || new Error("CRYPTO_VAULT_WRITE_ABORTED")); };
+  });
+}
+
+async function createDeviceVault(userId) {
+  const existing = await readVault(userId);
+  if (existing) {
+    if (!existing.deviceId || !existing.wrappingKey || !existing.iv || !existing.ciphertext) {
+      throw cryptoError("CRYPTO_VAULT_CORRUPT", "この端末の暗号鍵保管領域が破損しています。復旧操作なしに削除しないでください。");
+    }
+    const passphraseBytes = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: existing.iv },
+      existing.wrappingKey,
+      existing.ciphertext
+    );
+    return {
+      deviceId: existing.deviceId,
+      storePassphrase: new TextDecoder().decode(passphraseBytes),
+      storeName: "securechat-olm-v2-" + userId + "-" + existing.deviceId
+    };
+  }
+
+  const deviceId = "SC_" + crypto.randomUUID().replace(/-/g, "").slice(0, 32);
+  const storePassphrase = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+  const wrappingKey = await crypto.subtle.generateKey(
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    wrappingKey,
+    new TextEncoder().encode(storePassphrase)
+  );
+  await writeVault({ userId, deviceId, wrappingKey, iv, ciphertext, createdAt: Date.now() });
+  return {
+    deviceId,
+    storePassphrase,
+    storeName: "securechat-olm-v2-" + userId + "-" + deviceId
+  };
+}
+
+async function api(path, { deviceId, method = "GET", body } = {}) {
+  const response = await fetch(path, {
+    method,
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: {
+      Accept: "application/json",
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(deviceId ? { [DEVICE_HEADER]: deviceId } : {})
+    },
+    ...(body ? { body: JSON.stringify(body) } : {})
+  });
+  const data = response.status === 204 ? {} : await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const code = typeof data.error === "string" && /^[A-Z][A-Z0-9_]{1,63}$/.test(data.error)
+      ? data.error : "CRYPTO_HTTP_" + response.status;
+    throw cryptoError(code, data.message || "暗号化サービスとの通信に失敗しました。");
+  }
+  return data;
+}
+
+function deviceAuthorizationMessage(userId, deviceId, curve25519Key, ed25519Key) {
+  return new TextEncoder().encode(
+    "SecureChat device authorization:v2\n" +
+    matrixUserId(userId) + "\n" + deviceId + "\n" +
+    curve25519Key + "\n" + ed25519Key
+  );
+}
+
+async function signDeviceAuthorization(context, deviceKeys) {
+  const deviceId = deviceKeys.device_id;
+  const curve25519Key = deviceKeys.keys?.["curve25519:" + deviceId];
+  const ed25519Key = deviceKeys.keys?.["ed25519:" + deviceId];
+  if (!curve25519Key || !ed25519Key || !context.signingPrivateKey) {
+    throw cryptoError("CRYPTO_DEVICE_KEYS_INVALID", "端末公開鍵またはアカウント署名鍵がありません。");
+  }
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    context.signingPrivateKey,
+    deviceAuthorizationMessage(context.userId, deviceId, curve25519Key, ed25519Key)
+  );
+  return toBase64(new Uint8Array(signature));
+}
+
+function parseRequestBody(request) {
+  try {
+    return typeof request.body === "string" ? JSON.parse(request.body) : request.body;
+  } catch {
+    throw cryptoError("CRYPTO_SDK_REQUEST_INVALID", "暗号SDKが不正な通信要求を生成しました。");
+  }
+}
+
+async function trustVerifiedDevices(context, devices) {
+  for (const item of devices) {
+    const userId = new UserId(item.matrixUserId);
+    const deviceId = new DeviceId(item.deviceId);
+    const device = await context.machine.getDevice(userId, deviceId);
+    if (!device) continue;
+    try {
+      await device.setLocalTrust(LocalTrust.Verified);
+    } finally {
+      device.free();
+    }
+  }
+}
+
+async function processOutgoingRequest(context, request) {
+  if (!request) return;
+  const body = parseRequestBody(request);
+
+  if (request.type === RequestType.KeysUpload) {
+    const authorization = body.device_keys
+      ? await signDeviceAuthorization(context, body.device_keys)
+      : undefined;
+    const result = await api("/api/crypto/keys/upload", {
+      deviceId: context.deviceId,
+      method: "POST",
+      body: { ...body, ...(authorization ? { account_authorization_signature: authorization } : {}) }
+    });
+    await context.machine.markRequestAsSent(request.id, request.type, JSON.stringify(result));
+    return;
+  }
+
+  if (request.type === RequestType.KeysQuery) {
+    const result = await api("/api/crypto/keys/query", {
+      deviceId: context.deviceId,
+      method: "POST",
+      body
+    });
+    const verifiedDevices = [];
+    for (const [mxUserId, userDevices] of Object.entries(result.device_keys || {})) {
+      const userId = parseMatrixUserId(mxUserId);
+      for (const [deviceId, deviceKeys] of Object.entries(userDevices || {})) {
+        const authorization = result.device_authorizations?.[mxUserId]?.[deviceId];
+        const accepted = await context.authorizeDevice(userId, deviceId, deviceKeys, authorization);
+        if (!accepted) {
+          delete userDevices[deviceId];
+          continue;
+        }
+        verifiedDevices.push({ matrixUserId: mxUserId, deviceId });
+      }
+    }
+    const { device_authorizations: _ignored, ...matrixResponse } = result;
+    await context.machine.markRequestAsSent(request.id, request.type, JSON.stringify(matrixResponse));
+    await trustVerifiedDevices(context, verifiedDevices);
+    return;
+  }
+
+  if (request.type === RequestType.KeysClaim) {
+    const result = await api("/api/crypto/keys/claim", {
+      deviceId: context.deviceId,
+      method: "POST",
+      body
+    });
+    await context.machine.markRequestAsSent(request.id, request.type, JSON.stringify(result));
+    return;
+  }
+
+  if (request.type === RequestType.ToDevice) {
+    const result = await api("/api/crypto/to-device", {
+      deviceId: context.deviceId,
+      method: "POST",
+      body: {
+        event_type: request.event_type,
+        transaction_id: request.txn_id || request.id,
+        messages: body.messages || {}
+      }
+    });
+    await context.machine.markRequestAsSent(request.id, request.type, JSON.stringify({}));
+    return;
+  }
+
+  throw cryptoError(
+    "CRYPTO_SDK_REQUEST_UNSUPPORTED",
+    "まだ対応していない暗号プロトコル要求です（type " + request.type + "）。安全のため処理を中止しました。"
+  );
+}
+
+async function flushOutgoing(context) {
+  const requests = await context.machine.outgoingRequests();
+  for (const request of requests) await processOutgoingRequest(context, request);
+}
+
+export async function initializeCryptoV2(options) {
+  const userId = String(options.userId || "").toLowerCase();
+  if (!/^[a-z0-9_]{3,32}$/.test(userId)) throw cryptoError("CRYPTO_USER_ID_INVALID", "ユーザーIDが不正です。");
+  if (typeof options.authorizeDevice !== "function" || !options.signingPrivateKey) {
+    throw cryptoError("CRYPTO_IDENTITY_REQUIRED", "アカウント本人確認鍵を読み込めません。");
+  }
+  if (machines.has(userId)) return machines.get(userId);
+  await initAsync();
+  const vault = await createDeviceVault(userId);
+  const machine = await OlmMachine.initialize(
+    new UserId(matrixUserId(userId)),
+    new DeviceId(vault.deviceId),
+    vault.storeName,
+    vault.storePassphrase
+  );
+  const context = {
+    userId,
+    matrixUserId: matrixUserId(userId),
+    deviceId: vault.deviceId,
+    signingPrivateKey: options.signingPrivateKey,
+    authorizeDevice: options.authorizeDevice,
+    machine
+  };
+  machines.set(userId, context);
+  try {
+    await flushOutgoing(context);
+  } catch (error) {
+    machines.delete(userId);
+    machine.close();
+    throw error;
+  }
+  return context;
+}
+
+export function cryptoDeviceId(userId) {
+  return machines.get(String(userId).toLowerCase())?.deviceId || null;
+}
+
+export async function cryptoV2Status(userId) {
+  const context = machines.get(String(userId).toLowerCase());
+  if (!context) return { initialized: false };
+  const status = await api("/api/crypto/status", { deviceId: context.deviceId });
+  return { ...status, initialized: true, deviceId: context.deviceId };
+}
+
+export async function syncCryptoV2(userId) {
+  const context = machines.get(String(userId).toLowerCase());
+  if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
+  const data = await api("/api/crypto/sync", { deviceId: context.deviceId });
+  const events = (data.events || []).map(item => item.event).filter(Boolean);
+  const counts = new Map([["signed_curve25519", Number(data.one_time_key_counts?.signed_curve25519 || 0)]]);
+  await context.machine.receiveSyncChanges(
+    JSON.stringify(events),
+    new DeviceLists([], []),
+    counts
+  );
+  const eventIds = (data.events || []).map(item => item.id).filter(Boolean);
+  if (eventIds.length) {
+    await api("/api/crypto/sync/ack", {
+      deviceId: context.deviceId,
+      method: "POST",
+      body: { event_ids: eventIds }
+    });
+  }
+  await flushOutgoing(context);
+  return { received: events.length };
+}
+
+async function registerAndTrustParticipants(context, peerUserId) {
+  const participantIds = [context.userId, peerUserId].map(matrixUserId);
+  const query = context.machine.queryKeysForUsers(participantIds.map(id => new UserId(id)));
+  await processOutgoingRequest(context, query);
+  await flushOutgoing(context);
+  const missing = await context.machine.getMissingSessions(
+    participantIds.map(id => new UserId(id))
+  );
+  if (missing) await processOutgoingRequest(context, missing);
+  await flushOutgoing(context);
+}
+
+function roomId(conversationId) {
+  return new RoomId("!" + conversationId.replace(/-/g, "") + ":" + MATRIX_SERVER);
+}
+
+async function prepareRoom(context, conversationId, peerUserId) {
+  const room = roomId(conversationId);
+  const roomSettings = new RoomSettings();
+  roomSettings.algorithm = EncryptionAlgorithm.MegolmV1AesSha2;
+  roomSettings.sessionRotationPeriodMessages = 100;
+  roomSettings.sessionRotationPeriodMs = 60 * 60 * 1000;
+  await context.machine.setRoomSettings(room, roomSettings);
+  roomSettings.free();
+
+  await registerAndTrustParticipants(context, peerUserId);
+
+  const settings = new EncryptionSettings();
+  settings.algorithm = EncryptionAlgorithm.MegolmV1AesSha2;
+  settings.rotationPeriod = 60n * 60n * 1_000_000n;
+  settings.rotationPeriodMessages = 100n;
+  settings.sharingStrategy = CollectStrategy.onlyTrustedDevices();
+  const requests = await context.machine.shareRoomKey(
+    room,
+    [new UserId(context.matrixUserId), new UserId(matrixUserId(peerUserId))],
+    settings
+  );
+  for (const request of requests) await processOutgoingRequest(context, request);
+  settings.free();
+  await flushOutgoing(context);
+}
+
+export async function approveAndPrepareConversation(userId, conversationId, peerUserId) {
+  const context = machines.get(String(userId).toLowerCase());
+  if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
+  await syncCryptoV2(userId);
+  const mode = await api("/api/crypto/conversations/" + encodeURIComponent(conversationId) + "/mode", {
+    deviceId: context.deviceId,
+    method: "POST",
+    body: {}
+  });
+  if (mode.protocolVersion === 2) await prepareRoom(context, conversationId, peerUserId);
+  return mode;
+}
+
+export async function encryptConversationMessage(userId, conversationId, peerUserId, text) {
+  const context = machines.get(String(userId).toLowerCase());
+  if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
+  await syncCryptoV2(userId);
+  await prepareRoom(context, conversationId, peerUserId);
+  const encryptedJson = await context.machine.encryptRoomEvent(
+    roomId(conversationId),
+    "m.room.message",
+    JSON.stringify({ msgtype: "m.text", body: text })
+  );
+  let encryptedEvent;
+  try { encryptedEvent = JSON.parse(encryptedJson); }
+  catch { throw cryptoError("CRYPTO_ENVELOPE_INVALID", "暗号SDKのメッセージ形式を確認できません。"); }
+  const result = await api(
+    "/api/crypto/conversations/" + encodeURIComponent(conversationId) + "/messages",
+    { deviceId: context.deviceId, method: "POST", body: { encrypted_event: encryptedEvent } }
+  );
+  return result;
+}
+
+export async function decryptConversationMessage(userId, conversationId, expectedPeerUserId, message) {
+  const context = machines.get(String(userId).toLowerCase());
+  if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
+  let encryptedEvent;
+  try { encryptedEvent = JSON.parse(message.ciphertext); }
+  catch { throw cryptoError("CRYPTO_ENVELOPE_INVALID", "保存された暗号化メッセージの形式が不正です。"); }
+  const senderUserId = message.sender_user_id === userId
+    ? context.matrixUserId
+    : matrixUserId(expectedPeerUserId);
+  const room = roomId(conversationId);
+  const event = {
+    type: "m.room.encrypted",
+    event_id: "$" + message.id.replace(/-/g, ""),
+    sender: senderUserId,
+    origin_server_ts: Number(message.created_at),
+    room_id: room.toString(),
+    content: encryptedEvent
+  };
+  const decrypted = await context.machine.decryptRoomEvent(
+    JSON.stringify(event),
+    room,
+    new DecryptionSettings(TrustRequirement.Untrusted)
+  );
+  try {
+    if (decrypted.sender.toString() !== senderUserId) {
+      throw cryptoError("CRYPTO_SENDER_MISMATCH", "暗号化イベントの送信者が会話参加者と一致しません。");
+    }
+    const senderDeviceId = decrypted.senderDevice?.toString();
+    if (!senderDeviceId) {
+      throw cryptoError("CRYPTO_SENDER_DEVICE_UNKNOWN", "送信端末を特定できません。安全のため表示しません。");
+    }
+    const senderDevice = await context.machine.getDevice(
+      new UserId(senderUserId),
+      new DeviceId(senderDeviceId)
+    );
+    if (!senderDevice) throw cryptoError("CRYPTO_SENDER_DEVICE_UNKNOWN", "送信端末が登録されていません。");
+    let trusted = false;
+    try { trusted = senderDevice.isLocallyTrusted() || senderDevice.isCrossSigningTrusted(); }
+    finally { senderDevice.free(); }
+    if (!trusted) {
+      throw cryptoError("CRYPTO_SENDER_DEVICE_UNVERIFIED", "送信端末の本人確認ができていません。端末指紋を確認するまで本文を表示しません。");
+    }
+    const payload = JSON.parse(decrypted.event);
+    if (payload.type !== "m.room.message" || typeof payload.content?.body !== "string") {
+      throw cryptoError("CRYPTO_MESSAGE_FORMAT_INVALID", "復号したメッセージ形式が不正です。");
+    }
+    return payload.content.body;
+  } finally {
+    decrypted.free();
+  }
+}
+
+export async function getCryptoDeviceState(userId) {
+  const context = machines.get(String(userId).toLowerCase());
+  if (!context) return { initialized: false, deviceId: null };
+  const status = await api("/api/crypto/status", { deviceId: context.deviceId });
+  return { initialized: true, deviceId: context.deviceId, ...status };
+}
+
+export function closeCryptoV2(userId) {
+  const key = String(userId).toLowerCase();
+  const context = machines.get(key);
+  if (!context) return;
+  machines.delete(key);
+  context.machine.close();
+}
