@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { handleAdminFeatures } from "./admin-features.js";
 import { encryptStored, migrateSensitiveRows } from "./data-crypto.js";
 import { identityKeyTransitionMessage, verifyIdentityKeyProof, verifyIdentityKeyTransition } from "./identity-keys.js";
+import { handleCryptoApi } from "./crypto-api.js";
 
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PASSWORD_ITERATIONS = 100_000;
@@ -727,13 +728,17 @@ async function handleApi(request, env) {
 
 
   // Authenticated private-chat API. Only ciphertext is accepted as message content.
-  if (path.startsWith("/api/") && (path === "/api/users/search" || path === "/api/contacts" || path.startsWith("/api/contacts/") || path === "/api/contact-invitations" || path.startsWith("/api/contact-invitations/") || path === "/api/keys" || path.startsWith("/api/keys/") || path === "/api/conversations" || path.startsWith("/api/conversations/"))) {
+  if (path.startsWith("/api/") && (path === "/api/users/search" || path === "/api/contacts" || path.startsWith("/api/contacts/") || path === "/api/contact-invitations" || path.startsWith("/api/contact-invitations/") || path === "/api/keys" || path.startsWith("/api/keys/") || path === "/api/conversations" || path.startsWith("/api/conversations/") || path.startsWith("/api/crypto/"))) {
     if (method !== "GET" && !sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
     let session;
     try { session = await getSession(env, readCookie(request)); } catch { return json({ error: "AUTH_UNAVAILABLE" }, 503); }
     if (!session) return json({ error: "UNAUTHENTICATED" }, 401);
     const me = session.id;
     const now = Date.now();
+
+    if (path.startsWith("/api/crypto/")) {
+      return handleCryptoApi(request, env, session, { url, now });
+    }
 
     if (path === "/api/users/search" && method === "GET") {
       const q = (url.searchParams.get("q") || "").trim().toLowerCase();
@@ -1154,9 +1159,9 @@ async function handleApi(request, env) {
           const after = Number(afterValue);
           const afterId = url.searchParams.get("afterId") || "";
           if (!Number.isSafeInteger(after) || after < 0 || afterId.length > 64) return json({ error: "INVALID_CURSOR" }, 400);
-          rows = await env.DB.prepare("SELECT id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at FROM encrypted_messages WHERE conversation_id=? AND expires_at>? AND (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT 500").bind(id, now, after, after, afterId).all();
+          rows = await env.DB.prepare("SELECT id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at, protocol_version, sender_device_id FROM encrypted_messages WHERE conversation_id=? AND expires_at>? AND (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT 500").bind(id, now, after, after, afterId).all();
         } else {
-          rows = await env.DB.prepare("SELECT id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at FROM encrypted_messages WHERE conversation_id=? AND expires_at>? ORDER BY created_at, id LIMIT 500").bind(id, now).all();
+          rows = await env.DB.prepare("SELECT id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at, protocol_version, sender_device_id FROM encrypted_messages WHERE conversation_id=? AND expires_at>? ORDER BY created_at, id LIMIT 500").bind(id, now).all();
         }
         const messages = rows.results || [];
         const lastRead = messages[messages.length - 1];
@@ -1168,6 +1173,12 @@ async function handleApi(request, env) {
         return json({ messages });
       }
       if (sub === "messages" && method === "POST") {
+        const protocolMode = await env.DB.prepare(
+          "SELECT protocol_version FROM conversation_crypto_modes WHERE conversation_id=?"
+        ).bind(id).first();
+        if (Number(protocolMode?.protocol_version || 1) !== 1) {
+          return json({ error: "CRYPTO_PROTOCOL_V2_REQUIRED", message: "この会話は前方秘匿性v2へ移行済みです。最新版を再読み込みしてください。" }, 426);
+        }
         let body;
         try { body = await readJson(request); }
         catch (error) { return json({ error: error.message }, 400); }
