@@ -88,23 +88,6 @@ async function writeVault(record) {
 }
 
 async function createDeviceVault(userId) {
-  const existing = await readVault(userId);
-  if (existing) {
-    if (!existing.deviceId || !existing.wrappingKey || !existing.iv || !existing.ciphertext) {
-      throw cryptoError("CRYPTO_VAULT_CORRUPT", "この端末の暗号鍵保管領域が破損しています。復旧操作なしに削除しないでください。");
-    }
-    const passphraseBytes = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: existing.iv },
-      existing.wrappingKey,
-      existing.ciphertext
-    );
-    return {
-      deviceId: existing.deviceId,
-      storePassphrase: new TextDecoder().decode(passphraseBytes),
-      storeName: "securechat-olm-v2-" + userId + "-" + existing.deviceId
-    };
-  }
-
   const deviceId = "SC_" + crypto.randomUUID().replace(/-/g, "").slice(0, 32);
   const storePassphrase = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
   const wrappingKey = await crypto.subtle.generateKey(
@@ -118,11 +101,45 @@ async function createDeviceVault(userId) {
     wrappingKey,
     new TextEncoder().encode(storePassphrase)
   );
-  await writeVault({ userId, deviceId, wrappingKey, iv, ciphertext, createdAt: Date.now() });
+  const candidate = { userId, deviceId, wrappingKey, iv, ciphertext, createdAt: Date.now() };
+
+  // IndexedDB readwrite transactions serialize across tabs on the same origin.
+  // Use add/put only after the transactional read so two tabs cannot create
+  // different device IDs and overwrite each other's recovery pointer.
+  const db = await openVault();
+  const record = await new Promise((resolve, reject) => {
+    const transaction = db.transaction(VAULT_STORE, "readwrite");
+    const store = transaction.objectStore(VAULT_STORE);
+    let selected = null;
+    const request = store.get(userId);
+    request.onsuccess = () => {
+      selected = request.result || candidate;
+      if (!request.result) store.add(candidate);
+    };
+    request.onerror = () => transaction.abort();
+    transaction.oncomplete = () => resolve(selected);
+    transaction.onerror = () => reject(transaction.error || new Error("CRYPTO_VAULT_TRANSACTION_FAILED"));
+    transaction.onabort = () => reject(transaction.error || new Error("CRYPTO_VAULT_TRANSACTION_ABORTED"));
+  }).finally(() => db.close());
+
+  if (!record?.deviceId || !record.wrappingKey || !record.iv || !record.ciphertext) {
+    throw cryptoError("CRYPTO_VAULT_CORRUPT", "この端末の暗号鍵保管領域が破損しています。復旧操作なしに削除しないでください。");
+  }
+  let resolvedPassphrase;
+  if (record.deviceId === deviceId) {
+    resolvedPassphrase = storePassphrase;
+  } else {
+    const passphraseBytes = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: record.iv },
+      record.wrappingKey,
+      record.ciphertext
+    );
+    resolvedPassphrase = new TextDecoder().decode(passphraseBytes);
+  }
   return {
-    deviceId,
-    storePassphrase,
-    storeName: "securechat-olm-v2-" + userId + "-" + deviceId
+    deviceId: record.deviceId,
+    storePassphrase: resolvedPassphrase,
+    storeName: "securechat-olm-v2-" + userId + "-" + record.deviceId
   };
 }
 
