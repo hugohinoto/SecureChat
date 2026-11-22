@@ -3,6 +3,9 @@
   "name": "securechat",
   "main": "worker/index.js",
   "compatibility_date": "2026-11-18",
+  "vars": {
+    "APP_DATA_ENCRYPTION_ACTIVE_VERSION": "2"
+  },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
