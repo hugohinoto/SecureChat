@@ -349,34 +349,37 @@ export async function initializeCryptoV2(options) {
   if (initializers.has(userId)) return initializers.get(userId);
   const initializer = (async () => {
     await acquireDeviceOwnership(userId);
-    if (machines.has(userId)) return machines.get(userId);
-    await initAsync();
-    const vault = await createDeviceVault(userId);
-    const machine = await OlmMachine.initialize(
-      new UserId(matrixUserId(userId)),
-      new DeviceId(vault.deviceId),
-      vault.storeName,
-      vault.storePassphrase
-    );
-    const context = {
-      userId,
-      internalUserId: options.internalUserId,
-      matrixUserId: matrixUserId(userId),
-      deviceId: vault.deviceId,
-      signingPrivateKey: options.signingPrivateKey,
-      authorizeDevice: options.authorizeDevice,
-      machine
-    };
-    machines.set(userId, context);
     try {
+      if (machines.has(userId)) return machines.get(userId);
+      await initAsync();
+      const vault = await createDeviceVault(userId);
+      const machine = await OlmMachine.initialize(
+        new UserId(matrixUserId(userId)),
+        new DeviceId(vault.deviceId),
+        vault.storeName,
+        vault.storePassphrase
+      );
+      const context = {
+        userId,
+        internalUserId: options.internalUserId,
+        matrixUserId: matrixUserId(userId),
+        deviceId: vault.deviceId,
+        signingPrivateKey: options.signingPrivateKey,
+        authorizeDevice: options.authorizeDevice,
+        machine
+      };
+      machines.set(userId, context);
       await flushOutgoing(context);
+      return context;
     } catch (error) {
-      machines.delete(userId);
-      machine.close();
+      const context = machines.get(userId);
+      if (context) {
+        machines.delete(userId);
+        try { context.machine.close(); } catch {}
+      }
       releaseDeviceOwnership(userId);
       throw error;
     }
-    return context;
   })();
   initializers.set(userId, initializer);
   try {
@@ -669,12 +672,14 @@ export async function getCryptoDeviceState(userId) {
   return { initialized: true, deviceId: context.deviceId, ...status };
 }
 
-export function closeCryptoV2(userId) {
+export async function closeCryptoV2(userId) {
   const key = String(userId).toLowerCase();
-  const context = machines.get(key);
-  if (context) {
-    machines.delete(key);
-    context.machine.close();
-  }
+  await withMachineLock(key, async () => {
+    const context = machines.get(key);
+    if (context) {
+      machines.delete(key);
+      context.machine.close();
+    }
+  });
   releaseDeviceOwnership(key);
 }
