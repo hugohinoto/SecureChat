@@ -269,33 +269,23 @@ async function flushOutgoing(context) {
   for (const request of requests) await processOutgoingRequest(context, request);
 }
 
-async function withRoomLock(roomKey, callback) {
-  const previous = roomLocks.get(roomKey) || Promise.resolve();
+async function withLock(map, key, callback) {
+  const previous = map.get(key) || Promise.resolve();
   let release;
   const current = new Promise(resolve => { release = resolve; });
-  roomLocks.set(roomKey, previous.then(() => current));
+  const queued = previous.then(() => current);
+  map.set(key, queued);
   await previous;
   try {
     return await callback();
   } finally {
     release();
-    if (roomLocks.get(roomKey) === current) roomLocks.delete(roomKey);
+    if (map.get(key) === queued) map.delete(key);
   }
 }
 
-async function withSyncLock(userKey, callback) {
-  const previous = syncLocks.get(userKey) || Promise.resolve();
-  let release;
-  const current = new Promise(resolve => { release = resolve; });
-  syncLocks.set(userKey, previous.then(() => current));
-  await previous;
-  try {
-    return await callback();
-  } finally {
-    release();
-    if (syncLocks.get(userKey) === current) syncLocks.delete(userKey);
-  }
-}
+const withRoomLock = (key, callback) => withLock(roomLocks, key, callback);
+const withSyncLock = (key, callback) => withLock(syncLocks, key, callback);
 
 export async function initializeCryptoV2(options) {
   const userId = String(options.userId || "").toLowerCase();
@@ -354,33 +344,40 @@ export async function cryptoV2Status(userId) {
 }
 
 export async function syncCryptoV2(userId) {
-  const context = machines.get(String(userId).toLowerCase());
-  if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
-  const data = await api("/api/crypto/sync", { deviceId: context.deviceId });
-  const events = (data.events || []).map(item => item.event).filter(Boolean);
-  const counts = new Map([["signed_curve25519", Number(data.one_time_key_counts?.signed_curve25519 || 0)]]);
-  const deviceLists = new DeviceLists([], []);
-  try {
-    await context.machine.receiveSyncChanges(
-      JSON.stringify(events),
-      deviceLists,
-      counts
-    );
-  } finally {
-    deviceLists.free();
-  }
-  const eventIds = (data.events || []).map(item => item.id).filter(Boolean);
-  if (eventIds.length) {
-    await api("/api/crypto/sync/ack", {
-      deviceId: context.deviceId,
-      method: "POST",
-      body: { event_ids: eventIds }
-    });
-  }
-  await flushOutgoing(context);
-  return { received: events.length };
+  const key = String(userId).toLowerCase();
+  return withSyncLock(key, async () => {
+    const context = machines.get(key);
+    if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
+    const data = await api("/api/crypto/sync", { deviceId: context.deviceId });
+    const events = (data.events || []).map(item => {
+      if (!item?.event || typeof item.id !== "string") return null;
+      return {
+        event_id: "$" + item.id.replace(/-/g, ""),
+        type: item.event.type,
+        sender: item.event.sender,
+        origin_server_ts: Number(item.event.origin_server_ts || item.event.created_at || Date.now()),
+        content: item.event.content
+      };
+    }).filter(Boolean);
+    const counts = new Map([["signed_curve25519", Number(data.one_time_key_counts?.signed_curve25519 || 0)]]);
+    const deviceLists = new DeviceLists([], []);
+    try {
+      await context.machine.receiveSyncChanges(JSON.stringify(events), deviceLists, counts);
+    } finally {
+      deviceLists.free();
+    }
+    const eventIds = (data.events || []).map(item => item.id).filter(Boolean);
+    if (eventIds.length) {
+      await api("/api/crypto/sync/ack", {
+        deviceId: context.deviceId,
+        method: "POST",
+        body: { event_ids: eventIds }
+      });
+    }
+    await flushOutgoing(context);
+    return { received: events.length };
+  });
 }
-
 async function registerAndTrustParticipants(context, peerUserId) {
   const participantIds = [context.userId, peerUserId].map(matrixUserId);
   const query = context.machine.queryKeysForUsers(participantIds.map(id => new UserId(id)));
