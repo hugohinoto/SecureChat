@@ -210,7 +210,7 @@ function securityHeaders(response, request) {
     "Content-Security-Policy",
     [
       "default-src 'self'",
-      "script-src 'self'",
+      "script-src 'self' 'wasm-unsafe-eval'",
       "style-src 'self'",
       "img-src 'self' data:",
       "font-src 'self'",
@@ -1200,8 +1200,13 @@ async function handleApi(request, env) {
           return json({ error: "INVALID_CIPHERTEXT_SIZE" }, 400);
         }
         const msgId = crypto.randomUUID(), expires = now + 3600000;
-        await env.DB.prepare("INSERT INTO encrypted_messages (id, conversation_id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at) VALUES (?, ?, ?, ?, ?, 'AES-GCM-256', ?, ?)").bind(msgId, id, me, body.ciphertext, body.nonce, now, expires).run();
-        return json({ id: msgId, createdAt: now, expiresAt: expires }, 201);
+        const inserted = await env.DB.prepare(
+          "INSERT INTO encrypted_messages (id, conversation_id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at, protocol_version, sender_device_id) SELECT ?, ?, ?, ?, ?, 'AES-GCM-256', ?, ?, 1, NULL WHERE NOT EXISTS (SELECT 1 FROM conversation_crypto_modes WHERE conversation_id=? AND protocol_version=2)"
+        ).bind(msgId, id, me, body.ciphertext, body.nonce, now, expires, id).run();
+        if (Number(inserted.meta?.changes || 0) !== 1) {
+          return json({ error: "CRYPTO_PROTOCOL_V2_REQUIRED", message: "この会話は前方秘匿性v2へ移行済みです。最新版を再読み込みしてください。" }, 426);
+        }
+        return json({ id: msgId, createdAt: now, expiresAt: expires, protocolVersion: 1 }, 201);
       }
     }
   }
