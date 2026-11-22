@@ -440,8 +440,6 @@ async function prepareRoom(context, conversationId, peerUserId) {
   try {
     roomSettings.algorithm = EncryptionAlgorithm.MegolmV1AesSha2;
     roomSettings.onlyAllowTrustedDevices = true;
-    roomSettings.sessionRotationPeriodMessages = 100;
-    roomSettings.sessionRotationPeriodMs = 60 * 60 * 1000;
     await context.machine.setRoomSettings(room, roomSettings);
   } finally {
     roomSettings.free();
