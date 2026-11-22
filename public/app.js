@@ -448,21 +448,25 @@ async function refreshCryptoDeviceList() {
       created.textContent="登録: "+formatCryptoDeviceTime(device.createdAt);
       info.append(title,meta,created);
       row.append(info);
-      if(!device.revokedAt && !isCurrent) {
+      if(!isCurrent) {
+        const alreadyRevoked=!!device.revokedAt;
         const revoke=document.createElement("button");
         revoke.type="button";
         revoke.className="crypto-v2-revoke-button";
-        revoke.textContent="この端末を失効";
+        revoke.textContent=alreadyRevoked?"失効通知を再送":"この端末を失効";
         revoke.addEventListener("click",async()=>{
-          if(!confirm("この端末を失効しますか？次回同期以降、失効端末には新しい会話鍵が共有されません。既に保存・複製されたデータを消去できるわけではありません。"))return;
+          const promptText=alreadyRevoked
+            ? "この端末の失効通知を残存端末へ再送しますか？"
+            : "この端末を失効しますか？次回同期以降、失効端末には新しい会話鍵が共有されません。既に保存・複製されたデータを消去できるわけではありません。";
+          if(!confirm(promptText))return;
           revoke.disabled=true;
           try {
-            await cryptoV2Module.revokeCryptoDevice(currentUser.userId,device.deviceId);
+            const result=await cryptoV2Module.revokeCryptoDevice(currentUser.userId,device.deviceId);
             await cryptoV2Module.syncCryptoV2(currentUser.userId);
-            toast("端末を失効し、残存端末へセッション更新通知を送りました。");
+            toast("失効通知を "+Number(result.notifiedDevices||0)+" 台の端末へ送信しました。");
             await refreshCryptoDeviceList();
           } catch(error) {
-            showError(error,"端末を失効できません: ");
+            showError(error,"端末の失効通知を送信できません: ");
             revoke.disabled=false;
           }
         });
