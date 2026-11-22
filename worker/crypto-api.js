@@ -181,6 +181,11 @@ async function uploadKeys(request, env, session, now) {
     return json({ error: "CRYPTO_KEYS_INVALID" }, 400);
   }
   const inserts = [];
+  if (Object.keys(fallbackKeys).length) {
+    inserts.push(env.DB.prepare(
+      "DELETE FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND is_fallback=1"
+    ).bind(session.id, deviceId));
+  }
   for (const [keyId, keyObject] of Object.entries({ ...oneTimeKeys, ...fallbackKeys })) {
     const isFallback = Object.hasOwn(fallbackKeys, keyId) ? 1 : 0;
     const separator = keyId.indexOf(":");
@@ -196,12 +201,17 @@ async function uploadKeys(request, env, session, now) {
     ).bind(crypto.randomUUID(), session.id, deviceId, keyId, keyId.slice(0, separator), JSON.stringify(keyObject), isFallback, now));
   }
   if (inserts.length) await env.DB.batch(inserts);
-  const count = await env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND is_fallback=0 AND claimed_at IS NULL"
-  ).bind(session.id, deviceId).first();
+  const [count, fallback] = await Promise.all([
+    env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND algorithm='signed_curve25519' AND is_fallback=0 AND claimed_at IS NULL"
+    ).bind(session.id, deviceId).first(),
+    env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND algorithm='signed_curve25519' AND is_fallback=1 AND claimed_at IS NULL"
+    ).bind(session.id, deviceId).first()
+  ]);
   return json({
     one_time_key_counts: { signed_curve25519: Number(count?.count || 0) },
-    unused_fallback_key_types: []
+    unused_fallback_key_types: Number(fallback?.count || 0) ? ["signed_curve25519"] : []
   });
 }
 
@@ -261,9 +271,15 @@ async function claimKeys(request, env, session, now) {
         "SELECT 1 AS ok FROM crypto_devices WHERE user_id=? AND device_id=? AND revoked_at IS NULL"
       ).bind(target.id, deviceId).first();
       if (!device) continue;
-      const claimed = await env.DB.prepare(
-        "UPDATE crypto_one_time_keys SET claimed_at=?, claimed_by_user_id=?, claimed_by_device_id=? WHERE id=(SELECT id FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND algorithm=? AND claimed_at IS NULL ORDER BY is_fallback ASC, created_at, id LIMIT 1) AND claimed_at IS NULL RETURNING key_id, key_json"
+      // Consume OTKs atomically. A fallback key remains reusable until it is replaced.
+      let claimed = await env.DB.prepare(
+        "UPDATE crypto_one_time_keys SET claimed_at=?, claimed_by_user_id=?, claimed_by_device_id=? WHERE id=(SELECT id FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND algorithm=? AND is_fallback=0 AND claimed_at IS NULL ORDER BY created_at, id LIMIT 1) AND claimed_at IS NULL RETURNING key_id, key_json"
       ).bind(now, session.id, requesterDeviceId, target.id, deviceId, algorithm).first();
+      if (!claimed) {
+        claimed = await env.DB.prepare(
+          "UPDATE crypto_one_time_keys SET claimed_at=COALESCE(claimed_at, ?), claimed_by_user_id=COALESCE(claimed_by_user_id, ?), claimed_by_device_id=COALESCE(claimed_by_device_id, ?) WHERE id=(SELECT id FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND algorithm=? AND is_fallback=1 ORDER BY created_at DESC, id DESC LIMIT 1) RETURNING key_id, key_json"
+        ).bind(now, session.id, requesterDeviceId, target.id, deviceId, algorithm).first();
+      }
       if (!claimed) continue;
       let value;
       try { value = JSON.parse(claimed.key_json); } catch { continue; }
@@ -356,10 +372,19 @@ async function syncInbox(request, env, session, now) {
       }
     });
   }
-  const count = await env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND algorithm='signed_curve25519' AND is_fallback=0 AND claimed_at IS NULL"
-  ).bind(session.id, deviceId).first();
-  return json({ events, one_time_key_counts: { signed_curve25519: Number(count?.count || 0) } });
+  const [count, fallback] = await Promise.all([
+    env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND algorithm='signed_curve25519' AND is_fallback=0 AND claimed_at IS NULL"
+    ).bind(session.id, deviceId).first(),
+    env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM crypto_one_time_keys WHERE user_id=? AND device_id=? AND algorithm='signed_curve25519' AND is_fallback=1 AND claimed_at IS NULL"
+    ).bind(session.id, deviceId).first()
+  ]);
+  return json({
+    events,
+    one_time_key_counts: { signed_curve25519: Number(count?.count || 0) },
+    unused_fallback_key_types: Number(fallback?.count || 0) ? ["signed_curve25519"] : []
+  });
 }
 
 async function acknowledgeInbox(request, env, session) {
