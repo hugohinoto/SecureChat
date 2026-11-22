@@ -1,5 +1,25 @@
 # Forward-secrecy integration review
 
+## Implementation status in branch `security/olm-device-ratchet-v2` (2026-11-23)
+
+The repository now contains a first integrated v2 implementation behind a server-side feature flag:
+
+- Pinned `@matrix-org/matrix-sdk-crypto-wasm@19.0.1` and an esbuild bundle pipeline for a self-hosted browser WASM asset.
+- Device-scoped OlmMachine initialization and encrypted IndexedDB-backed SDK state, with a unique device ID per browser profile.
+- Account-root-signed device authorization, server-side device registry, signed/one-time key upload and claim, and opaque to-device inbox/ack transport.
+- Room-key sharing via the SDK with `OnlyTrustedDevices`, one-hour / 100-message session rotation configuration, and a Megolm-encrypted message envelope.
+- Explicit `protocol_version` on stored messages, a bilateral account approval gate for conversation cutover, and a Worker-side prohibition on sending v1 messages once a conversation is v2.
+- Existing v1 decryption path retained for stored v1 messages.
+- Peer account-root fingerprints must be checked out-of-band per local browser before this client accepts a device authorization from that peer.
+- Device listing and revocation endpoints, with rate-limited crypto writes.
+
+**Activation state:** `wrangler.jsonc` intentionally has `SECURECHAT_CRYPTO_V2_ENABLED="false"`. The production path therefore remains v1, and the `forward-secrecy` diagnostic remains Critical. This is deliberate: enabling the code path is not evidence that the security properties are ready for production.
+
+**Known gap before any real-user activation:** server-side device revocation currently stops future device discovery/key claims and purges unclaimed keys/inbox events, but an already shared Megolm outbound session can remain usable until SDK session rotation. Immediate group-session rotation on device revocation is not yet implemented or tested. The integration also still needs real-browser multi-device E2E tests and independent protocol/integration review, including the exact low-order/all-zero X25519 rejection path in the pinned vodozemac source.
+
+This branch is therefore an implementation candidate, not an announcement that SecureChat is production-approved for forward secrecy. Do not set the feature flag to true on production until every release gate below has passed.
+
+
 **Review date:** 2026-11-23  
 **Production decision:** Keep v1 active and the `forward-secrecy` diagnostic critical. A promising browser/WASM foundation has been identified, but the 2022 audit is not sufficient assurance for the current version, bindings, or SecureChat integration.
 
