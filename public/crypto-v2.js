@@ -430,6 +430,21 @@ async function prepareRoom(context, conversationId, peerUserId) {
   await flushOutgoing(context);
 }
 
+export async function getConversationCryptoMode(userId, conversationId) {
+  const context = machines.get(String(userId).toLowerCase());
+  if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
+  return api("/api/crypto/conversations/" + encodeURIComponent(conversationId) + "/mode", {
+    deviceId: context.deviceId
+  });
+}
+
+export async function prepareEncryptedConversation(userId, conversationId, peerUserId) {
+  const context = machines.get(String(userId).toLowerCase());
+  if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
+  await syncCryptoV2(userId);
+  return withRoomLock(conversationId, () => prepareRoom(context, conversationId, peerUserId));
+}
+
 export async function approveAndPrepareConversation(userId, conversationId, peerUserId) {
   const context = machines.get(String(userId).toLowerCase());
   if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
