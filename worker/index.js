@@ -737,6 +737,9 @@ async function handleApi(request, env) {
     const now = Date.now();
 
     if (path.startsWith("/api/crypto/")) {
+      if (method !== "GET" && !await checkRateLimit(env, request, "crypto-v2-write", 60)) {
+        return json({ error: "RATE_LIMITED", message: "暗号鍵操作の回数が多すぎます。時間をおいて再試行してください。" }, 429);
+      }
       return handleCryptoApi(request, env, session, { url, now });
     }
 
