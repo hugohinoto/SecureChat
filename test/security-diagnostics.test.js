@@ -32,7 +32,8 @@ class FakeStatement {
     if(sql.includes("sqlite_master")&&sql.includes("type IN ('table','view','trigger')")) {
       const objects=[
         ...Object.keys(securityDiagnosticSchema.tables.reduce((a,t)=>(a[t]=true,a),{})).map(name=>({name,type:"table",sql:this.db.tableSql[name]||"CREATE TABLE "+name+" (id TEXT)"})),
-        {name:"d1_migrations",type:"table",sql:"CREATE TABLE d1_migrations (name TEXT)"}
+        {name:"d1_migrations",type:"table",sql:"CREATE TABLE d1_migrations (name TEXT)"},
+        {name:"_cf_KV",type:"table",sql:null}
       ];
       if(this.db.extraObject)objects.push({name:this.db.extraObject,type:"table",sql:"CREATE TABLE "+this.db.extraObject+" (id TEXT)"});
       return {results:objects};
@@ -237,6 +238,15 @@ test("the admin endpoint continues reporting secret and scanner checks when D1 i
   assert.ok(result.coverage.notCompleted > 0);
 });
 
+
+test("Cloudflare D1 reserved _cf_KV table is excluded from application schema warnings", async () => {
+  const result=await summarizeSecurityDiagnostics(environment());
+  const unexpected=result.checks.find(item=>item.id==="schema-unexpected-objects");
+  const inventory=result.checks.find(item=>item.id==="schema-inventory");
+  assert.equal(unexpected.status,"ok");
+  assert.doesNotMatch(unexpected.detail,/_cf_KV/);
+  assert.match(inventory.detail,/追加テーブル: 0/);
+});
 
 test("unexpected database objects are visible as a warning", async () => {
   const result=await summarizeSecurityDiagnostics(environment({extraObject:"legacy_debug_table"}));

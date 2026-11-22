@@ -40,6 +40,10 @@ const EXPECTED_MIGRATIONS = [
   "0011_multi_device_identity_backup_and_reads.sql"
 ];
 
+// Cloudflare D1 system-owned objects. These are not application schema.
+const SYSTEM_RESERVED_D1_OBJECTS = new Set(["_cf_KV"]);
+const NON_APPLICATION_D1_OBJECTS = new Set([...SYSTEM_RESERVED_D1_OBJECTS, "d1_migrations"]);
+
 const EXPECTED_FOREIGN_KEYS = [
   ["sessions","user_id","users","id"],
   ["user_keys","user_id","users","id"],
@@ -91,7 +95,9 @@ async function checkSchema(env,checks) {
     const objects=rows(await env.DB.prepare(
       "SELECT name,type,sql FROM sqlite_master WHERE type IN ('table','view','trigger') AND name NOT LIKE 'sqlite_%'"
     ).all());
-    const tableNames=new Set(objects.filter(x=>x.type==="table").map(x=>x.name));
+    // Ignore D1's reserved storage table when comparing application schema.
+    const applicationObjects=objects.filter(item=>!NON_APPLICATION_D1_OBJECTS.has(item.name));
+    const tableNames=new Set(applicationObjects.filter(x=>x.type==="table").map(x=>x.name));
     const missingTables=[],missingColumns=[];
     for(const [table,columns] of Object.entries(EXPECTED_TABLES)) {
       if(!tableNames.has(table)){missingTables.push(table);continue;}
@@ -110,7 +116,7 @@ async function checkSchema(env,checks) {
       "SELECT name,type FROM sqlite_master WHERE type IN ('table','view','trigger') AND name NOT LIKE 'sqlite_%'"
     ).all());
     const known=new Set([...Object.keys(EXPECTED_TABLES),"d1_migrations"]);
-    const extras=objects.filter(item=>!known.has(item.name));
+    const extras=objects.filter(item=>!known.has(item.name)&&!SYSTEM_RESERVED_D1_OBJECTS.has(item.name));
     return extras.length
       ? {status:"warning",detail:"リポジトリの想定スキーマにないDBオブジェクトがあります。用途を確認してください: "+extras.map(item=>item.type+":"+item.name).join(", ")}
       : {status:"ok",detail:"未登録のテーブル・ビュー・トリガーはありません。"};
