@@ -12,19 +12,22 @@
     "dev": "node --watch server/index.js",
     "db:migrate": "node scripts/migrate.js",
     "test": "node --test",
-    "cf:dev": "wrangler dev",
+    "cf:dev": "npm run build && wrangler dev",
     "cf:deploy": "npm run deploy",
     "cf:d1:create": "wrangler d1 create securechat-db",
     "cf:d1:migrate:local": "wrangler d1 migrations apply DB --local",
     "cf:d1:migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "deploy": "npm run cf:d1:migrate:remote && wrangler deploy"
+    "deploy": "npm run build && npm run cf:d1:migrate:remote && wrangler deploy",
+    "build": "node scripts/build-crypto-v2.js"
   },
   "dependencies": {
     "express": "^5.1.0",
     "pg": "^8.23.1",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "@matrix-org/matrix-sdk-crypto-wasm": "19.0.1"
   },
   "devDependencies": {
-    "wrangler": "^4.164.0"
+    "wrangler": "^4.164.0",
+    "esbuild": "0.28.2"
   }
 }
