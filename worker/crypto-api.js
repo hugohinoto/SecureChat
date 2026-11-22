@@ -355,9 +355,10 @@ async function syncInbox(request, env, session, now) {
     events.push({
       id: row.id,
       event: {
+        event_id: "$" + row.id.replace(/-/g, ""),
         type: row.event_type,
         sender: matrixUserId(sender.user_id),
-        sender_device: row.sender_device_id,
+        origin_server_ts: Number(row.created_at),
         content
       }
     });
@@ -466,6 +467,7 @@ async function sendRoomMessage(request, env, session, conversationId, now) {
       typeof body.encrypted_event.sender_key !== "string" ||
       !/^[A-Za-z0-9_-]{43}$/.test(body.encrypted_event.sender_key) ||
       typeof body.encrypted_event.device_id !== "string" ||
+      body.encrypted_event.device_id !== requestDeviceId(request) ||
       !validDeviceId(body.encrypted_event.device_id)) {
     return json({ error: "CRYPTO_ENVELOPE_INVALID" }, 400);
   }
@@ -491,6 +493,40 @@ export async function handleCryptoApi(request, env, session, { url, now = Date.n
       "SELECT COUNT(*) AS count FROM crypto_devices WHERE user_id=? AND revoked_at IS NULL"
     ).bind(session.id).first();
     return json({ enabled: true, protocolVersion: 2, deviceCount: Number(devices?.count || 0) });
+  }
+  if (path === "/api/crypto/devices" && method === "GET") {
+    const rows = await env.DB.prepare(
+      "SELECT device_id, device_keys_json, created_at, updated_at, last_seen_at, revoked_at FROM crypto_devices WHERE user_id=? ORDER BY created_at"
+    ).bind(session.id).all();
+    return json({
+      devices: (rows.results || []).map(row => {
+        let keys = {};
+        try { keys = JSON.parse(row.device_keys_json); } catch {}
+        return {
+          deviceId: row.device_id,
+          displayName: typeof keys.display_name === "string" ? keys.display_name.slice(0, 80) : "",
+          createdAt: Number(row.created_at),
+          lastSeenAt: Number(row.last_seen_at),
+          revokedAt: row.revoked_at === null ? null : Number(row.revoked_at)
+        };
+      })
+    });
+  }
+  const revokeDeviceMatch = path.match(/^\/api\/crypto\/devices\/([A-Za-z0-9._=-]{8,64})\/revoke$/);
+  if (revokeDeviceMatch && method === "POST") {
+    const targetDeviceId = revokeDeviceMatch[1];
+    if (targetDeviceId === requestDeviceId(request)) {
+      return json({ error: "CRYPTO_CANNOT_REVOKE_CURRENT_DEVICE", message: "現在使用中の端末は、別の端末またはアカウント回復手順から失効してください。" }, 409);
+    }
+    const update = await env.DB.prepare(
+      "UPDATE crypto_devices SET revoked_at=?, updated_at=? WHERE user_id=? AND device_id=? AND revoked_at IS NULL"
+    ).bind(now, now, session.id, targetDeviceId).run();
+    if (Number(update.meta?.changes || 0) !== 1) return json({ error: "CRYPTO_DEVICE_NOT_FOUND" }, 404);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM crypto_one_time_keys WHERE user_id=? AND device_id=?").bind(session.id, targetDeviceId),
+      env.DB.prepare("DELETE FROM crypto_to_device_inbox WHERE recipient_user_id=? AND recipient_device_id=?").bind(session.id, targetDeviceId)
+    ]);
+    return json({ revoked: true, deviceId: targetDeviceId });
   }
   if (path === "/api/crypto/keys/upload" && method === "POST") return uploadKeys(request, env, session, now);
   if (path === "/api/crypto/keys/query" && method === "POST") return queryKeys(request, env, session);
