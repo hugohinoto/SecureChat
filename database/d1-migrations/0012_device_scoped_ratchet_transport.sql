@@ -1,4 +1,7 @@
 -- Device-scoped Matrix Olm / Megolm key distribution and opaque to-device inbox.
+-- Existing ciphertext remains protocol v1 unless a new conversation is explicitly migrated.
+ALTER TABLE encrypted_messages ADD COLUMN protocol_version INTEGER NOT NULL DEFAULT 1 CHECK (protocol_version IN (1, 2));
+ALTER TABLE encrypted_messages ADD COLUMN sender_device_id TEXT;
 -- Private ratchet state stays in the browser's encrypted IndexedDB store.
 CREATE TABLE IF NOT EXISTS crypto_devices (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
