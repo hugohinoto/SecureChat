@@ -67,6 +67,18 @@ function state(value, label) {
   el.connectionLabel.textContent = label;
   updateSend();
 }
+function closeCryptoV2Session() {
+  if(cryptoV2Module?.closeCryptoV2 && currentUser) {
+    try { cryptoV2Module.closeCryptoV2(currentUser.userId); }
+    catch(error) { console.error("SecureChat crypto v2 close failed:",error?.code||"CRYPTO_CLOSE_ERROR"); }
+  }
+  cryptoV2Module=null;
+  cryptoV2Ready=false;
+  activeProtocolVersion=1;
+  activeCryptoMode={protocolVersion:1,approvedByMe:false,approvedByPeer:false};
+  activePeerSigningKey=null;
+  activePeerFingerprintVerified=false;
+}
 function updateNotificationButton() {
   if(!el.notificationButton)return;
   if(!("Notification" in window)) {
@@ -930,6 +942,7 @@ async function signIn(user,password=null) {
     await initializeCryptoV2IfEnabled();
     await refreshSidebar();
   } catch (error) {
+    closeCryptoV2Session();
     currentUser=null;
     identityPrivateKey=null;
     identityPublicKey=null;
@@ -951,7 +964,7 @@ async function signIn(user,password=null) {
 function startAuthCheck() {
   clearInterval(authTimer);
   authTimer=setInterval(async()=>{
-    try { const s=await checkSession(); if(!s.authenticated){currentUser=null;showAuth(formatError(appError("SESSION_EXPIRED","セッションの有効期限が切れました。再ログインしてください。")));} }
+    try { const s=await checkSession(); if(!s.authenticated){closeCryptoV2Session();currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;showAuth(formatError(appError("SESSION_EXPIRED","セッションの有効期限が切れました。再ログインしてください。")));} }
     catch {showError(appError("AUTH_RECHECK_FAILED","認証サーバーに接続できません。"));}
   },300000);
 }
@@ -1030,6 +1043,7 @@ async function logout() {
   el.logout.disabled=true;
   try {
     await api("/api/auth/logout",{method:"POST"});
+    closeCryptoV2Session();
     currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;
     clearInterval(authTimer);clearInterval(refreshTimer);setAuthMode("login");showAuth();toast("ログアウトしました。");
   } catch(e) {showError(e);}
