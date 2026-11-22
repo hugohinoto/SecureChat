@@ -590,7 +590,7 @@ async function ensureIdentity(password=null) {
           throw appError("IDENTITY_BACKUP_INVALID","バックアップの公開鍵がサーバー登録情報と一致しません。");
         }
         const {backupPayload,...restoredIdentity}=restored;
-        const record={...restoredIdentity,peerPins:saved?.peerPins||{}};
+        const record={...restoredIdentity,peerPins:saved?.peerPins||{},verifiedPeerPins:saved?.verifiedPeerPins||{}};
         await saveIdentity(currentUser.userId,record);setIdentityRecord(record);return;
       }
     }
