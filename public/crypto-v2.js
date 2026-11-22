@@ -67,26 +67,6 @@ function openVault() {
   });
 }
 
-async function readVault(userId) {
-  const db = await openVault();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(VAULT_STORE, "readonly").objectStore(VAULT_STORE).get(userId);
-    request.onsuccess = () => { db.close(); resolve(request.result || null); };
-    request.onerror = () => { db.close(); reject(request.error); };
-  });
-}
-
-async function writeVault(record) {
-  const db = await openVault();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(VAULT_STORE, "readwrite");
-    transaction.objectStore(VAULT_STORE).put(record);
-    transaction.oncomplete = () => { db.close(); resolve(); };
-    transaction.onerror = () => { db.close(); reject(transaction.error); };
-    transaction.onabort = () => { db.close(); reject(transaction.error || new Error("CRYPTO_VAULT_WRITE_ABORTED")); };
-  });
-}
-
 async function createDeviceVault(userId) {
   const deviceId = "SC_" + crypto.randomUUID().replace(/-/g, "").slice(0, 32);
   const storePassphrase = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
@@ -104,7 +84,7 @@ async function createDeviceVault(userId) {
   const candidate = { userId, deviceId, wrappingKey, iv, ciphertext, createdAt: Date.now() };
 
   // IndexedDB readwrite transactions serialize across tabs on the same origin.
-  // Use add/put only after the transactional read so two tabs cannot create
+  // Use add only after the transactional read so two tabs cannot create
   // different device IDs and overwrite each other's recovery pointer.
   const db = await openVault();
   const record = await new Promise((resolve, reject) => {
