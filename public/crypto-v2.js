@@ -194,76 +194,79 @@ async function trustVerifiedDevices(context, devices) {
 
 async function processOutgoingRequest(context, request) {
   if (!request) return;
-  const body = parseRequestBody(request);
+  try {
+    const body = parseRequestBody(request);
 
-  if (request.type === RequestType.KeysUpload) {
-    const authorization = body.device_keys
-      ? await signDeviceAuthorization(context, body.device_keys)
-      : undefined;
-    const result = await api("/api/crypto/keys/upload", {
-      deviceId: context.deviceId,
-      method: "POST",
-      body: { ...body, ...(authorization ? { account_authorization_signature: authorization } : {}) }
-    });
-    await context.machine.markRequestAsSent(request.id, request.type, JSON.stringify(result));
-    return;
-  }
-
-  if (request.type === RequestType.KeysQuery) {
-    const result = await api("/api/crypto/keys/query", {
-      deviceId: context.deviceId,
-      method: "POST",
-      body
-    });
-    const verifiedDevices = [];
-    for (const [mxUserId, userDevices] of Object.entries(result.device_keys || {})) {
-      const userId = parseMatrixUserId(mxUserId);
-      for (const [deviceId, deviceKeys] of Object.entries(userDevices || {})) {
-        const authorization = result.device_authorizations?.[mxUserId]?.[deviceId];
-        const accepted = await context.authorizeDevice(userId, deviceId, deviceKeys, authorization);
-        if (!accepted) {
-          delete userDevices[deviceId];
-          continue;
-        }
-        verifiedDevices.push({ matrixUserId: mxUserId, deviceId });
-      }
+    if (request.type === RequestType.KeysUpload) {
+      const authorization = body.device_keys
+        ? await signDeviceAuthorization(context, body.device_keys)
+        : undefined;
+      const result = await api("/api/crypto/keys/upload", {
+        deviceId: context.deviceId,
+        method: "POST",
+        body: { ...body, ...(authorization ? { account_authorization_signature: authorization } : {}) }
+      });
+      await context.machine.markRequestAsSent(request.id, request.type, JSON.stringify(result));
+      return;
     }
-    const { device_authorizations: _ignored, ...matrixResponse } = result;
-    await context.machine.markRequestAsSent(request.id, request.type, JSON.stringify(matrixResponse));
-    await trustVerifiedDevices(context, verifiedDevices);
-    return;
-  }
 
-  if (request.type === RequestType.KeysClaim) {
-    const result = await api("/api/crypto/keys/claim", {
-      deviceId: context.deviceId,
-      method: "POST",
-      body
-    });
-    await context.machine.markRequestAsSent(request.id, request.type, JSON.stringify(result));
-    return;
-  }
-
-  if (request.type === RequestType.ToDevice) {
-    const result = await api("/api/crypto/to-device", {
-      deviceId: context.deviceId,
-      method: "POST",
-      body: {
-        event_type: request.event_type,
-        transaction_id: request.txn_id || request.id,
-        messages: body.messages || {}
+    if (request.type === RequestType.KeysQuery) {
+      const result = await api("/api/crypto/keys/query", {
+        deviceId: context.deviceId,
+        method: "POST",
+        body
+      });
+      const verifiedDevices = [];
+      for (const [mxUserId, userDevices] of Object.entries(result.device_keys || {})) {
+        const userId = parseMatrixUserId(mxUserId);
+        for (const [deviceId, deviceKeys] of Object.entries(userDevices || {})) {
+          const authorization = result.device_authorizations?.[mxUserId]?.[deviceId];
+          const accepted = await context.authorizeDevice(userId, deviceId, deviceKeys, authorization);
+          if (!accepted) {
+            delete userDevices[deviceId];
+            continue;
+          }
+          verifiedDevices.push({ matrixUserId: mxUserId, deviceId });
+        }
       }
-    });
-    await context.machine.markRequestAsSent(request.id, request.type, JSON.stringify({}));
-    return;
+      const { device_authorizations: _ignored, ...matrixResponse } = result;
+      await context.machine.markRequestAsSent(request.id, request.type, JSON.stringify(matrixResponse));
+      await trustVerifiedDevices(context, verifiedDevices);
+      return;
+    }
+
+    if (request.type === RequestType.KeysClaim) {
+      const result = await api("/api/crypto/keys/claim", {
+        deviceId: context.deviceId,
+        method: "POST",
+        body
+      });
+      await context.machine.markRequestAsSent(request.id, request.type, JSON.stringify(result));
+      return;
+    }
+
+    if (request.type === RequestType.ToDevice) {
+      await api("/api/crypto/to-device", {
+        deviceId: context.deviceId,
+        method: "POST",
+        body: {
+          event_type: request.event_type,
+          transaction_id: request.txn_id || request.id,
+          messages: body.messages || {}
+        }
+      });
+      await context.machine.markRequestAsSent(request.id, request.type, JSON.stringify({}));
+      return;
+    }
+
+    throw cryptoError(
+      "CRYPTO_SDK_REQUEST_UNSUPPORTED",
+      "まだ対応していない暗号プロトコル要求です（type " + request.type + "）。安全のため処理を中止しました。"
+    );
+  } finally {
+    request.free?.();
   }
-
-  throw cryptoError(
-    "CRYPTO_SDK_REQUEST_UNSUPPORTED",
-    "まだ対応していない暗号プロトコル要求です（type " + request.type + "）。安全のため処理を中止しました。"
-  );
 }
-
 async function flushOutgoing(context) {
   const requests = await context.machine.outgoingRequests();
   for (const request of requests) await processOutgoingRequest(context, request);
@@ -375,21 +378,27 @@ export async function syncCryptoV2(userId) {
       });
     }
     await flushOutgoing(context);
+    // The SDK requires missing Olm sessions to be checked after sync as well as
+    // before sharing a room key. Keep this operation serialized per device.
+    const missing = await context.machine.getMissingSessions([]);
+    if (missing) await processOutgoingRequest(context, missing);
+    await flushOutgoing(context);
     return { received: events.length };
   });
 }
 async function registerAndTrustParticipants(context, peerUserId) {
   const participantIds = [context.userId, peerUserId].map(matrixUserId);
-  const query = context.machine.queryKeysForUsers(participantIds.map(id => new UserId(id)));
+  const queryUsers = participantIds.map(id => new UserId(id));
+  const query = context.machine.queryKeysForUsers(queryUsers);
   await processOutgoingRequest(context, query);
   await flushOutgoing(context);
-  const missing = await context.machine.getMissingSessions(
-    participantIds.map(id => new UserId(id))
-  );
-  if (missing) await processOutgoingRequest(context, missing);
-  await flushOutgoing(context);
+  await withSyncLock(context.userId, async () => {
+    const users = participantIds.map(id => new UserId(id));
+    const missing = await context.machine.getMissingSessions(users);
+    if (missing) await processOutgoingRequest(context, missing);
+    await flushOutgoing(context);
+  });
 }
-
 function roomId(conversationId) {
   return new RoomId("!" + conversationId.replace(/-/g, "") + ":" + MATRIX_SERVER);
 }
