@@ -299,7 +299,7 @@ async function authorizeCryptoDevice(matrixId,deviceId,deviceKeys,accountSignatu
   const curve=deviceKeys.keys?.["curve25519:"+deviceId];
   const ed=deviceKeys.keys?.["ed25519:"+deviceId];
   if(typeof curve!=="string" || typeof ed!=="string" ||
-     !/^[A-Za-z0-9_-]{43}$/.test(curve) || !/^[A-Za-z0-9_-]{43}$/.test(ed) ||
+     !/^[A-Za-z0-9+/_-]{43}=?$/.test(curve) || !/^[A-Za-z0-9+/_-]{43}=?$/.test(ed) ||
      typeof accountSignature!=="string")return false;
   const key=await crypto.subtle.importKey("raw",fromB64(root.identitySigningPublicKey),{name:"ECDSA",namedCurve:"P-256"},false,["verify"]);
   return crypto.subtle.verify(
