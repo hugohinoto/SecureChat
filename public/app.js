@@ -1036,7 +1036,7 @@ async function deleteAccount() {
   try {
     await api("/api/auth/delete",{method:"POST",body:{password}});
     await removeIdentity(userId);
-    if(cryptoV2Module?.closeCryptoV2 && currentUser)cryptoV2Module.closeCryptoV2(currentUser.userId);
+    await closeCryptoV2Session();
     cryptoV2Module=null;cryptoV2Ready=false;currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;activeProtocolVersion=1;
     clearInterval(authTimer);clearInterval(refreshTimer);
     setAuthMode("login");showAuth();toast("アカウントと関連データを削除しました。");
@@ -1047,7 +1047,7 @@ async function logout() {
   el.logout.disabled=true;
   try {
     await api("/api/auth/logout",{method:"POST"});
-    closeCryptoV2Session();
+    await closeCryptoV2Session();
     currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;
     clearInterval(authTimer);clearInterval(refreshTimer);setAuthMode("login");showAuth();toast("ログアウトしました。");
   } catch(e) {showError(e);}
