@@ -937,7 +937,8 @@ async function deleteAccount() {
   try {
     await api("/api/auth/delete",{method:"POST",body:{password}});
     await removeIdentity(userId);
-    currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;
+    if(cryptoV2Module?.closeCryptoV2 && currentUser)cryptoV2Module.closeCryptoV2(currentUser.userId);
+    cryptoV2Module=null;cryptoV2Ready=false;currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;activeProtocolVersion=1;
     clearInterval(authTimer);clearInterval(refreshTimer);
     setAuthMode("login");showAuth();toast("アカウントと関連データを削除しました。");
   } catch(e) {showError(e);}
@@ -1123,18 +1124,41 @@ async function openConversation(peerUserId, triggerButton = null) {
 }
 async function selectConversation(c) {
   setMobileView("chat");
-  activeConversation={id:c.id,peerUserId:c.peer_user_id};activeKey=null;
+  activeConversation={id:c.id,peerUserId:c.peer_user_id};
+  activeKey=null;
+  activeProtocolVersion=1;
+  activePeerSigningKey=null;
+  activePeerFingerprintVerified=false;
+  activeCryptoMode={protocolVersion:1,approvedByMe:false,approvedByPeer:false};
   el.fingerprint.hidden=true;
   lastMessageCreatedAt=0;lastMessageId="";messageLoadBusy=false;
-  el.chatTitle.textContent=c.peer_user_id;el.chatSubtitle.textContent="@"+c.peer_user_id+" · 1対1の個別チャット";
+  el.chatTitle.textContent=c.peer_user_id;
+  el.chatSubtitle.textContent="@"+c.peer_user_id+" · 1対1の個別チャット";
   el.securityTitle.textContent="暗号化チャット（試作）";
-  el.securityDescription.textContent="ECDH P-256 + HKDF + AES-GCM。ECDSA署名と端末内の鍵ピン留めを検証します。初回指紋は別経路で照合してください。前方秘匿性は未実装です。";
-  el.securityTag.textContent="E2EE PROTOTYPE";
-  el.composerHint.textContent="端末内で暗号化 · メッセージは1時間後に削除";
+  el.securityDescription.textContent="既存メッセージはv1で復号し、新しい会話は双方の同意後に端末別Olm/Megolm v2へ移行できます。前方秘匿性v2は両者の端末登録と指紋確認が必要です。";
+  el.securityTag.textContent="E2EE";
+  el.composerHint.textContent="暗号化 · メッセージは1時間後に削除";
   welcome("暗号化チャット","このブラウザーで暗号化してから送信します。");
   updateSend();
-  try {await deriveKey(c.id,c.peer_user_id);await loadMessages(true);updateSend();}
-  catch(e){showError(e,"暗号鍵を準備できません: ");el.input.disabled=true;}
+  try {
+    await deriveKey(c.id,c.peer_user_id);
+    await refreshCryptoConversationMode();
+    if(activeProtocolVersion===2) {
+      el.securityTitle.textContent="前方秘匿性v2 — 端末別暗号化";
+      el.securityDescription.textContent="Olmで端末間の鍵を配布し、Megolmのメッセージ鍵ラチェットで暗号化します。未確認端末には鍵を共有しません。";
+      el.securityTag.textContent="RATCHET v2";
+    } else {
+      el.securityTitle.textContent="暗号化方式 v1 — 試作版";
+      el.securityDescription.textContent="現行v1は会話単位の長期鍵を使用し、前方秘匿性はありません。v2への移行には双方の承認と別経路での指紋照合が必要です。";
+      el.securityTag.textContent="v1 / FSなし";
+    }
+    await loadMessages(true);
+    updateSend();
+  } catch(e) {
+    showError(e,"暗号鍵を準備できません: ");
+    el.input.disabled=true;
+  }
+  updateCryptoV2Controls();
   await refreshSidebar();
 }
 async function loadMessages(fullSync=false) {
@@ -1143,6 +1167,9 @@ async function loadMessages(fullSync=false) {
   const id=activeConversation.id,peer=activeConversation.peerUserId;
   try {
     const key=await deriveKey(id,peer);
+    if(activeProtocolVersion===2 && cryptoV2Ready) {
+      await cryptoV2Module.syncCryptoV2(currentUser.userId);
+    }
     const cursor=fullSync||!lastMessageCreatedAt?"":("?after="+lastMessageCreatedAt+"&afterId="+encodeURIComponent(lastMessageId));
     const data=await api("/api/conversations/"+id+"/messages"+cursor);
     if(!activeConversation||activeConversation.id!==id)return;
@@ -1150,9 +1177,21 @@ async function loadMessages(fullSync=false) {
       el.list.replaceChildren();
       lastMessageCreatedAt=0;lastMessageId="";
     }
-    for(const m of data.messages){
-      try {appendMessage(await decryptText(m,key),m.sender_user_id,m.created_at,m.expires_at,m.id);}
-      catch {appendMessage("復号できません（鍵が一致しない可能性があります）。",m.sender_user_id,m.created_at,m.expires_at,m.id);}
+    for(const m of data.messages) {
+      try {
+        const plain=Number(m.protocol_version||1)===2
+          ? await cryptoV2Module.decryptConversationMessage(currentUser.userId,id,peer,m)
+          : await decryptText(m,key);
+        appendMessage(plain,m.sender_user_id,m.created_at,m.expires_at,m.id);
+      } catch(error) {
+        appendMessage(
+          Number(m.protocol_version||1)===2
+            ? "復号できません（この端末の鍵・送信端末の本人確認・受信済み鍵を確認してください）。"
+            : "復号できません（鍵が一致しない可能性があります）。",
+          m.sender_user_id,m.created_at,m.expires_at,m.id
+        );
+        if(Number(m.protocol_version||1)===2)showError(error,"v2メッセージの検証に失敗しました: ");
+      }
       if(m.created_at>lastMessageCreatedAt || (m.created_at===lastMessageCreatedAt && m.id>lastMessageId)) {
         lastMessageCreatedAt=m.created_at;lastMessageId=m.id;
       }
@@ -1171,11 +1210,21 @@ async function sendMessage() {
   if(busy||!activeConversation)return;
   const text=el.input.value.trim();if(!text)return;
   if(Array.from(text).length>MAX_MESSAGE_LENGTH){showError(appError("MESSAGE_LENGTH_EXCEEDED","メッセージは2000文字以内にしてください。"));return;}
+  if(activeProtocolVersion===2 && !cryptoV2Ready) {
+    showError(appError("CRYPTO_V2_DEVICE_NOT_INITIALIZED","この端末のv2暗号鍵が準備できていません。"));
+    return;
+  }
   busy=true;updateSend();
   try {
-    const key=await deriveKey(activeConversation.id,activeConversation.peerUserId);
-    const encrypted=await encryptText(text,key);
-    await api("/api/conversations/"+activeConversation.id+"/messages",{method:"POST",body:encrypted});
+    if(activeProtocolVersion===2) {
+      await cryptoV2Module.encryptConversationMessage(
+        currentUser.userId,activeConversation.id,activeConversation.peerUserId,text
+      );
+    } else {
+      const key=await deriveKey(activeConversation.id,activeConversation.peerUserId);
+      const encrypted=await encryptText(text,key);
+      await api("/api/conversations/"+activeConversation.id+"/messages",{method:"POST",body:encrypted});
+    }
     el.input.value="";el.input.style.height="auto";await loadMessages(true);
   } catch(e){showError(e);}
   finally {busy=false;updateSend();el.input.focus();}
@@ -1197,6 +1246,7 @@ el.search.addEventListener("keydown",e=>{if(e.key==="Enter")searchUsers();});
 el.input.addEventListener("input",()=>{el.input.style.height="auto";el.input.style.height=Math.min(el.input.scrollHeight,125)+"px";updateSend();});
 el.input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendMessage();}});
 el.send.addEventListener("click",sendMessage);
+el.cryptoV2Approve?.addEventListener("click",approveCryptoV2ForActiveConversation);
 window.addEventListener("focus",()=>{
   if(!currentUser)return;
   if(activeConversation)loadMessages(false).catch(()=>{});
