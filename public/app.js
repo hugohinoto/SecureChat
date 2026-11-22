@@ -125,8 +125,8 @@ function setMobileView(view) {
 }
 function updateSend() {
   el.count.textContent = Array.from(el.input.value).length + " / " + MAX_MESSAGE_LENGTH;
-  el.input.disabled = !currentUser || !activeConversation || busy;
-  el.send.disabled = !currentUser || !activeConversation || busy || !el.input.value.trim();
+  el.input.disabled = !currentUser || !activeConversation || busy || (activeProtocolVersion===2 && !cryptoV2Ready);
+  el.send.disabled = !currentUser || !activeConversation || busy || (activeProtocolVersion===2 && !cryptoV2Ready) || !el.input.value.trim();
 }
 function time(value) {
   const date = new Date(value);
@@ -845,6 +845,7 @@ async function signIn(user,password=null) {
   await loadPublicAnnouncements();
   try {
     await ensureIdentity(password);
+    await initializeCryptoV2IfEnabled();
     await refreshSidebar();
   } catch (error) {
     currentUser=null;
