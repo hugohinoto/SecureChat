@@ -42,6 +42,7 @@ const EXPECTED_MIGRATIONS = [
 
 // Cloudflare D1 system-owned objects. These are not application schema.
 const SYSTEM_RESERVED_D1_OBJECTS = new Set(["_cf_KV"]);
+const NON_APPLICATION_D1_OBJECTS = new Set([...SYSTEM_RESERVED_D1_OBJECTS, "d1_migrations"]);
 
 const EXPECTED_FOREIGN_KEYS = [
   ["sessions","user_id","users","id"],
@@ -95,7 +96,7 @@ async function checkSchema(env,checks) {
       "SELECT name,type,sql FROM sqlite_master WHERE type IN ('table','view','trigger') AND name NOT LIKE 'sqlite_%'"
     ).all());
     // Ignore D1's reserved storage table when comparing application schema.
-    const applicationObjects=objects.filter(item=>!SYSTEM_RESERVED_D1_OBJECTS.has(item.name));
+    const applicationObjects=objects.filter(item=>!NON_APPLICATION_D1_OBJECTS.has(item.name));
     const tableNames=new Set(applicationObjects.filter(x=>x.type==="table").map(x=>x.name));
     const missingTables=[],missingColumns=[];
     for(const [table,columns] of Object.entries(EXPECTED_TABLES)) {
