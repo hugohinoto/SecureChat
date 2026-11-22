@@ -67,3 +67,14 @@ CREATE TABLE IF NOT EXISTS conversation_crypto_modes (
   enabled_by_user_id TEXT NOT NULL REFERENCES users(id),
   enabled_at INTEGER NOT NULL
 );
+
+-- Require each account to explicitly approve the irreversible v2 cutover.
+CREATE TABLE IF NOT EXISTS conversation_crypto_approvals (
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  approved_at INTEGER NOT NULL,
+  PRIMARY KEY (conversation_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS conversation_crypto_approvals_user_idx
+  ON conversation_crypto_approvals(user_id, conversation_id);
