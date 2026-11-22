@@ -23,6 +23,8 @@ const machines = new Map();
 const initializers = new Map();
 const roomLocks = new Map();
 const syncLocks = new Map();
+const machineLocks = new Map();
+const deviceOwnership = new Map();
 
 function toBase64(bytes) {
   let binary = "";
@@ -286,6 +288,55 @@ async function withLock(map, key, callback) {
 
 const withRoomLock = (key, callback) => withLock(roomLocks, key, callback);
 const withSyncLock = (key, callback) => withLock(syncLocks, key, callback);
+const withMachineLock = (key, callback) => withLock(machineLocks, key, callback);
+
+async function acquireDeviceOwnership(userId) {
+  if (deviceOwnership.has(userId)) return;
+  const lockManager = globalThis.navigator?.locks;
+  if (!lockManager?.request) {
+    throw cryptoError(
+      "CRYPTO_CROSS_TAB_LOCK_UNAVAILABLE",
+      "このブラウザーは複数タブ間の暗号鍵ロックに対応していません。安全のため前方秘匿性v2をこの環境では有効にできません。"
+    );
+  }
+  let resolveAcquired, rejectAcquired, releaseHold;
+  const acquired = new Promise((resolve, reject) => {
+    resolveAcquired = resolve;
+    rejectAcquired = reject;
+  });
+  const hold = new Promise(resolve => { releaseHold = resolve; });
+  const state = { release: releaseHold, request: null };
+  deviceOwnership.set(userId, state);
+  state.request = lockManager.request(
+    "securechat-crypto-v2-device:" + userId,
+    { mode: "exclusive", ifAvailable: true },
+    async lock => {
+      if (!lock) {
+        rejectAcquired(cryptoError(
+          "CRYPTO_DEVICE_ALREADY_OPEN_IN_ANOTHER_TAB",
+          "この端末の暗号化セッションは別のタブで使用中です。安全のため同じブラウザーでは1つのタブだけでv2を使用してください。"
+        ));
+        return;
+      }
+      resolveAcquired();
+      await hold;
+    }
+  ).catch(error => rejectAcquired(error));
+  try {
+    await acquired;
+  } catch (error) {
+    deviceOwnership.delete(userId);
+    state.release();
+    throw error;
+  }
+}
+
+function releaseDeviceOwnership(userId) {
+  const state = deviceOwnership.get(userId);
+  if (!state) return;
+  deviceOwnership.delete(userId);
+  state.release();
+}
 
 export async function initializeCryptoV2(options) {
   const userId = String(options.userId || "").toLowerCase();
@@ -297,6 +348,8 @@ export async function initializeCryptoV2(options) {
   if (machines.has(userId)) return machines.get(userId);
   if (initializers.has(userId)) return initializers.get(userId);
   const initializer = (async () => {
+    await acquireDeviceOwnership(userId);
+    if (machines.has(userId)) return machines.get(userId);
     await initAsync();
     const vault = await createDeviceVault(userId);
     const machine = await OlmMachine.initialize(
@@ -320,6 +373,7 @@ export async function initializeCryptoV2(options) {
     } catch (error) {
       machines.delete(userId);
       machine.close();
+      releaseDeviceOwnership(userId);
       throw error;
     }
     return context;
@@ -345,7 +399,7 @@ export async function cryptoV2Status(userId) {
 
 export async function syncCryptoV2(userId) {
   const key = String(userId).toLowerCase();
-  return withSyncLock(key, async () => {
+  return withMachineLock(key, () => withSyncLock(key, async () => {
     const context = machines.get(key);
     if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
     const data = await api("/api/crypto/sync", { deviceId: context.deviceId });
@@ -412,7 +466,7 @@ export async function syncCryptoV2(userId) {
     if (missing) await processOutgoingRequest(context, missing);
     await flushOutgoing(context);
     return { received: events.length };
-  });
+  }));
 }
 async function registerAndTrustParticipants(context, peerUserId) {
   const participantIds = [context.userId, peerUserId].map(matrixUserId);
@@ -474,32 +528,37 @@ export async function getConversationCryptoMode(userId, conversationId) {
 }
 
 export async function prepareEncryptedConversation(userId, conversationId, peerUserId) {
-  const context = machines.get(String(userId).toLowerCase());
+  const key = String(userId).toLowerCase();
+  const context = machines.get(key);
   if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
   await syncCryptoV2(userId);
-  return withRoomLock(conversationId, () => prepareRoom(context, conversationId, peerUserId));
+  return withMachineLock(key, () => withRoomLock(conversationId, () => prepareRoom(context, conversationId, peerUserId)));
 }
 
 export async function approveAndPrepareConversation(userId, conversationId, peerUserId) {
-  const context = machines.get(String(userId).toLowerCase());
+  const key = String(userId).toLowerCase();
+  const context = machines.get(key);
   if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
   await syncCryptoV2(userId);
-  const mode = await api("/api/crypto/conversations/" + encodeURIComponent(conversationId) + "/mode", {
-    deviceId: context.deviceId,
-    method: "POST",
-    body: {}
+  return withMachineLock(key, async () => {
+    const mode = await api("/api/crypto/conversations/" + encodeURIComponent(conversationId) + "/mode", {
+      deviceId: context.deviceId,
+      method: "POST",
+      body: {}
+    });
+    if (mode.protocolVersion === 2) {
+      await withRoomLock(conversationId, () => prepareRoom(context, conversationId, peerUserId));
+    }
+    return mode;
   });
-  if (mode.protocolVersion === 2) {
-    await withRoomLock(conversationId, () => prepareRoom(context, conversationId, peerUserId));
-  }
-  return mode;
 }
 
 export async function encryptConversationMessage(userId, conversationId, peerUserId, text) {
-  const context = machines.get(String(userId).toLowerCase());
+  const key = String(userId).toLowerCase();
+  const context = machines.get(key);
   if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
   await syncCryptoV2(userId);
-  return withRoomLock(conversationId, async () => {
+  return withMachineLock(key, () => withRoomLock(conversationId, async () => {
     await prepareRoom(context, conversationId, peerUserId);
     const room = roomId(conversationId);
     try {
@@ -519,12 +578,14 @@ export async function encryptConversationMessage(userId, conversationId, peerUse
     } finally {
       room.free();
     }
-  });
+  }));
 }
 
 export async function decryptConversationMessage(userId, conversationId, expectedPeerUserId, message) {
-  const context = machines.get(String(userId).toLowerCase());
+  const key = String(userId).toLowerCase();
+  const context = machines.get(key);
   if (!context) throw cryptoError("CRYPTO_DEVICE_NOT_INITIALIZED", "この端末の暗号鍵が初期化されていません。");
+  return withMachineLock(key, async () => {
   let encryptedEvent;
   try { encryptedEvent = JSON.parse(message.ciphertext); }
   catch { throw cryptoError("CRYPTO_ENVELOPE_INVALID", "保存された暗号化メッセージの形式が不正です。"); }
@@ -579,6 +640,7 @@ export async function decryptConversationMessage(userId, conversationId, expecte
     settings.free();
     room.free();
   }
+  });
 }
 
 export async function listCryptoDevices(userId) {
@@ -610,7 +672,9 @@ export async function getCryptoDeviceState(userId) {
 export function closeCryptoV2(userId) {
   const key = String(userId).toLowerCase();
   const context = machines.get(key);
-  if (!context) return;
-  machines.delete(key);
-  context.machine.close();
+  if (context) {
+    machines.delete(key);
+    context.machine.close();
+  }
+  releaseDeviceOwnership(key);
 }
