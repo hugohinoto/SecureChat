@@ -41,12 +41,12 @@ This rotation applies only to application-stored sensitive fields (announcement 
 
 1. Keep the existing `APP_DATA_ENCRYPTION_KEY` (generation v1) unchanged and store a protected offline backup. Never paste key material into GitHub, chat, or logs.
 2. Generate a new random secret with at least 32 bytes of entropy and add it as the Worker Secret `APP_DATA_ENCRYPTION_KEY_V2`.
-3. Set the non-secret Worker variable `APP_DATA_ENCRYPTION_ACTIVE_VERSION=2`. Do not remove v1.
-4. Deploy the Worker. The existing five-minute Cron migration re-encrypts up to 10 announcements, 20 audit records, and 20 bug reports per run.
+3. Keep the non-secret Worker variable `APP_DATA_ENCRYPTION_ACTIVE_VERSION=2` in the top-level `vars` section of `wrangler.jsonc` (this project deploys the default Production environment). Do not rely only on a dashboard variable: Wrangler treats its config as the source of truth and can overwrite dashboard variables on the next deploy. Do not remove v1.
+4. Deploy the Worker. Wrangler deployments preserve Secrets that are not explicitly deleted, so keep both v1 and v2 Secret names configured. The existing five-minute Cron migration re-encrypts up to 10 announcements, 20 audit records, and 20 bug reports per run.
 5. Re-run the admin security diagnostic. `key-rotation` remains warning while older encrypted rows remain, becomes critical if an old key required by stored ciphertext is missing, and passes only after no ciphertext from an older generation remains. The separate `sensitive-data-migration` check must also pass.
 6. Keep v1 available through a recovery period and retain a protected backup. Do not delete v1 merely because v2 is active; only consider retirement after the diagnostics show zero old-generation records, backups are verified, and recovery has been tested.
 
-The Worker cannot create or change Cloudflare Secrets/Variables on your behalf. Perform steps 2–3 in **Workers & Pages → securechat → Settings → Variables and Secrets**. Do not share secret values.
+The Worker cannot create or change Cloudflare Secrets on your behalf. Add `APP_DATA_ENCRYPTION_KEY_V2` as a Production Secret in **Workers & Pages → securechat → Settings → Variables and Secrets**. The non-secret active-version variable is maintained in `wrangler.jsonc` and deployed from the repository. Do not share secret values.
 
 ## Cloudflare Invocation Logs and application logs
 
