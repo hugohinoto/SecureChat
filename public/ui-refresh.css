@@ -848,3 +848,59 @@ button:disabled { cursor: not-allowed !important; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+
+/* Forward-secrecy migration controls */
+.crypto-v2-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 8px 24px 0;
+  padding: 8px 11px;
+  border: 1px solid var(--sc-border);
+  border-radius: 10px;
+  background: rgba(255,255,255,.025);
+}
+.crypto-v2-actions p {
+  flex: 1 1 250px;
+  margin: 0;
+  color: #aebdd1;
+  font-size: 10px;
+  line-height: 1.55;
+}
+.crypto-v2-button {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid rgba(142,215,232,.30);
+  border-radius: 9px;
+  color: #ddf9ff;
+  background: rgba(69,151,177,.16);
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.crypto-v2-button:hover:not(:disabled) {
+  border-color: rgba(142,215,232,.55);
+  background: rgba(69,151,177,.27);
+}
+.crypto-v2-button:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+}
+.fingerprint-panel .crypto-v2-button {
+  margin-top: 8px;
+}
+.fingerprint-panel p {
+  margin: 5px 0;
+  line-height: 1.6;
+}
+@media (max-width: 680px) {
+  .crypto-v2-actions {
+    margin: 7px 10px 0;
+    padding: 8px 10px;
+    align-items: stretch;
+  }
+  .crypto-v2-actions p { flex-basis: 100%; font-size: 9px; }
+  .crypto-v2-button { width: 100%; min-height: 42px; font-size: 12px; }
+}
