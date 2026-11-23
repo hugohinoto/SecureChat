@@ -200,3 +200,10 @@ test("Megolm envelopes accept standard base64 session identifiers", () => {
   const source = readFileSync(new URL("../worker/crypto-api.js", import.meta.url), "utf8");
   assert.ok(source.includes("A-Za-z0-9+/_-"));
 });
+
+
+test("keys-query adapter returns the full Matrix response envelope", () => {
+  const source = readFileSync(new URL("../worker/crypto-api.js", import.meta.url), "utf8");
+  assert.ok(source.includes("master_keys: {}, self_signing_keys: {}, user_signing_keys: {}"));
+  assert.ok(source.includes("device_authorizations: deviceAuthorizations"));
+});
