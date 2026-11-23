@@ -98,7 +98,7 @@ const knownColumns = {
   contacts:["owner_user_id","contact_user_id","created_at"],
   conversations:["id","created_by","created_at","expires_in_seconds"],
   conversation_members:["conversation_id","user_id","joined_at"],
-  encrypted_messages:["id","conversation_id","sender_user_id","ciphertext","nonce","algorithm","created_at","expires_at"],
+  encrypted_messages:["id","conversation_id","sender_user_id","ciphertext","nonce","algorithm","created_at","expires_at","protocol_version","sender_device_id"],
   conversation_keys:["conversation_id","user_id","key_envelope","created_at"],
   verified_contact_pairs:["user_a_id","user_b_id","verified_at"],
   contact_invitations:["id","inviter_user_id","invitee_user_id","inviter_code_hash","inviter_code_expires_at","inviter_attempts","invitee_code_hash","invitee_code_expires_at","invitee_attempts","invitee_verified_at","inviter_verified_at","expires_at","created_at"],
@@ -108,7 +108,12 @@ const knownColumns = {
   admin_audit_logs:["id","admin_user_id","action","target_user_id","details_json","created_at"],
   bug_reports:["id","reporter_user_id","encrypted_payload","status","created_at","updated_at","resolved_at"],
   conversation_pairs:["user_a_id","user_b_id","conversation_id","created_at"],
-  conversation_reads:["conversation_id","user_id","last_read_at","last_read_message_id","updated_at"]
+  conversation_reads:["conversation_id","user_id","last_read_at","last_read_message_id","updated_at"],
+  crypto_devices:["user_id","device_id","device_keys_json","account_authorization_signature","created_at","updated_at","last_seen_at","revoked_at"],
+  crypto_one_time_keys:["id","user_id","device_id","key_id","algorithm","key_json","is_fallback","created_at","claimed_at","claimed_by_user_id","claimed_by_device_id"],
+  crypto_to_device_inbox:["id","recipient_user_id","recipient_device_id","sender_user_id","sender_device_id","event_type","content_json","transaction_id","created_at","expires_at"],
+  conversation_crypto_modes:["conversation_id","protocol_version","enabled_by_user_id","enabled_at"],
+  conversation_crypto_approvals:["conversation_id","user_id","approved_at"]
 };
 function environment(options) {
   return {
@@ -148,13 +153,26 @@ test("key rotation passes only after all encrypted rows use the active generatio
   assert.equal(result.checks.find(item=>item.id==="key-rotation").status,"ok");
 });
 
-test("forward secrecy and admin passkeys remain explicitly incomplete until implemented", async () => {
-  const result=await summarizeSecurityDiagnostics(environment());
-  assert.equal(result.checks.find(item=>item.id==="forward-secrecy").status,"critical");
+test("forward secrecy remains critical while the v2 flag is disabled", async () => {
+  const env=environment();
+  env.SECURECHAT_CRYPTO_V2_ENABLED="false";
+  const result=await summarizeSecurityDiagnostics(env);
+  const forward=result.checks.find(item=>item.id==="forward-secrecy");
+  assert.equal(forward.status,"critical");
+  assert.match(forward.detail,/機能フラグは無効/);
   assert.equal(result.checks.find(item=>item.id==="passkeys").status,"warning");
   const logs=result.checks.find(item=>item.id==="cloudflare-logs");
   assert.equal(logs.status,"warning");
   assert.equal(logs.complete,false);
+});
+
+test("forward secrecy remains critical even when the v2 flag is manually enabled", async () => {
+  const env=environment();
+  env.SECURECHAT_CRYPTO_V2_ENABLED="true";
+  const result=await summarizeSecurityDiagnostics(env);
+  const forward=result.checks.find(item=>item.id==="forward-secrecy");
+  assert.equal(forward.status,"critical");
+  assert.match(forward.detail,/独立レビュー/);
 });
 
 test("diagnostics cover SQL schema, indexes, migration history and runtime integrity", async () => {
@@ -178,7 +196,7 @@ test("a failed database check is reported and does not suppress later checks", a
   assert.ok(result.coverage.notCompleted>=1);
 });
 
-test("diagnostics include the multi-device backup and conversation read schema from migration 0011", async () => {
+test("diagnostics include the device-scoped ratchet schema from migration 0012", async () => {
   const result=await summarizeSecurityDiagnostics(environment());
   const missingSchema=result.checks.find(item=>item.id==="schema-inventory");
   const migration=result.checks.find(item=>item.id==="schema-migrations");
@@ -189,7 +207,15 @@ test("diagnostics include the multi-device backup and conversation read schema f
   assert.equal(indexes.status,"ok");
   assert.equal(foreignKeys.status,"ok");
   assert.ok(securityDiagnosticSchema.migrations.includes("0011_multi_device_identity_backup_and_reads.sql"));
-  assert.ok(securityDiagnosticSchema.tables.includes("conversation_reads"));
+  assert.ok(securityDiagnosticSchema.migrations.includes("0012_device_scoped_ratchet_transport.sql"));
+  for(const table of [
+    "conversation_reads","crypto_devices","crypto_one_time_keys","crypto_to_device_inbox",
+    "conversation_crypto_modes","conversation_crypto_approvals"
+  ]) assert.ok(securityDiagnosticSchema.tables.includes(table), "Missing table: "+table);
+  assert.ok(securityDiagnosticSchema.tables.includes("encrypted_messages"));
+  assert.ok(securityDiagnosticSchema.foreignKeys.some(([table,from,to,ref]) =>
+    table==="crypto_one_time_keys" && from==="device_id" && to==="crypto_devices" && ref==="device_id"
+  ));
 });
 
 test("missing required D1 columns are critical rather than passing", async () => {
