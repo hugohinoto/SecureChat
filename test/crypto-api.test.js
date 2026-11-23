@@ -160,3 +160,38 @@ test("clients cannot forge the server-only device revocation event", async () =>
   assert.equal((await response.json()).error, "CRYPTO_TO_DEVICE_INVALID");
   assert.equal(db.batches.length, 0);
 });
+
+
+class AckTestStatement {
+  constructor(db, sql) { this.db=db; this.sql=sql; this.values=[]; }
+  bind(...values) { this.values=values; return this; }
+  async first() {
+    if (this.sql.includes("SELECT device_id, device_keys_json FROM crypto_devices")) {
+      return { device_id:this.values[1], device_keys_json:"{}" };
+    }
+    return null;
+  }
+  async run() {
+    this.db.lastStatement={sql:this.sql,values:this.values};
+    return {meta:{changes:this.sql.startsWith("DELETE FROM crypto_to_device_inbox")?1:0}};
+  }
+}
+class AckTestDB {
+  prepare(sql) { return new AckTestStatement(this,sql); }
+}
+test("inbox acknowledgement accepts compact 32-hex server-generated event IDs", async () => {
+  const db=new AckTestDB();
+  const response=await handleCryptoApi(
+    new Request("https://securechat.invalid/api/crypto/sync/ack",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-SecureChat-Device":"device-00000001"},
+      body:JSON.stringify({event_ids:["0123456789abcdef0123456789abcdef"]})
+    }),
+    {DB:db,SECURECHAT_CRYPTO_V2_ENABLED:"true"},
+    {id:"user-internal",user_id:"alice_01"},
+    {url:new URL("https://securechat.invalid/api/crypto/sync/ack"),now:1000}
+  );
+  assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{acknowledged:1});
+  assert.ok(db.lastStatement.sql.startsWith("DELETE FROM crypto_to_device_inbox"));
+});
