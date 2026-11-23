@@ -198,5 +198,5 @@ test("inbox acknowledgement accepts compact 32-hex server-generated event IDs", 
 
 test("Megolm envelopes accept standard base64 session identifiers", () => {
   const source = readFileSync(new URL("../worker/crypto-api.js", import.meta.url), "utf8");
-  assert.match(source, /A-Za-z0-9\+\/_-/);
+  assert.ok(source.includes("A-Za-z0-9+/_-"));
 });
