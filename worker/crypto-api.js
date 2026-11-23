@@ -247,7 +247,7 @@ async function queryKeys(request, env, session, now) {
     deviceKeys[matrixId] = byDevice;
     deviceAuthorizations[matrixId] = authorizations;
   }
-  return json({ device_keys: deviceKeys, device_authorizations: deviceAuthorizations, failures: {} });
+  return json({ device_keys: deviceKeys, device_authorizations: deviceAuthorizations, master_keys: {}, self_signing_keys: {}, user_signing_keys: {}, failures: {} });
 }
 
 async function claimKeys(request, env, session, now) {
