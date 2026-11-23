@@ -34,16 +34,17 @@ test("UI clearly states that the current messaging prototype has no forward secr
   assert.match(html, /機密情報の送信には使用しないでください/);
 });
 
+
 test("device-scoped crypto vault uses a single IndexedDB readwrite transaction", () => {
   const cryptoClient = readFileSync(new URL("../public/crypto-v2.js", import.meta.url), "utf8");
   const creation = cryptoClient.slice(
     cryptoClient.indexOf("async function createDeviceVault"),
     cryptoClient.indexOf("async function api(")
   );
-  assert.match(creation, /db\\.transaction\\(VAULT_STORE, "readwrite"\\)/);
-  assert.match(creation, /store\\.get\\(userId\\)/);
-  assert.match(creation, /store\\.add\\(candidate\\)/);
-  assert.doesNotMatch(creation, /await readVault\\(userId\\)/);
+  assert.ok(creation.includes('db.transaction(VAULT_STORE, "readwrite")'));
+  assert.ok(creation.includes("store.get(userId)"));
+  assert.ok(creation.includes("store.add(candidate)"));
+  assert.equal(creation.includes("await readVault(userId)"), false);
 });
 
 test("device revocation controls are present and the current device cannot be revoked", () => {
@@ -51,5 +52,20 @@ test("device revocation controls are present and the current device cannot be re
   assert.match(html, /id="crypto-v2-devices-toggle"/);
   assert.match(html, /id="crypto-v2-device-list"/);
   assert.match(cryptoClient, /CRYPTO_CANNOT_REVOKE_CURRENT_DEVICE/);
-  assert.match(cryptoClient, /org\\.securechat\\.device_revoked/);
+  assert.ok(cryptoClient.includes("org.securechat.device_revoked"));
+});
+
+
+test("crypto v2 requires an exclusive Web Lock for each browser-profile device", () => {
+  const cryptoClient = readFileSync(new URL("../public/crypto-v2.js", import.meta.url), "utf8");
+  assert.ok(cryptoClient.includes("globalThis.navigator?.locks"));
+  assert.ok(cryptoClient.includes('mode: "exclusive", ifAvailable: true'));
+  assert.ok(cryptoClient.includes("CRYPTO_DEVICE_ALREADY_OPEN_IN_ANOTHER_TAB"));
+  assert.ok(cryptoClient.includes("CRYPTO_CROSS_TAB_LOCK_UNAVAILABLE"));
+});
+
+test("v2 conversations cannot silently fall back to v1 in a tab without device ownership", () => {
+  assert.ok(app.includes('/api/crypto/conversations/"+encodeURIComponent(activeConversation.id)+"/mode'));
+  assert.ok(app.includes("このタブでは端末鍵を開けていないため送信・復号できません"));
+  assert.ok(app.includes("await closeCryptoV2Session()"));
 });

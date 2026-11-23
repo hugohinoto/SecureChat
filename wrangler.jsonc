@@ -4,7 +4,8 @@
   "main": "worker/index.js",
   "compatibility_date": "2026-11-18",
   "vars": {
-    "APP_DATA_ENCRYPTION_ACTIVE_VERSION": "2"
+    "APP_DATA_ENCRYPTION_ACTIVE_VERSION": "2",
+    "SECURECHAT_CRYPTO_V2_ENABLED": "false"
   },
   "assets": {
     "directory": "./public",
@@ -40,10 +41,16 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["ChatRoom"]
+      "new_sqlite_classes": [
+        "ChatRoom"
+      ]
     }
   ],
-  "triggers": { "crons": ["*/5 * * * *"] },
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+    ]
+  },
   "observability": {
     "enabled": true,
     "logs": {
