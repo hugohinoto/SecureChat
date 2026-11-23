@@ -121,7 +121,8 @@ test("device revocation uses one set-based query to notify every surviving accou
   assert.deepEqual(await response.json(), {
     revoked: true,
     deviceId: "revoked-device-0001",
-    notifiedDevices: 2
+    notifiedDevices: 2,
+    notificationQueuedAt: 1000
   });
   assert.equal(db.batches.length, 1);
   const notification = db.statements.find(statement =>
