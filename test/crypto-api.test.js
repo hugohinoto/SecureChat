@@ -195,3 +195,8 @@ test("inbox acknowledgement accepts compact 32-hex server-generated event IDs", 
   assert.deepEqual(await response.json(),{acknowledged:1});
   assert.ok(db.lastStatement.sql.startsWith("DELETE FROM crypto_to_device_inbox"));
 });
+
+test("Megolm envelopes accept standard base64 session identifiers", () => {
+  const source = readFileSync(new URL("../worker/crypto-api.js", import.meta.url), "utf8");
+  assert.match(source, /A-Za-z0-9\+\/_-/);
+});
