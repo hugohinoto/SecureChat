@@ -393,7 +393,7 @@ async function acknowledgeInbox(request, env, session) {
   let body;
   try { body = await readBody(request); } catch (error) { return json({ error: error.message }, 400); }
   if (!Array.isArray(body.event_ids) || body.event_ids.length > 100 ||
-      body.event_ids.some(id => typeof id !== "string" || !/^[a-f0-9-]{36}$/i.test(id))) {
+      body.event_ids.some(id => typeof id !== "string" || !(/^[a-f0-9]{32}$/i.test(id) || /^[a-f0-9-]{36}$/i.test(id)))) {
     return json({ error: "CRYPTO_INBOX_ACK_INVALID" }, 400);
   }
   if (!body.event_ids.length) return json({ acknowledged: 0 });
