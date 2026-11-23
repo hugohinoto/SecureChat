@@ -108,6 +108,16 @@
         </div>
         <span class="banner-tag" id="security-tag">FS 未対応</span>
       </section>
+      <div class="crypto-v2-actions" aria-live="polite">
+        <p id="crypto-v2-status">前方秘匿性v2は安全確認中です。</p>
+        <button class="crypto-v2-button" id="crypto-v2-approve-button" type="button" hidden>前方秘匿性v2へ移行（双方の承認）</button>
+        <button class="crypto-v2-button crypto-v2-secondary" id="crypto-v2-devices-toggle" type="button" aria-expanded="false" aria-controls="crypto-v2-devices" hidden>登録端末を管理</button>
+      </div>
+      <section class="crypto-v2-devices" id="crypto-v2-devices" hidden aria-label="暗号化端末一覧">
+        <h2>このアカウントの暗号化端末</h2>
+        <p>端末を失効すると、残存端末は次回同期時に会話用Megolm鍵を更新します。失効端末がオフラインの場合、受信・同期まで反映に時間がかかります。</p>
+        <div id="crypto-v2-device-list" aria-live="polite"></div>
+      </section>
       <details class="public-announcements" id="public-announcements" hidden aria-label="運営からのお知らせ">
         <summary class="public-announcements-toggle">
           <span class="public-announcements-heading">運営からのお知らせ</span>
