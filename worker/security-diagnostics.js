@@ -7,7 +7,7 @@ const EXPECTED_TABLES = {
   contacts: ["owner_user_id","contact_user_id","created_at"],
   conversations: ["id","created_by","created_at","expires_in_seconds"],
   conversation_members: ["conversation_id","user_id","joined_at"],
-  encrypted_messages: ["id","conversation_id","sender_user_id","ciphertext","nonce","algorithm","created_at","expires_at"],
+  encrypted_messages: ["id","conversation_id","sender_user_id","ciphertext","nonce","algorithm","created_at","expires_at","protocol_version","sender_device_id"],
   conversation_keys: ["conversation_id","user_id","key_envelope","created_at"],
   verified_contact_pairs: ["user_a_id","user_b_id","verified_at"],
   contact_invitations: ["id","inviter_user_id","invitee_user_id","inviter_code_hash","inviter_code_expires_at","inviter_attempts","invitee_code_hash","invitee_code_expires_at","invitee_attempts","invitee_verified_at","inviter_verified_at","expires_at","created_at"],
@@ -17,7 +17,12 @@ const EXPECTED_TABLES = {
   admin_audit_logs: ["id","admin_user_id","action","target_user_id","details_json","created_at"],
   bug_reports: ["id","reporter_user_id","encrypted_payload","status","created_at","updated_at","resolved_at"],
   conversation_pairs: ["user_a_id","user_b_id","conversation_id","created_at"],
-  conversation_reads: ["conversation_id","user_id","last_read_at","last_read_message_id","updated_at"]
+  conversation_reads: ["conversation_id","user_id","last_read_at","last_read_message_id","updated_at"],
+  crypto_devices: ["user_id","device_id","device_keys_json","account_authorization_signature","created_at","updated_at","last_seen_at","revoked_at"],
+  crypto_one_time_keys: ["id","user_id","device_id","key_id","algorithm","key_json","is_fallback","created_at","claimed_at","claimed_by_user_id","claimed_by_device_id"],
+  crypto_to_device_inbox: ["id","recipient_user_id","recipient_device_id","sender_user_id","sender_device_id","event_type","content_json","transaction_id","created_at","expires_at"],
+  conversation_crypto_modes: ["conversation_id","protocol_version","enabled_by_user_id","enabled_at"],
+  conversation_crypto_approvals: ["conversation_id","user_id","approved_at"]
 };
 
 const EXPECTED_INDEXES = [
@@ -29,7 +34,8 @@ const EXPECTED_INDEXES = [
   "rate_limit_buckets_expiry_idx","announcements_published_idx",
   "admin_audit_logs_created_at_idx","admin_audit_logs_admin_user_idx",
   "announcements_expiry_idx","bug_reports_status_created_idx","bug_reports_reporter_idx",
-  "users_created_at_admin_idx","users_last_login_idx","conversation_reads_user_idx"
+  "users_created_at_admin_idx","users_last_login_idx","conversation_reads_user_idx",
+  "crypto_devices_user_active_idx","crypto_one_time_keys_claim_idx","crypto_to_device_inbox_poll_idx","conversation_crypto_approvals_user_idx"
 ];
 
 const EXPECTED_MIGRATIONS = [
@@ -37,7 +43,7 @@ const EXPECTED_MIGRATIONS = [
   "0004_registration_invites.sql","0005_persistent_rate_limits.sql","0006_admin_console.sql",
   "0007_admin_password_rotation.sql","0008_admin_security_reports.sql",
   "0009_signed_identity_keys.sql","0010_unique_conversation_pairs.sql",
-  "0011_multi_device_identity_backup_and_reads.sql"
+  "0011_multi_device_identity_backup_and_reads.sql","0012_device_scoped_ratchet_transport.sql"
 ];
 
 // Cloudflare D1 system-owned objects. These are not application schema.
@@ -59,7 +65,17 @@ const EXPECTED_FOREIGN_KEYS = [
   ["conversation_pairs","user_a_id","users","id"],["conversation_pairs","user_b_id","users","id"],
   ["conversation_pairs","conversation_id","conversations","id"],
   ["conversation_reads","conversation_id","conversations","id"],
-  ["conversation_reads","user_id","users","id"]
+  ["conversation_reads","user_id","users","id"],
+  ["crypto_devices","user_id","users","id"],
+  ["crypto_one_time_keys","user_id","crypto_devices","user_id"],
+  ["crypto_one_time_keys","device_id","crypto_devices","device_id"],
+  ["crypto_one_time_keys","claimed_by_user_id","users","id"],
+  ["crypto_to_device_inbox","recipient_user_id","users","id"],
+  ["crypto_to_device_inbox","sender_user_id","users","id"],
+  ["conversation_crypto_modes","conversation_id","conversations","id"],
+  ["conversation_crypto_modes","enabled_by_user_id","users","id"],
+  ["conversation_crypto_approvals","conversation_id","conversations","id"],
+  ["conversation_crypto_approvals","user_id","users","id"]
 ];
 
 function add(checks,id,label,status,detail,extra={}) {
@@ -386,8 +402,11 @@ export async function summarizeSecurityDiagnostics(env) {
   await checkSchema(env,checks);
   await checkDataState(env,checks,keyStatus);
   await checkKeyRotation(env,checks,keyStatus);
+  const cryptoV2Configured = env.SECURECHAT_CRYPTO_V2_ENABLED === "true";
   add(checks,"forward-secrecy","前方秘匿性","critical",
-    "現行チャット鍵は長期ECDH鍵から会話ごとに導出するv1方式です。メッセージ単位のRatchet / Double Ratchet は未実装です。既存会話・複数端末の互換性を保つv2移行と独立レビューが完了するまで、新方式へ自動切替しません。");
+    cryptoV2Configured
+      ? "暗号v2の機能フラグは有効ですが、独立レビュー・2ユーザー複数端末E2E試験・復旧/再送/順序制御のリリースゲートを満たした証拠がありません。本番で前方秘匿性を保証済みとは判定しません。"
+      : "端末別Olm/Megolm v2の実装コードはありますが、本番機能フラグは無効です。既存v1会話と暗号文の復号互換性を維持し、独立レビュー・複数端末E2E試験が完了するまでv2を有効化しません。");
   add(checks,"passkeys","管理者パスキー","warning",
     "管理者ログインはパスワード認証のみです。WebAuthnパスキーによる追加認証、予備認証器、回復手順は未実装です。");
   add(checks,"cloudflare-logs","Cloudflare Invocation Logs","warning",
