@@ -5,7 +5,7 @@
   "compatibility_date": "2026-11-18",
   "vars": {
     "APP_DATA_ENCRYPTION_ACTIVE_VERSION": "2",
-    "SECURECHAT_CRYPTO_V2_ENABLED": "false"
+    "SECURECHAT_CRYPTO_V2_ENABLED": "true"
   },
   "assets": {
     "directory": "./public",
