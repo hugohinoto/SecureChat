@@ -848,3 +848,144 @@ button:disabled { cursor: not-allowed !important; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+
+/* Forward-secrecy migration controls */
+.crypto-v2-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 8px 24px 0;
+  padding: 8px 11px;
+  border: 1px solid var(--sc-border);
+  border-radius: 10px;
+  background: rgba(255,255,255,.025);
+}
+.crypto-v2-actions p {
+  flex: 1 1 250px;
+  margin: 0;
+  color: #aebdd1;
+  font-size: 10px;
+  line-height: 1.55;
+}
+.crypto-v2-button {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid rgba(142,215,232,.30);
+  border-radius: 9px;
+  color: #ddf9ff;
+  background: rgba(69,151,177,.16);
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.crypto-v2-button:hover:not(:disabled) {
+  border-color: rgba(142,215,232,.55);
+  background: rgba(69,151,177,.27);
+}
+.crypto-v2-button:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+}
+.fingerprint-panel .crypto-v2-button {
+  margin-top: 8px;
+}
+.fingerprint-panel p {
+  margin: 5px 0;
+  line-height: 1.6;
+}
+@media (max-width: 680px) {
+  .crypto-v2-actions {
+    margin: 7px 10px 0;
+    padding: 8px 10px;
+    align-items: stretch;
+  }
+  .crypto-v2-actions p { flex-basis: 100%; font-size: 9px; }
+  .crypto-v2-button { width: 100%; min-height: 42px; font-size: 12px; }
+}
+
+
+/* Device management for the v2 ratchet */
+.crypto-v2-secondary {
+  border-color: var(--sc-border-strong);
+  color: #c0d2e5;
+  background: rgba(255,255,255,.035);
+}
+.crypto-v2-devices {
+  flex: 0 0 auto;
+  margin: 8px 24px 0;
+  padding: 11px 13px;
+  border: 1px solid var(--sc-border);
+  border-radius: 11px;
+  background: rgba(255,255,255,.025);
+}
+.crypto-v2-devices[hidden] { display: none !important; }
+.crypto-v2-devices h2 {
+  margin: 0 0 4px;
+  color: #dce8f6;
+  font-size: 11px;
+}
+.crypto-v2-devices > p {
+  margin: 0 0 8px;
+  color: #9caec3;
+  font-size: 9px;
+  line-height: 1.55;
+}
+.crypto-v2-device-list,
+#crypto-v2-device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.crypto-v2-device-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 9px;
+  border: 1px solid var(--sc-border);
+  border-radius: 9px;
+  background: rgba(5,13,24,.22);
+}
+.crypto-v2-device-info {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.crypto-v2-device-info strong {
+  color: #dce9f7;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.crypto-v2-device-info span,
+.crypto-v2-device-info small {
+  color: #879bb3;
+  font-size: 9px;
+}
+.crypto-v2-revoke-button {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid rgba(240,154,165,.24);
+  border-radius: 8px;
+  color: #e9adb4;
+  background: rgba(240,154,165,.07);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.crypto-v2-revoke-button:hover:not(:disabled) { background: rgba(240,154,165,.14); }
+.crypto-v2-revoke-button:disabled { opacity: .45; cursor: wait; }
+.crypto-v2-current-device {
+  flex: 0 0 auto;
+  color: var(--sc-success);
+  font-size: 9px;
+  font-weight: 750;
+}
+@media (max-width: 680px) {
+  .crypto-v2-devices { margin: 7px 10px 0; padding: 9px; }
+  .crypto-v2-device-row { align-items: stretch; flex-direction: column; }
+  .crypto-v2-revoke-button { width: 100%; min-height: 39px; }
+}
