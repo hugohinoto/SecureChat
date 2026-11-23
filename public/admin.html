@@ -19,7 +19,12 @@
     <div class="secure-pill"><i></i> SERVER-SIDE AUTHORIZATION</div>
   </section>
   <div id="notice" class="notice" role="status">管理者権限を確認しています…</div>
-  <section id="console" hidden>
+  <section id="console" hidden class="admin-workspace">
+    <aside class="admin-rail" aria-label="管理メニュー">
+      <div class="rail-title">EXPLORER <span>⋯</span></div>
+      <a href="#stats" class="rail-item active"><span>▦</span>概要</a><a href="#security-panel" class="rail-item"><span>◇</span>セキュリティ診断</a><a href="#announcements-panel" class="rail-item"><span>▤</span>お知らせ</a><a href="#users-panel" class="rail-item"><span>♙</span>ユーザー</a><a href="#reports-panel" class="rail-item"><span>⚑</span>不具合報告</a><a href="#audit-panel" class="rail-item"><span>⌁</span>監査ログ</a><a href="#ops-panel" class="rail-item"><span>⚙</span>運用メモ</a>
+      <div class="rail-footer"><span class="rail-live"></span> Admin workspace</div>
+    </aside><div class="admin-content"><div class="content-tabs"><span class="tab-active">securechat / admin</span><span class="tab-close">×</span></div>
     <section class="stats" id="stats">
       <article class="stat"><span>登録ユーザー</span><strong id="stat-users">—</strong></article>
       <article class="stat"><span>管理者</span><strong id="stat-admins">—</strong></article>
@@ -29,7 +34,7 @@
       <article class="stat"><span>過去24時間の管理操作</span><strong id="stat-actions">—</strong></article>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="security-panel">
       <div class="panel-heading"><div><p class="eyebrow">SECURITY DIAGNOSTICS</p><h2>セキュリティチェック</h2></div><div class="item-actions"><button id="export-security-csv" class="secondary" type="button" disabled>CSVで出力</button><button id="run-security-check" class="secondary" type="button">今すぐ再チェック</button></div></div>
       <div class="security-engine-links"><a href="https://github.com/hugohinoto/SecureChat/actions/workflows/security-scan.yml" target="_blank" rel="noopener noreferrer">外部エンジンの実行履歴を開く</a><span>Semgrep・SQLFluff・OWASP ZAP。未実行・取得不能は安全扱いしません。</span></div>
       <div id="security-summary" class="security-summary">チェックを実行しています…</div>
@@ -37,7 +42,7 @@
       <p class="muted">ランタイム・D1構造・マイグレーション・外部エンジンを組み合わせた診断です。最新エンジン結果の照合にはWorker Secret SECURITY_SCAN_GITHUB_TOKEN（Actions: read）が必要です。ZAPは公開面へのパッシブ検査のみで、認証後のAPIやCloudflare内部ログの完全監査を代替するものではありません。</p>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="announcements-panel">
       <div class="panel-heading"><div><p class="eyebrow">ANNOUNCEMENTS</p><h2>暗号化お知らせ</h2></div><span class="muted">公開から48時間で自動失効（公開時に変更可能）</span></div>
       <form id="announcement-form" class="announcement-form">
         <label>タイトル<input id="announcement-title" maxlength="100" required placeholder="例：メンテナンスのお知らせ"></label>
@@ -56,7 +61,7 @@
       <div id="announcements" class="item-list"></div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="users-panel">
       <div class="panel-heading"><div><p class="eyebrow">USER DIRECTORY</p><h2>管理者アカウント検索・ユーザー管理</h2></div><span class="muted">削除は取り消せません。管理者アカウントは保護されます。</span></div>
       <form id="user-search" class="search-row">
         <input id="user-query" maxlength="64" placeholder="ユーザーIDまたはUUIDを入力">
@@ -70,20 +75,21 @@
       <div class="pager"><button id="prev-page" class="secondary" type="button">前へ</button><span id="page-label">—</span><button id="next-page" class="secondary" type="button">次へ</button></div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="reports-panel">
       <div class="panel-heading"><div><p class="eyebrow">BUG REPORTS</p><h2>バグ・不具合報告</h2></div><button id="refresh-reports" class="secondary" type="button">更新</button></div>
       <div id="bug-reports" class="item-list"></div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="audit-panel">
       <div class="panel-heading"><div><p class="eyebrow">ADMIN AUDIT TRAIL</p><h2>暗号化管理操作ログ</h2></div><button id="refresh-logs" class="secondary" type="button">更新</button></div>
       <div class="table-wrap"><table><thead><tr><th>日時</th><th>管理者</th><th>操作</th><th>対象</th><th>詳細（復号表示）</th></tr></thead><tbody id="logs"></tbody></table></div>
     </section>
-    <section class="panel note-panel">
+    <section class="panel note-panel" id="ops-panel">
       <h2>運用上の注意</h2>
       <p id="worker-note">CloudflareのInvocation Logsはアプリ側から個別に暗号化できません。ログへ機密値を出力しない設定が必要です。</p>
       <p>管理者APIはサーバー側で権限・パスワード更新期限・直近15分の再認証を確認します。パスキーはまだ未実装です。</p>
     </section>
+    </div>
   </section>
 </main>
 </body>
