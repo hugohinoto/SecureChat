@@ -19,7 +19,12 @@
     <div class="secure-pill"><i></i> SERVER-SIDE AUTHORIZATION</div>
   </section>
   <div id="notice" class="notice" role="status">管理者権限を確認しています…</div>
-  <section id="console" hidden>
+  <section id="console" hidden class="admin-workspace">
+    <aside class="admin-rail" aria-label="管理メニュー">
+      <div class="rail-title">EXPLORER <span>⋯</span></div>
+      <a href="#stats" class="rail-item active"><span>▦</span>概要</a><a href="#security-panel" class="rail-item"><span>◇</span>セキュリティ診断</a><a href="#announcements-panel" class="rail-item"><span>▤</span>お知らせ</a><a href="#users-panel" class="rail-item"><span>♙</span>ユーザー</a><a href="#reports-panel" class="rail-item"><span>⚑</span>不具合報告</a><a href="#audit-panel" class="rail-item"><span>⌁</span>監査ログ</a><a href="#ops-panel" class="rail-item"><span>⚙</span>運用メモ</a>
+      <div class="rail-footer"><span class="rail-live"></span> Admin workspace</div>
+    </aside><div class="admin-content"><div class="content-tabs"><span class="tab-active">securechat / admin</span><span class="tab-close">×</span></div>
     <section class="stats" id="stats">
       <article class="stat"><span>登録ユーザー</span><strong id="stat-users">—</strong></article>
       <article class="stat"><span>管理者</span><strong id="stat-admins">—</strong></article>
@@ -79,11 +84,12 @@
       <div class="panel-heading"><div><p class="eyebrow">ADMIN AUDIT TRAIL</p><h2>暗号化管理操作ログ</h2></div><button id="refresh-logs" class="secondary" type="button">更新</button></div>
       <div class="table-wrap"><table><thead><tr><th>日時</th><th>管理者</th><th>操作</th><th>対象</th><th>詳細（復号表示）</th></tr></thead><tbody id="logs"></tbody></table></div>
     </section>
-    <section class="panel note-panel">
+    <section class="panel note-panel" id="ops-panel">
       <h2>運用上の注意</h2>
       <p id="worker-note">CloudflareのInvocation Logsはアプリ側から個別に暗号化できません。ログへ機密値を出力しない設定が必要です。</p>
       <p>管理者APIはサーバー側で権限・パスワード更新期限・直近15分の再認証を確認します。パスキーはまだ未実装です。</p>
     </section>
+    </div>
   </section>
 </main>
 </body>
