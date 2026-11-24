@@ -1437,3 +1437,20 @@ body {
   .secure-drop-select { width: 100%; }
   .secure-drop-list { max-height: 110px; }
 }
+
+.secure-drop-priority {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.secure-drop-priority input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #62d9ea;
+}
+.secure-drop-list { max-height: 180px; }
