@@ -39,6 +39,13 @@
         <span class="workspace-dot" aria-hidden="true"></span>
       </div>
 
+      <div class="sidebar-section-label service-list-label">SERVICES</div>
+      <a class="service-launch-card" href="/secure-drop.html" aria-label="SecureDrop 独立ファイル転送サービスを開く">
+        <span class="service-launch-icon" aria-hidden="true">D</span>
+        <span class="service-launch-copy"><strong>SecureDrop</strong><small>独立ファイル転送サービス</small></span>
+        <span class="service-launch-arrow" aria-hidden="true">↗</span>
+      </a>
+
       <div class="sidebar-heading"><span>ユーザーを検索</span></div>
       <div class="user-search">
         <input id="user-search-input" type="text" maxlength="32" placeholder="ユーザーIDを入力" autocomplete="off">
@@ -151,19 +158,6 @@
           <span class="hint-dot"></span>
           <span id="composer-hint">個別チャットを選択すると送信できます</span>
         </div>
-        <section class="secure-drop-panel" id="secure-drop-panel" hidden aria-label="SecureDrop ファイル転送">
-          <div class="secure-drop-heading">
-            <div>
-              <strong>SecureDrop</strong>
-              <span id="secure-drop-credits">今月のクレジットを確認しています…</span>
-            </div>
-            <label class="secure-drop-priority"><input id="secure-drop-priority" type="checkbox"> 優先送信（通常の5倍のクレジット）</label>
-            <button class="secure-drop-select" id="secure-drop-select" type="button" disabled>ファイルを暗号化して送信</button>
-            <input id="secure-drop-file" type="file" hidden>
-          </div>
-          <p class="secure-drop-note" id="secure-drop-note">送信先の署名付きアカウント鍵と指紋を確認してから送信します。最大25 MB。AES-GCMで暗号化し、gzipで圧縮します。</p>
-          <div class="secure-drop-list" id="secure-drop-list" aria-live="polite"><p class="sidebar-empty">この会話のファイルはありません。</p></div>
-        </section>
         <div class="composer">
           <textarea id="message-input" rows="1" maxlength="2000" placeholder="メッセージを入力…" aria-label="メッセージを入力" disabled></textarea>
           <div class="composer-bottom">

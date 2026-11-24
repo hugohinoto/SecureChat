@@ -989,3 +989,19 @@ button:disabled { cursor: not-allowed !important; }
   .crypto-v2-device-row { align-items: stretch; flex-direction: column; }
   .crypto-v2-revoke-button { width: 100%; min-height: 39px; }
 }
+
+
+/* Independent service launcher in the workspace navigation */
+.service-list-label { margin-top:18px; }
+.service-launch-card {
+  display:flex; align-items:center; gap:10px; min-height:59px; margin:0 0 4px;
+  padding:10px 11px; border:1px solid rgba(142,215,232,.20); border-radius:13px;
+  color:#edf4ff; background:linear-gradient(110deg,rgba(56,137,163,.12),rgba(80,99,151,.09));
+  text-decoration:none; transition:border-color .16s ease,background .16s ease,transform .16s ease;
+}
+.service-launch-card:hover { border-color:rgba(142,215,232,.42); background:rgba(69,151,177,.16); transform:translateY(-1px); }
+.service-launch-icon { flex:0 0 35px; width:35px; height:35px; display:grid; place-items:center; border-radius:11px; color:#dffaff; background:linear-gradient(145deg,#397d99,#3c5484); font-size:17px; font-weight:850; }
+.service-launch-copy { display:grid; min-width:0; gap:2px; }
+.service-launch-copy strong { font-size:12px; }
+.service-launch-copy small { color:#91a5be; font-size:10px; }
+.service-launch-arrow { margin-left:auto; color:#9ac9d9; font-size:15px; }

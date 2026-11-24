@@ -1,5 +1,4 @@
 import { decryptIdentityBackup, encryptIdentityBackup } from "./identity-backup.js";
-import { decryptSecureDropFile, encryptSecureDropFile } from "./secure-drop-crypto.js";
 const $ = (s) => document.querySelector(s);
 const el = {
   connection: $("#connection-pill"), connectionLabel: $("#connection-label"),
@@ -23,9 +22,6 @@ const el = {
   unreadTotal: $("#unread-total"), notificationButton: $("#notification-enable-button"),
   cryptoV2Approve: $("#crypto-v2-approve-button"), cryptoV2Status: $("#crypto-v2-status"),
   cryptoV2DevicesToggle: $("#crypto-v2-devices-toggle"), cryptoV2Devices: $("#crypto-v2-devices"), cryptoV2DeviceList: $("#crypto-v2-device-list"),
-  secureDropPanel: $("#secure-drop-panel"), secureDropCredits: $("#secure-drop-credits"), secureDropSelect: $("#secure-drop-select"),
-  secureDropFile: $("#secure-drop-file"), secureDropNote: $("#secure-drop-note"), secureDropList: $("#secure-drop-list"),
-  secureDropPriority: $("#secure-drop-priority")
 };
 const MAX_MESSAGE_LENGTH = 2000;
 const DB_NAME = "securechat-local-keys";
@@ -41,9 +37,6 @@ const originalDocumentTitle = document.title;
 let unreadCountsInitialized = false;
 let activeCryptoMode = { protocolVersion: 1, approvedByMe: false, approvedByPeer: false };
 let activePeerSigningKey = null, activePeerFingerprintVerified = false;
-let secureDropBusy = false, secureDropRefreshBusy = false, secureDropNormalPaused = false;
-const SECURE_DROP_PENDING_DB = "securechat-securedrop-pending";
-const SECURE_DROP_PENDING_STORE = "uploads";
 
 function toast(message, duration = 3200) {
   el.toast.textContent = message;
@@ -982,7 +975,7 @@ async function signIn(user,password=null) {
     await refreshSidebar();
   } catch (error) {
     await closeCryptoV2Session();
-    clearSecureDropView();
+    
     currentUser=null;
     identityPrivateKey=null;
     identityPublicKey=null;
@@ -1000,14 +993,14 @@ async function signIn(user,password=null) {
     if(document.visibilityState==="visible" && document.hasFocus() && activeConversation) loadMessages(false).catch(()=>{});
     if(++sidebarRefreshTick % 5 === 0) {
       refreshSidebar().catch(()=>{});
-      if(activeConversation)refreshSecureDrop().catch(()=>{});
+      
     }
   },1000);
 }
 function startAuthCheck() {
   clearInterval(authTimer);
   authTimer=setInterval(async()=>{
-    try { const s=await checkSession(); if(!s.authenticated){await closeCryptoV2Session();clearSecureDropView();currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;showAuth(formatError(appError("SESSION_EXPIRED","セッションの有効期限が切れました。再ログインしてください。")));} }
+    try { const s=await checkSession(); if(!s.authenticated){await closeCryptoV2Session();currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;showAuth(formatError(appError("SESSION_EXPIRED","セッションの有効期限が切れました。再ログインしてください。")));} }
     catch {showError(appError("AUTH_RECHECK_FAILED","認証サーバーに接続できません。"));}
   },300000);
 }
@@ -1076,7 +1069,7 @@ async function deleteAccount() {
     await api("/api/auth/delete",{method:"POST",body:{password}});
     await removeIdentity(userId);
     await closeCryptoV2Session();
-    clearSecureDropView();
+    
     cryptoV2Module=null;cryptoV2Ready=false;currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;activeProtocolVersion=1;
     clearInterval(authTimer);clearInterval(refreshTimer);
     setAuthMode("login");showAuth();toast("アカウントと関連データを削除しました。");
@@ -1088,7 +1081,7 @@ async function logout() {
   try {
     await api("/api/auth/logout",{method:"POST"});
     await closeCryptoV2Session();
-    clearSecureDropView();
+    
     currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;
     clearInterval(authTimer);clearInterval(refreshTimer);setAuthMode("login");showAuth();toast("ログアウトしました。");
   } catch(e) {showError(e);}
@@ -1294,7 +1287,7 @@ async function selectConversation(c) {
       el.securityTag.textContent="v1 / FSなし";
     }
     await loadMessages(true);
-    await refreshSecureDrop();
+    
     updateSend();
   } catch(e) {
     showError(e,"暗号鍵を準備できません: ");
@@ -1348,441 +1341,6 @@ async function loadMessages(fullSync=false) {
     messageLoadBusy=false;
   }
 }
-function clearSecureDropView() {
-  if(el.secureDropPanel)el.secureDropPanel.hidden=true;
-  if(el.secureDropList)el.secureDropList.replaceChildren();
-  if(el.secureDropFile)el.secureDropFile.value="";
-  if(el.secureDropSelect)el.secureDropSelect.disabled=true;
-  if(el.secureDropCredits)el.secureDropCredits.textContent="";
-  if(el.secureDropNote)el.secureDropNote.textContent="";
-}
-const SECURE_DROP_MAX_FILE_BYTES = 25_000_000;
-function formatFileSize(bytes) {
-  const value=Number(bytes);
-  if(!Number.isFinite(value)||value<0)return "容量不明";
-  if(value<1_000_000)return Math.max(1,Math.round(value/1000))+" KB";
-  return (value/1_000_000).toFixed(2)+" MB";
-}
-async function secureDropRequest(path, options={}) {
-  let response;
-  try {
-    response=await fetch(path,{
-      method:options.method||"GET",
-      credentials:"same-origin",
-      cache:"no-store",
-      headers:options.headers||{},
-      ...(options.body!==undefined?{body:options.body}:{})
-    });
-  } catch {
-    throw appError("SECURE_DROP_NETWORK_ERROR","SecureDrop サーバーに接続できません。");
-  }
-  const data=await response.json().catch(()=>({}));
-  if(response.ok && data.deleted===false) {
-    throw appError(data.error||"DELETE_PENDING",data.message||"削除完了を確認できません。サーバー側で再試行します。");
-  }
-  if(!response.ok) {
-    const messages={
-      UNAUTHENTICATED:"ログインし直してください。",
-      SECURE_DROP_RECIPIENT_NOT_AUTHORIZED:"送信先は相互確認済みの連絡先ではありません。",
-      SECURE_DROP_KEY_ENVELOPE_INVALID:"受信者向け暗号鍵 envelope が正しくありません。",
-      INSUFFICIENT_CREDITS:"今月のクレジットが不足しています。",
-      SECURE_DROP_UPLOADS_PAUSED:"SecureDrop容量の90%に達したため通常送信を停止しています。優先送信を選択してください。",
-      SECURE_DROP_CAPACITY_REACHED:"SecureDropの専用容量に空きがありません。時間をおいて再送信してください。",
-      UPLOAD_PREEMPTED:"優先送信によって予約が取り消されました。端末内に保持した暗号化データから再送信できます。",
-      UPLOAD_FINALIZATION_PENDING:"保存完了を確認できません。暗号化データは端末内に保管されているため、保留一覧から再送信してください。",
-      STORED_FILE_TOO_LARGE:"暗号化後のファイルが25 MB上限を超えています。",
-      STORED_SIZE_MISMATCH:"転送中にファイル容量が変わりました。",
-      TRANSFER_EXPIRED_OR_NOT_FOUND:"ファイルは期限切れか、削除されています。",
-      DOWNLOAD_LIMIT_REACHED:"このファイルはダウンロード上限に達しました。",
-      STORED_FILE_INTEGRITY_MISMATCH:"保存ファイルの整合性を確認できませんでした。",
-      DELETE_PENDING:"削除要求を受け付けました。削除完了を確認するまでサーバー側で再試行します。",
-      UPLOAD_ID_REUSED:"以前使用した予約IDのため、新しいIDで再送信します。",
-      UPLOAD_ID_CONFLICT:"この保留データは既存の予約と一致しません。再読み込みして確認してください。"
-    };
-    throw appError(data.error||"SECURE_DROP_REQUEST_FAILED",messages[data.error]||data.message||"SecureDrop の処理に失敗しました。");
-  }
-  return data;
-}
-function openSecureDropPendingDb() {
-  return new Promise((resolve,reject) => {
-    const request=indexedDB.open(SECURE_DROP_PENDING_DB,1);
-    request.onupgradeneeded=()=>{
-      if(!request.result.objectStoreNames.contains(SECURE_DROP_PENDING_STORE)) {
-        request.result.createObjectStore(SECURE_DROP_PENDING_STORE,{keyPath:"id"});
-      }
-    };
-    request.onsuccess=()=>resolve(request.result);
-    request.onerror=()=>reject(request.error||new Error("SECURE_DROP_LOCAL_STORE_UNAVAILABLE"));
-  });
-}
-async function saveSecureDropPending(item) {
-  const db=await openSecureDropPendingDb();
-  return new Promise((resolve,reject)=>{
-    const tx=db.transaction(SECURE_DROP_PENDING_STORE,"readwrite");
-    tx.objectStore(SECURE_DROP_PENDING_STORE).put(item);
-    tx.oncomplete=()=>{db.close();resolve();};
-    tx.onerror=()=>{db.close();reject(tx.error||new Error("SECURE_DROP_LOCAL_SAVE_FAILED"));};
-    tx.onabort=()=>{db.close();reject(tx.error||new Error("SECURE_DROP_LOCAL_SAVE_FAILED"));};
-  });
-}
-async function deleteSecureDropPending(id) {
-  const db=await openSecureDropPendingDb();
-  return new Promise((resolve,reject)=>{
-    const tx=db.transaction(SECURE_DROP_PENDING_STORE,"readwrite");
-    tx.objectStore(SECURE_DROP_PENDING_STORE).delete(id);
-    tx.oncomplete=()=>{db.close();resolve();};
-    tx.onerror=()=>{db.close();reject(tx.error||new Error("SECURE_DROP_LOCAL_DELETE_FAILED"));};
-  });
-}
-async function listSecureDropPending(userId,peerUserId) {
-  const db=await openSecureDropPendingDb();
-  return new Promise((resolve,reject)=>{
-    const tx=db.transaction(SECURE_DROP_PENDING_STORE,"readonly");
-    const request=tx.objectStore(SECURE_DROP_PENDING_STORE).getAll();
-    request.onsuccess=()=>{
-      db.close();
-      resolve((request.result||[]).filter(item=>item.userId===userId && item.peerUserId===peerUserId)
-        .sort((a,b)=>Number(a.createdAt)-Number(b.createdAt)));
-    };
-    request.onerror=()=>{db.close();reject(request.error||new Error("SECURE_DROP_LOCAL_READ_FAILED"));};
-  });
-}
-async function acknowledgeSecureDropPreemptions(transferIds) {
-  if(!transferIds.length)return;
-  await secureDropRequest("/api/secure-drop/preemptions/ack",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({transferIds})
-  });
-}
-async function sendSecureDropPendingUpload(pending) {
-  const ciphertext=pending.ciphertext instanceof ArrayBuffer
-    ? new Uint8Array(pending.ciphertext)
-    : new Uint8Array(pending.ciphertext.buffer,pending.ciphertext.byteOffset,pending.ciphertext.byteLength);
-  const request=()=>secureDropRequest("/api/secure-drop/files",{
-    method:"POST",
-    headers:{
-      "X-Secure-Drop-Upload-Id":pending.id,
-      "X-Secure-Drop-Original-Size":String(pending.originalSizeBytes),
-      "X-Secure-Drop-Stored-Size":String(pending.storedSizeBytes),
-      "X-Secure-Drop-Payload":"encrypted-v1",
-      "X-Secure-Drop-Recipient-Id":pending.peerUserId,
-      "X-Secure-Drop-Key-Envelope":pending.encodedEnvelope,
-      "X-Secure-Drop-Priority":pending.priority?"1":"0",
-      "Content-Type":"application/octet-stream"
-    },
-    body:new Blob([ciphertext],{type:"application/octet-stream"})
-  });
-  let result;
-  try {
-    result=await request();
-  } catch(error) {
-    if(error.code!=="UPLOAD_ID_REUSED" && error.code!=="UPLOAD_PREEMPTED")throw error;
-    const oldId=pending.id;
-    pending.id=crypto.randomUUID();
-    pending.preemptedReservationIds=[...(pending.preemptedReservationIds||[]),oldId];
-    pending.canChangePriority=true;
-    await saveSecureDropPending(pending);
-    await deleteSecureDropPending(oldId);
-    if(error.code==="UPLOAD_PREEMPTED")throw error;
-    result=await request();
-  }
-  await deleteSecureDropPending(pending.id);
-  return result;
-}
-async function retrySecureDropPending(pending,button,priorityOverride=null) {
-  if(!activeConversation || activeConversation.peerUserId!==pending.peerUserId)return;
-  button.disabled=true;
-  try {
-    if(priorityOverride!==null && pending.canChangePriority && pending.priority!==priorityOverride) {
-      const oldId=pending.id;
-      pending.id=crypto.randomUUID();
-      pending.preemptedReservationIds=[...(pending.preemptedReservationIds||[]),oldId];
-      pending.priority=priorityOverride;
-      pending.canChangePriority=false;
-      await saveSecureDropPending(pending);
-      await deleteSecureDropPending(oldId);
-    }
-    await saveSecureDropPending(pending);
-    const result=await sendSecureDropPendingUpload(pending);
-    toast("保留ファイルを送信しました。課金: "+result.creditsConsumed+" クレジット");
-    await refreshSecureDrop();
-  } catch(error) {
-    if(error.code==="UPLOAD_PREEMPTED") {
-      pending.canChangePriority=true;
-      await saveSecureDropPending(pending).catch(()=>{});
-      await refreshSecureDrop();
-      toast("優先容量確保のため予約が解除されました。暗号化データはこの端末に保持されています。",7000);
-    } else if(error.code==="SECURE_DROP_UPLOADS_PAUSED" || (error.code==="SECURE_DROP_CAPACITY_REACHED" && !pending.priority) ||
-      (error.code==="INSUFFICIENT_CREDITS" && pending.priority)) {
-      pending.canChangePriority=true;
-      await saveSecureDropPending(pending).catch(()=>{});
-      await refreshSecureDrop();
-      showError(error,"再送信待ち: ");
-    } else {
-      showError(error,"保留ファイルの再送信失敗: ");
-    }
-  } finally {
-    button.disabled=false;
-  }
-}
-
-async function refreshSecureDrop() {
-  if(!el.secureDropPanel || !currentUser || !activeConversation) {
-    if(el.secureDropPanel)el.secureDropPanel.hidden=true;
-    return;
-  }
-  if(secureDropRefreshBusy)return;
-  secureDropRefreshBusy=true;
-  const conversationId=activeConversation.id;
-  el.secureDropPanel.hidden=false;
-  try {
-    const [account,listing]=await Promise.all([
-      secureDropRequest("/api/secure-drop/credits"),
-      secureDropRequest("/api/secure-drop/files")
-    ]);
-    if(!activeConversation || activeConversation.id!==conversationId)return;
-    secureDropNormalPaused=!!account.uploadsPaused;
-    el.secureDropCredits.textContent="今月の残り "+account.balance+" / "+account.granted+" クレジット · 専用容量 "+formatFileSize(account.storageUsedBytes)+" / 3 GB";
-    el.secureDropSelect.disabled=secureDropBusy || !identityPrivateKey || (secureDropNormalPaused && !el.secureDropPriority?.checked);
-    el.secureDropNote.textContent="元ファイル最大25 MB。端末内でAES-256-GCM暗号化・gzip圧縮後、512 KB単位でD1へ保存します。通常送信は専用容量の90%で停止し、優先送信は通常の5倍のクレジットで最大3 GBまで利用できます。暗号化データは送信前にこのブラウザーへ一時保管しますが、サイトデータの消去・端末故障時は復元できません。";
-    el.secureDropList.replaceChildren();
-    const files=Array.isArray(listing.files)?listing.files:[];
-    const forPeer=files.filter(file => file.peerUserId===activeConversation.peerUserId);
-    const preempted=(listing.preemptedUploads||[]).filter(item=>item.peerUserId===activeConversation.peerUserId);
-    if(preempted.length) {
-      const localPending=await listSecureDropPending(currentUser.id,activeConversation.peerUserId);
-      const acknowledged=[];
-      let restored=0;
-      let unavailable=0;
-      for(const event of preempted) {
-        const match=localPending.find(item=>item.id===event.transferId ||
-          (item.preemptedReservationIds||[]).includes(event.transferId));
-        if(match && match.id===event.transferId) {
-          const oldId=match.id;
-          match.id=crypto.randomUUID();
-          match.preemptedReservationIds=[...(match.preemptedReservationIds||[]),oldId];
-          match.canChangePriority=true;
-          await saveSecureDropPending(match);
-          await deleteSecureDropPending(oldId);
-          restored++;
-        } else if(match) {
-          match.canChangePriority=true;
-          await saveSecureDropPending(match);
-          restored++;
-        } else {
-          unavailable++;
-        }
-        acknowledged.push(event.transferId);
-      }
-      await acknowledgeSecureDropPreemptions(acknowledged).catch(()=>{});
-      if(restored || unavailable) {
-        const detail=unavailable
-          ? "端末内に再送信データが見つからない予約もあります。該当ファイルを選び直してください。"
-          : "取り消された暗号化データは端末内に残っています。保留一覧から再送信できます。";
-        window.alert("SecureDropの優先容量確保により、通常アップロードの予約が "+preempted.length+" 件解除されました。\n"+detail);
-      }
-    }
-    const localPending=await listSecureDropPending(currentUser.id,activeConversation.peerUserId);
-    for(const file of forPeer) {
-      const row=document.createElement("article");
-      row.className="secure-drop-item";
-      const copy=document.createElement("div");
-      copy.className="secure-drop-item-copy";
-      const title=document.createElement("strong");
-      title.textContent=file.direction==="received"?"受信した暗号化ファイル":"送信した暗号化ファイル";
-      const detail=document.createElement("span");
-      const expires=file.expiresAt?new Intl.DateTimeFormat("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}).format(new Date(file.expiresAt)):"不明";
-      detail.textContent=formatFileSize(file.storedSizeBytes)+" · 残り "+file.downloadsRemaining+" 回 · "+expires+" まで";
-      copy.append(title,detail);
-      const actions=document.createElement("div");
-      actions.className="secure-drop-item-actions";
-      if(file.direction==="received") {
-        const download=document.createElement("button");
-        download.type="button";
-        download.className="secure-drop-action";
-        download.textContent="取得・復号";
-        download.disabled=!identityPrivateKey || !file.keyEnvelope;
-        download.addEventListener("click",()=>downloadSecureDropFile(file,download));
-        actions.append(download);
-      } else {
-        const sent=document.createElement("span");
-        sent.textContent="送信済み";
-        sent.style.fontSize="10px";
-        sent.style.color="var(--muted)";
-        actions.append(sent);
-        const remove=document.createElement("button");
-        remove.type="button";
-        remove.className="secure-drop-action";
-        remove.textContent="削除";
-        remove.addEventListener("click",()=>deleteSecureDropFile(file,remove));
-        actions.append(remove);
-      }
-      row.append(copy,actions);
-      el.secureDropList.append(row);
-    }
-    const pendingUploads=await listSecureDropPending(currentUser.id,activeConversation.peerUserId);
-    for(const pending of pendingUploads) {
-      const row=document.createElement("article");
-      row.className="secure-drop-item";
-      const copy=document.createElement("div");
-      copy.className="secure-drop-item-copy";
-      const title=document.createElement("strong");
-      title.textContent="端末内に保留中の暗号化ファイル";
-      const detail=document.createElement("span");
-      detail.textContent=(pending.fileName||"ファイル")+" · "+formatFileSize(pending.storedSizeBytes)+" · "+(pending.priority?"優先送信":"通常送信");
-      copy.append(title,detail);
-      const actions=document.createElement("div");
-      actions.className="secure-drop-item-actions";
-      const retry=document.createElement("button");
-      retry.type="button";
-      retry.className="secure-drop-action";
-      retry.textContent="再送信";
-      retry.disabled=secureDropBusy;
-      retry.classList.add("secure-drop-pending-retry");
-      retry.addEventListener("click",()=>retrySecureDropPending(pending,retry));
-      actions.append(retry);
-      if(pending.canChangePriority) {
-        const tierRetry=document.createElement("button");
-        tierRetry.type="button";
-        tierRetry.className="secure-drop-action";
-        tierRetry.textContent=pending.priority?"通常で再送信":"優先で再送信";
-        tierRetry.addEventListener("click",()=>retrySecureDropPending(pending,tierRetry,!pending.priority));
-        actions.append(tierRetry);
-      }
-      row.append(copy,actions);
-      el.secureDropList.append(row);
-    }
-    if(!forPeer.length && !pendingUploads.length) {
-      const empty=document.createElement("p");
-      empty.className="sidebar-empty";
-      empty.textContent="この会話のファイルはありません。";
-      el.secureDropList.append(empty);
-    }
-  } catch(error) {
-    if(activeConversation?.id===conversationId) {
-      el.secureDropCredits.textContent="SecureDrop を利用できません";
-      el.secureDropNote.textContent=formatError(error);
-      el.secureDropSelect.disabled=true;
-    }
-  } finally {
-    secureDropRefreshBusy=false;
-  }
-}
-async function uploadSecureDropFile(file) {
-  if(!activeConversation || !currentUser || !file)return;
-  if(file.size<1 || file.size>SECURE_DROP_MAX_FILE_BYTES) {
-    showError(appError("SECURE_DROP_FILE_SIZE_INVALID","ファイルは1バイト以上25 MB以下にしてください。"));
-    return;
-  }
-  const peerUserId=activeConversation.peerUserId;
-  let pending=null;
-  secureDropBusy=true;
-  el.secureDropSelect.disabled=true;
-  el.secureDropNote.textContent="受信者と送信者のアカウント鍵を検証しています…";
-  try {
-    const peer=await verifiedAccountRoot(peerUserId);
-    if(!peer?.identityPublicKey)throw appError("SECURE_DROP_RECIPIENT_KEY_MISSING","相手の署名付きアカウント公開鍵がありません。");
-    const ownRecord=await storedIdentity(currentUser.userId);
-    if(!ownRecord?.signingPrivateKey || !identitySigningPublicKey) {
-      throw appError("SECURE_DROP_SENDER_SIGNING_KEY_REQUIRED","この端末でアカウント署名鍵を利用できません。");
-    }
-    const encrypted=await encryptSecureDropFile(
-      file,peer.identityPublicKey,currentUser.userId,ownRecord.signingPrivateKey,identitySigningPublicKey
-    );
-    if(!activeConversation || activeConversation.peerUserId!==peerUserId) {
-      throw appError("SECURE_DROP_CONVERSATION_CHANGED","送信中に会話が切り替わりました。");
-    }
-    const bytes=encrypted.ciphertext instanceof Uint8Array
-      ? encrypted.ciphertext
-      : new Uint8Array(encrypted.ciphertext);
-    pending={
-      id:crypto.randomUUID(),
-      userId:currentUser.id,
-      peerUserId,
-      fileName:file.name||"ファイル",
-      originalSizeBytes:file.size,
-      storedSizeBytes:encrypted.storedSizeBytes,
-      ciphertext:bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength),
-      encodedEnvelope:encrypted.encodedEnvelope,
-      priority:!!el.secureDropPriority?.checked,
-      createdAt:Date.now(),
-      preemptedReservationIds:[],
-      canChangePriority:false
-    };
-    await saveSecureDropPending(pending);
-    try { await navigator.storage?.persist?.(); } catch {}
-    el.secureDropNote.textContent="端末内に暗号化データを保管しました。サーバーへ送信しています…";
-    const result=await sendSecureDropPendingUpload(pending);
-    toast("ファイルを暗号化して送信しました。課金: "+result.creditsConsumed+" クレジット");
-    await refreshSecureDrop();
-  } catch(error) {
-    if(pending && (error.code==="UPLOAD_PREEMPTED" ||
-      (error.code==="SECURE_DROP_UPLOADS_PAUSED" && !pending.priority) ||
-      (error.code==="SECURE_DROP_CAPACITY_REACHED" && !pending.priority) ||
-      (error.code==="INSUFFICIENT_CREDITS" && pending.priority))) {
-      pending.canChangePriority=true;
-      await saveSecureDropPending(pending).catch(()=>{});
-    }
-    if(error.code==="UPLOAD_PREEMPTED") {
-      toast("優先送信によって予約が解除されました。暗号化データは端末内に保持しています。",9000);
-    } else {
-      showError(error,"SecureDrop 送信失敗: ");
-    }
-    await refreshSecureDrop();
-  } finally {
-    secureDropBusy=false;
-    if(el.secureDropFile)el.secureDropFile.value="";
-    if(el.secureDropSelect)el.secureDropSelect.disabled=!activeConversation || !identityPrivateKey || (secureDropNormalPaused && !el.secureDropPriority?.checked);
-  }
-}
-async function downloadSecureDropFile(file,button) {
-  if(!identityPrivateKey || !identityPublicKey || !file?.keyEnvelope)return;
-  button.disabled=true;
-  try {
-    const response=await fetch(file.downloadPath,{
-      method:"GET",credentials:"same-origin",cache:"no-store"
-    });
-    if(!response.ok) {
-      const error=await response.json().catch(()=>({}));
-      throw appError(error.error||"SECURE_DROP_DOWNLOAD_FAILED",error.message||"ファイルを取得できませんでした。");
-    }
-    const ciphertext=await response.arrayBuffer();
-    const sender=await verifiedAccountRoot(file.senderUserId);
-    const restored=await decryptSecureDropFile(
-      ciphertext,file.keyEnvelope,identityPrivateKey,identityPublicKey,
-      file.senderUserId,sender.identitySigningPublicKey
-    );
-    const blob=new Blob([restored.bytes],{type:restored.type||"application/octet-stream"});
-    const objectUrl=URL.createObjectURL(blob);
-    const anchor=document.createElement("a");
-    anchor.href=objectUrl;
-    anchor.download=restored.name||("secure-drop-"+file.id);
-    anchor.hidden=true;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    setTimeout(()=>URL.revokeObjectURL(objectUrl),60_000);
-    toast("ファイルを端末内で復号しました。");
-    await refreshSecureDrop();
-  } catch(error) {
-    showError(error,"SecureDrop 復号失敗: ");
-  } finally {
-    button.disabled=false;
-  }
-}
-async function deleteSecureDropFile(file,button) {
-  if(!confirm("このファイルを削除しますか？受信者もダウンロードできなくなります。"))return;
-  button.disabled=true;
-  try {
-    await secureDropRequest("/api/secure-drop/files/"+encodeURIComponent(file.id),{method:"DELETE"});
-    toast("SecureDrop ファイルを削除しました。");
-    await refreshSecureDrop();
-  } catch(error) {
-    showError(error);
-    button.disabled=false;
-  }
-}
 async function sendMessage() {
   if(busy||!activeConversation)return;
   const text=el.input.value.trim();if(!text)return;
@@ -1825,15 +1383,6 @@ el.input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isCo
 el.send.addEventListener("click",sendMessage);
 el.cryptoV2Approve?.addEventListener("click",approveCryptoV2ForActiveConversation);
 el.cryptoV2DevicesToggle?.addEventListener("click",toggleCryptoDeviceList);
-el.secureDropSelect?.addEventListener("click",()=>el.secureDropFile?.click());
-el.secureDropPriority?.addEventListener("change",()=>{
-  if(el.secureDropSelect)el.secureDropSelect.disabled=secureDropBusy || !identityPrivateKey ||
-    (secureDropNormalPaused && !el.secureDropPriority.checked);
-});
-el.secureDropFile?.addEventListener("change",()=>{
-  const file=el.secureDropFile.files?.[0];
-  if(file)uploadSecureDropFile(file);
-});
 window.addEventListener("focus",()=>{
   if(!currentUser)return;
   if(activeConversation)loadMessages(false).catch(()=>{});
