@@ -39,7 +39,9 @@ test("changed peer signing keys require an independently supplied exact fingerpr
   const client = await read("../public/app.js");
   assert.match(client, /async function showPeerKeyChangeVerification/);
   assert.match(client, /別の安全な経路/);
-  assert.match(client, /supplied\.length!==64 \|\| supplied!==expected/);
+  assert.match(client, /fingerprintsMatch\(input\.value,fingerprint\)/);
+  const fingerprint = await read("../public/identity-fingerprint.js");
+  assert.match(fingerprint, /actual\.length === 64 && target\.length === 64 && actual === target/);
   assert.match(client, /latest\.identitySigningPublicKey!==peer\.identitySigningPublicKey/);
   assert.match(client, /peerPins\[peerUserId\]=latest\.identitySigningPublicKey/);
   assert.match(client, /await showPeerKeyChangeVerification\(peerUserId,peer,previousSigningPublicKey\)/);

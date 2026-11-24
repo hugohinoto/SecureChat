@@ -1,4 +1,5 @@
 import { decryptIdentityBackup, encryptIdentityBackup } from "./identity-backup.js";
+import { fingerprintsMatch } from "./identity-fingerprint.js";
 const $ = (s) => document.querySelector(s);
 const el = {
   connection: $("#connection-pill"), connectionLabel: $("#connection-label"),
@@ -331,9 +332,7 @@ async function confirmPeerFingerprint(peerUserId,peer) {
     "表示された64桁のSHA-256指紋と完全一致した場合だけ入力してください。\n\n"+fingerprint
   );
   if(supplied===null)return false;
-  const normalized=supplied.toUpperCase().replace(/[^A-F0-9]/g,"");
-  const expected=fingerprint.replace(/[^A-F0-9]/g,"");
-  if(normalized.length!==64 || normalized!==expected) {
+  if(!fingerprintsMatch(supplied,fingerprint)) {
     showError(appError("IDENTITY_FINGERPRINT_MISMATCH","指紋が一致しません。端末を信頼済みにしていません。"));
     return false;
   }
@@ -742,9 +741,7 @@ async function showPeerKeyChangeVerification(peerUserId,peer,previousSigningPubl
   const status=document.createElement("p");
   status.setAttribute("role","status");
   button.addEventListener("click",async()=>{
-    const supplied=input.value.toUpperCase().replace(/[^A-F0-9]/g,"");
-    const expected=fingerprint.replace(/[^A-F0-9]/g,"");
-    if(supplied.length!==64 || supplied!==expected) {
+    if(!fingerprintsMatch(input.value,fingerprint)) {
       status.textContent="指紋が一致しません。承認は行われていません。";
       return;
     }
