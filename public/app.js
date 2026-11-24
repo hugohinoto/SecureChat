@@ -1477,29 +1477,47 @@ async function sendSecureDropPendingUpload(pending) {
   try {
     result=await request();
   } catch(error) {
-    if(error.code!=="UPLOAD_ID_REUSED")throw error;
+    if(error.code!=="UPLOAD_ID_REUSED" && error.code!=="UPLOAD_PREEMPTED")throw error;
     const oldId=pending.id;
     pending.id=crypto.randomUUID();
     pending.preemptedReservationIds=[...(pending.preemptedReservationIds||[]),oldId];
+    pending.canChangePriority=true;
     await saveSecureDropPending(pending);
     await deleteSecureDropPending(oldId);
+    if(error.code==="UPLOAD_PREEMPTED")throw error;
     result=await request();
   }
   await deleteSecureDropPending(pending.id);
   return result;
 }
-async function retrySecureDropPending(pending,button) {
+async function retrySecureDropPending(pending,button,priorityOverride=false) {
   if(!activeConversation || activeConversation.peerUserId!==pending.peerUserId)return;
   button.disabled=true;
   try {
-    // Keep the original priority tier: the server may already hold a matching reservation.
+    if(priorityOverride && pending.canChangePriority && !pending.priority) {
+      const oldId=pending.id;
+      pending.id=crypto.randomUUID();
+      pending.preemptedReservationIds=[...(pending.preemptedReservationIds||[]),oldId];
+      pending.priority=true;
+      pending.canChangePriority=false;
+      await saveSecureDropPending(pending);
+      await deleteSecureDropPending(oldId);
+    }
+    await saveSecureDropPending(pending);
     const result=await sendSecureDropPendingUpload(pending);
     toast("保留ファイルを送信しました。課金: "+result.creditsConsumed+" クレジット");
     await refreshSecureDrop();
   } catch(error) {
     if(error.code==="UPLOAD_PREEMPTED") {
+      pending.canChangePriority=true;
+      await saveSecureDropPending(pending).catch(()=>{});
       await refreshSecureDrop();
       toast("優先容量確保のため予約が解除されました。暗号化データはこの端末に保持されています。",7000);
+    } else if(error.code==="SECURE_DROP_UPLOADS_PAUSED" || error.code==="SECURE_DROP_CAPACITY_REACHED") {
+      pending.canChangePriority=true;
+      await saveSecureDropPending(pending).catch(()=>{});
+      await refreshSecureDrop();
+      showError(error,"再送信待ち: ");
     } else {
       showError(error,"保留ファイルの再送信失敗: ");
     }
@@ -1543,10 +1561,13 @@ async function refreshSecureDrop() {
           const oldId=match.id;
           match.id=crypto.randomUUID();
           match.preemptedReservationIds=[...(match.preemptedReservationIds||[]),oldId];
+          match.canChangePriority=true;
           await saveSecureDropPending(match);
           await deleteSecureDropPending(oldId);
           restored++;
         } else if(match) {
+          match.canChangePriority=true;
+          await saveSecureDropPending(match);
           restored++;
         } else {
           unavailable++;
@@ -1620,6 +1641,14 @@ async function refreshSecureDrop() {
       retry.classList.add("secure-drop-pending-retry");
       retry.addEventListener("click",()=>retrySecureDropPending(pending,retry));
       actions.append(retry);
+      if(pending.canChangePriority && !pending.priority) {
+        const priorityRetry=document.createElement("button");
+        priorityRetry.type="button";
+        priorityRetry.className="secure-drop-action";
+        priorityRetry.textContent="優先で再送信";
+        priorityRetry.addEventListener("click",()=>retrySecureDropPending(pending,priorityRetry,true));
+        actions.append(priorityRetry);
+      }
       row.append(copy,actions);
       el.secureDropList.append(row);
     }
@@ -1646,6 +1675,7 @@ async function uploadSecureDropFile(file) {
     return;
   }
   const peerUserId=activeConversation.peerUserId;
+  let pending=null;
   secureDropBusy=true;
   el.secureDropSelect.disabled=true;
   el.secureDropNote.textContent="受信者と送信者のアカウント鍵を検証しています…";
@@ -1665,7 +1695,7 @@ async function uploadSecureDropFile(file) {
     const bytes=encrypted.ciphertext instanceof Uint8Array
       ? encrypted.ciphertext
       : new Uint8Array(encrypted.ciphertext);
-    const pending={
+    pending={
       id:crypto.randomUUID(),
       userId:currentUser.id,
       peerUserId,
@@ -1676,7 +1706,8 @@ async function uploadSecureDropFile(file) {
       encodedEnvelope:encrypted.encodedEnvelope,
       priority:!!el.secureDropPriority?.checked,
       createdAt:Date.now(),
-      preemptedReservationIds:[]
+      preemptedReservationIds:[],
+      canChangePriority:false
     };
     await saveSecureDropPending(pending);
     try { await navigator.storage?.persist?.(); } catch {}
@@ -1685,6 +1716,10 @@ async function uploadSecureDropFile(file) {
     toast("ファイルを暗号化して送信しました。課金: "+result.creditsConsumed+" クレジット");
     await refreshSecureDrop();
   } catch(error) {
+    if(pending && (error.code==="UPLOAD_PREEMPTED" || error.code==="SECURE_DROP_UPLOADS_PAUSED" || error.code==="SECURE_DROP_CAPACITY_REACHED")) {
+      pending.canChangePriority=true;
+      await saveSecureDropPending(pending).catch(()=>{});
+    }
     if(error.code==="UPLOAD_PREEMPTED") {
       toast("優先送信によって予約が解除されました。暗号化データは端末内に保持しています。",9000);
     } else {
