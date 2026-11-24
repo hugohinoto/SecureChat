@@ -1454,7 +1454,7 @@ async function sendSecureDropPendingUpload(pending) {
   const ciphertext=pending.ciphertext instanceof ArrayBuffer
     ? new Uint8Array(pending.ciphertext)
     : new Uint8Array(pending.ciphertext.buffer,pending.ciphertext.byteOffset,pending.ciphertext.byteLength);
-  const result=await secureDropRequest("/api/secure-drop/files",{
+  const request=()=>secureDropRequest("/api/secure-drop/files",{
     method:"POST",
     headers:{
       "X-Secure-Drop-Upload-Id":pending.id,
@@ -1468,6 +1468,18 @@ async function sendSecureDropPendingUpload(pending) {
     },
     body:new Blob([ciphertext],{type:"application/octet-stream"})
   });
+  let result;
+  try {
+    result=await request();
+  } catch(error) {
+    if(error.code!=="UPLOAD_ID_REUSED")throw error;
+    const oldId=pending.id;
+    pending.id=crypto.randomUUID();
+    pending.preemptedReservationIds=[...(pending.preemptedReservationIds||[]),oldId];
+    await saveSecureDropPending(pending);
+    await deleteSecureDropPending(oldId);
+    result=await request();
+  }
   await deleteSecureDropPending(pending.id);
   return result;
 }
