@@ -151,6 +151,18 @@
           <span class="hint-dot"></span>
           <span id="composer-hint">個別チャットを選択すると送信できます</span>
         </div>
+        <section class="secure-drop-panel" id="secure-drop-panel" hidden aria-label="SecureDrop ファイル転送">
+          <div class="secure-drop-heading">
+            <div>
+              <strong>SecureDrop</strong>
+              <span id="secure-drop-credits">今月のクレジットを確認しています…</span>
+            </div>
+            <button class="secure-drop-select" id="secure-drop-select" type="button" disabled>ファイルを暗号化して送信</button>
+            <input id="secure-drop-file" type="file" hidden>
+          </div>
+          <p class="secure-drop-note" id="secure-drop-note">送信先の署名付きアカウント鍵と指紋を確認してから送信します。最大100 MB。AES-GCMで暗号化し、gzipで圧縮します。</p>
+          <div class="secure-drop-list" id="secure-drop-list" aria-live="polite"><p class="sidebar-empty">この会話のファイルはありません。</p></div>
+        </section>
         <div class="composer">
           <textarea id="message-input" rows="1" maxlength="2000" placeholder="メッセージを入力…" aria-label="メッセージを入力" disabled></textarea>
           <div class="composer-bottom">

@@ -27,6 +27,77 @@ function envelopeAad(fingerprint) {
 function fileAad(fingerprint) {
   return encoder.encode("SecureChat SecureDrop file payload v1\n" + fingerprint);
 }
+async function readStreamBounded(stream, maxBytes) {
+  const reader = stream.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new RangeError("SECURE_DROP_DECOMPRESSED_SIZE_INVALID");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+function senderSignatureMessage(envelope) {
+  const signedFields = {
+    version: envelope.version,
+    algorithm: envelope.algorithm,
+    recipientKeyFingerprint: envelope.recipientKeyFingerprint,
+    ephemeralPublicKey: envelope.ephemeralPublicKey,
+    salt: envelope.salt,
+    iv: envelope.iv,
+    wrappedFileKey: envelope.wrappedFileKey,
+    fileIv: envelope.fileIv,
+    senderUserId: envelope.senderUserId,
+    senderSigningPublicKey: envelope.senderSigningPublicKey,
+    ciphertextSha256: envelope.ciphertextSha256
+  };
+  return encoder.encode(
+    "SecureChat SecureDrop sender signature v1\n" +
+    envelope.senderUserId + "\n" + JSON.stringify(signedFields)
+  );
+}
+async function readStreamBounded(stream, maxBytes) {
+  const reader = stream.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new RangeError("SECURE_DROP_DECOMPRESSED_SIZE_INVALID");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
 async function deriveWrappingKey(privateKey, publicKey, salt, fingerprint) {
   const sharedSecret = new Uint8Array(await crypto.subtle.deriveBits(
     { name: "ECDH", public: publicKey }, privateKey, 256
@@ -107,14 +178,33 @@ export function encodeSecureDropKeyEnvelope(envelope) {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-export async function encryptSecureDropFile(file, recipientPublicKeyBase64) {
+export async function encryptSecureDropFile(file, recipientPublicKeyBase64, senderUserId, senderSigningPrivateKey, senderSigningPublicKeyBase64) {
   if (!(file instanceof Blob) || file.size < 1 || file.size > MAX_FILE_BYTES) {
     throw new RangeError("SECURE_DROP_FILE_SIZE_INVALID");
   }
   if (typeof recipientPublicKeyBase64 !== "string") {
     throw new TypeError("SECURE_DROP_RECIPIENT_KEY_REQUIRED");
   }
-  const plaintext = await file.arrayBuffer();
+  if (typeof senderUserId !== "string" || !/^[a-z0-9_]{3,32}$/.test(senderUserId) ||
+      !senderSigningPrivateKey || typeof senderSigningPublicKeyBase64 !== "string") {
+    throw new TypeError("SECURE_DROP_SENDER_SIGNING_KEY_REQUIRED");
+  }
+  if (typeof CompressionStream !== "function") {
+    throw new Error("SECURE_DROP_COMPRESSION_UNAVAILABLE");
+  }
+  const metadata = {
+    version: 1,
+    name: typeof file.name === "string" ? file.name.slice(0, 255) : "secure-drop-file",
+    type: typeof file.type === "string" ? file.type.slice(0, 128) : "application/octet-stream",
+    lastModified: Number.isSafeInteger(file.lastModified) ? file.lastModified : 0
+  };
+  const metadataBytes = encoder.encode(JSON.stringify(metadata));
+  const metadataLength = new Uint8Array(4);
+  new DataView(metadataLength.buffer).setUint32(0, metadataBytes.length, false);
+  const plaintext = await readStreamBounded(
+    new Blob([metadataLength, metadataBytes, file]).stream().pipeThrough(new CompressionStream("gzip")),
+    MAX_FILE_BYTES
+  );
   const fileKeyBytes = crypto.getRandomValues(new Uint8Array(FILE_KEY_LENGTH));
   const fileIv = crypto.getRandomValues(new Uint8Array(12));
   try {
@@ -129,19 +219,28 @@ export async function encryptSecureDropFile(file, recipientPublicKeyBase64) {
     );
     if (ciphertext.byteLength > MAX_FILE_BYTES) throw new RangeError("SECURE_DROP_ENCRYPTED_FILE_TOO_LARGE");
     const envelope = await wrapFileKey(fileKeyBytes, recipientPublicKeyBase64, fileIv);
+    envelope.senderUserId = senderUserId;
+    envelope.senderSigningPublicKey = senderSigningPublicKeyBase64;
+    envelope.ciphertextSha256 = toHex(await crypto.subtle.digest("SHA-256", ciphertext));
+    envelope.senderSignature = toBase64(new Uint8Array(await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      senderSigningPrivateKey,
+      senderSignatureMessage(envelope)
+    )));
     return {
       ciphertext: new Uint8Array(ciphertext),
       envelope,
       encodedEnvelope: encodeSecureDropKeyEnvelope(envelope),
       originalSizeBytes: file.size,
-      storedSizeBytes: ciphertext.byteLength
+      storedSizeBytes: ciphertext.byteLength,
+      compression: "gzip"
     };
   } finally {
     fileKeyBytes.fill(0);
   }
 }
 
-export async function decryptSecureDropFile(ciphertext, envelope, recipientPrivateKey, recipientPublicKeyBase64) {
+export async function decryptSecureDropFile(ciphertext, envelope, recipientPrivateKey, recipientPublicKeyBase64, expectedSenderUserId, expectedSenderSigningPublicKey) {
   const bytes = ciphertext instanceof ArrayBuffer
     ? ciphertext
     : ArrayBuffer.isView(ciphertext)
@@ -150,6 +249,27 @@ export async function decryptSecureDropFile(ciphertext, envelope, recipientPriva
   if (!bytes || bytes.byteLength < 17 || bytes.byteLength > MAX_FILE_BYTES) {
     throw new RangeError("SECURE_DROP_CIPHERTEXT_SIZE_INVALID");
   }
+  if (!envelope || envelope.senderUserId !== expectedSenderUserId ||
+      envelope.senderSigningPublicKey !== expectedSenderSigningPublicKey ||
+      typeof expectedSenderUserId !== "string" || !/^[a-z0-9_]{3,32}$/.test(expectedSenderUserId)) {
+    throw new Error("SECURE_DROP_SENDER_IDENTITY_MISMATCH");
+  }
+  const ciphertextHash = toHex(await crypto.subtle.digest("SHA-256", bytes));
+  if (ciphertextHash !== envelope.ciphertextSha256) throw new Error("SECURE_DROP_CIPHERTEXT_HASH_MISMATCH");
+  const signingKeyBytes = fromBase64(expectedSenderSigningPublicKey);
+  if (signingKeyBytes.length !== 65 || signingKeyBytes[0] !== 4) {
+    throw new Error("SECURE_DROP_SENDER_KEY_INVALID");
+  }
+  const signingKey = await crypto.subtle.importKey(
+    "raw", signingKeyBytes, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]
+  );
+  const signatureValid = await crypto.subtle.verify(
+    { name: "ECDSA", hash: "SHA-256" },
+    signingKey,
+    fromBase64(envelope.senderSignature),
+    senderSignatureMessage(envelope)
+  );
+  if (!signatureValid) throw new Error("SECURE_DROP_SENDER_SIGNATURE_INVALID");
   const fileKeyBytes = await unwrapFileKey(envelope, recipientPrivateKey, recipientPublicKeyBase64);
   try {
     const fileKey = await crypto.subtle.importKey(
@@ -158,11 +278,45 @@ export async function decryptSecureDropFile(ciphertext, envelope, recipientPriva
     const fingerprint = await publicKeyFingerprint(recipientPublicKeyBase64);
     const fileIv = fromBase64(envelope.fileIv);
     if (fileIv.byteLength !== 12) throw new Error("SECURE_DROP_FILE_IV_INVALID");
-    return new Uint8Array(await crypto.subtle.decrypt(
+    const compressed = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv: fileIv, additionalData: fileAad(fingerprint) },
       fileKey,
       bytes
-    ));
+    );
+    if (typeof DecompressionStream !== "function") {
+      throw new Error("SECURE_DROP_DECOMPRESSION_UNAVAILABLE");
+    }
+    const packed = await readStreamBounded(
+      new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip")),
+      MAX_FILE_BYTES + 2048
+    );
+    if (packed.byteLength < 5) throw new Error("SECURE_DROP_METADATA_INVALID");
+    const metadataLength = new DataView(packed.buffer, packed.byteOffset, packed.byteLength).getUint32(0, false);
+    if (metadataLength < 2 || metadataLength > 2048 || 4 + metadataLength > packed.byteLength) {
+      throw new Error("SECURE_DROP_METADATA_INVALID");
+    }
+    let metadata;
+    try {
+      metadata = JSON.parse(new TextDecoder().decode(packed.slice(4, 4 + metadataLength)));
+    } catch {
+      throw new Error("SECURE_DROP_METADATA_INVALID");
+    }
+    if (!metadata || metadata.version !== 1 ||
+        typeof metadata.name !== "string" || metadata.name.length > 255 ||
+        typeof metadata.type !== "string" || metadata.type.length > 128) {
+      throw new Error("SECURE_DROP_METADATA_INVALID");
+    }
+    const name = metadata.name.replaceAll("\\", "_").replaceAll("/", "_").replace(/[\u0000-\u001f\u007f]/g, "_") || "secure-drop-file";
+    const restoredBytes = new Uint8Array(packed.slice(4 + metadataLength));
+    if (restoredBytes.byteLength < 1 || restoredBytes.byteLength > MAX_FILE_BYTES) {
+      throw new RangeError("SECURE_DROP_DECOMPRESSED_SIZE_INVALID");
+    }
+    return {
+      bytes: restoredBytes,
+      name,
+      type: metadata.type,
+      lastModified: Number.isSafeInteger(metadata.lastModified) ? metadata.lastModified : 0
+    };
   } finally {
     fileKeyBytes.fill(0);
   }

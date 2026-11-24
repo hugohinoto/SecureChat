@@ -58,27 +58,72 @@ function decodeBase64Url(value) {
   const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
   return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
 }
+function secureDropSenderSignatureMessage(envelope) {
+  const signedFields = {
+    version: envelope.version,
+    algorithm: envelope.algorithm,
+    recipientKeyFingerprint: envelope.recipientKeyFingerprint,
+    ephemeralPublicKey: envelope.ephemeralPublicKey,
+    salt: envelope.salt,
+    iv: envelope.iv,
+    wrappedFileKey: envelope.wrappedFileKey,
+    fileIv: envelope.fileIv,
+    senderUserId: envelope.senderUserId,
+    senderSigningPublicKey: envelope.senderSigningPublicKey,
+    ciphertextSha256: envelope.ciphertextSha256
+  };
+  return encoder.encode(
+    "SecureChat SecureDrop sender signature v1\n" +
+    envelope.senderUserId + "\n" + JSON.stringify(signedFields)
+  );
+}
+
+export async function verifySecureDropKeyEnvelopeSignature(envelope) {
+  try {
+    const publicKey = await crypto.subtle.importKey(
+      "raw",
+      decodeBase64(envelope.senderSigningPublicKey),
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"]
+    );
+    return await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      publicKey,
+      decodeBase64(envelope.senderSignature),
+      secureDropSenderSignatureMessage(envelope)
+    );
+  } catch {
+    return false;
+  }
+}
 
 async function digest(value) {
   const hash = await crypto.subtle.digest("SHA-256", encoder.encode(value));
   return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function validateSecureDropKeyEnvelope(envelope, recipientKeyFingerprint) {
+export function validateSecureDropKeyEnvelope(envelope, recipientKeyFingerprint, senderUserId = null, senderSigningPublicKey = null) {
   if (!envelope || typeof envelope !== "object" || Array.isArray(envelope) ||
       envelope.version !== 1 ||
       envelope.algorithm !== ENVELOPE_ALGORITHM ||
       typeof recipientKeyFingerprint !== "string" ||
       !/^[a-f0-9]{64}$/.test(recipientKeyFingerprint) ||
-      envelope.recipientKeyFingerprint !== recipientKeyFingerprint) return false;
+      envelope.recipientKeyFingerprint !== recipientKeyFingerprint ||
+      (senderUserId !== null && envelope.senderUserId !== senderUserId) ||
+      (senderSigningPublicKey !== null && envelope.senderSigningPublicKey !== senderSigningPublicKey)) return false;
   try {
     const ephemeral = decodeBase64(envelope.ephemeralPublicKey);
     const salt = decodeBase64(envelope.salt);
     const iv = decodeBase64(envelope.iv);
     const wrappedKey = decodeBase64(envelope.wrappedFileKey);
     const fileIv = decodeBase64(envelope.fileIv);
+    const senderPublicKey = decodeBase64(envelope.senderSigningPublicKey);
+    const senderSignature = decodeBase64(envelope.senderSignature);
     return ephemeral.length === 65 && ephemeral[0] === 4 &&
-      salt.length === 16 && iv.length === 12 && wrappedKey.length === 48 && fileIv.length === 12;
+      salt.length === 16 && iv.length === 12 && wrappedKey.length === 48 && fileIv.length === 12 &&
+      senderPublicKey.length === 65 && senderPublicKey[0] === 4 && senderSignature.length === 64 &&
+      USER_ID_PATTERN.test(envelope.senderUserId) && /^[a-f0-9]{64}$/.test(envelope.ciphertextSha256);
   } catch {
     return false;
   }
@@ -124,6 +169,13 @@ async function refundCredits(env, userId, month, credits, transferId, now) {
       "UPDATE secure_drop_credit_accounts SET balance=MIN(granted_credits, balance+?), updated_at=? WHERE user_id=? AND month_key=? AND changes()=1"
     ).bind(credits, now, userId, month)
   ]);
+}
+
+async function lookupSenderSigningKey(env, ownerId) {
+  const row = await env.DB.prepare(
+    "SELECT identity_signing_public_key FROM user_keys WHERE user_id=?"
+  ).bind(ownerId).first();
+  return typeof row?.identity_signing_public_key === "string" ? row.identity_signing_public_key : null;
 }
 
 async function lookupRecipient(env, ownerId, recipientValue) {
@@ -259,9 +311,6 @@ export async function handleSecureDropApi(request, env, context) {
   if (!path.startsWith("/api/secure-drop/")) return null;
 
   if (method !== "GET" && !sameOrigin(request)) return json({ error: "ORIGIN_REJECTED" }, 403);
-  if (!env.SECURE_DROP_R2) {
-    return json({ error: "SECURE_DROP_STORAGE_UNAVAILABLE", message: "ファイル保存先がまだ設定されていません。" }, 503);
-  }
 
   let session;
   try {
@@ -270,6 +319,9 @@ export async function handleSecureDropApi(request, env, context) {
     return json({ error: "AUTH_UNAVAILABLE" }, 503);
   }
   if (!session) return json({ error: "UNAUTHENTICATED" }, 401);
+  if (!env.SECURE_DROP_R2) {
+    return json({ error: "SECURE_DROP_STORAGE_UNAVAILABLE", message: "ファイル保存先がまだ設定されていません。" }, 503);
+  }
 
   const now = Date.now();
   const currentMonth = secureDropMonthKey(now);
@@ -279,7 +331,7 @@ export async function handleSecureDropApi(request, env, context) {
     return json({
       month: currentMonth,
       granted: Number(account?.granted_credits || MONTHLY_CREDITS),
-      balance: Number(account?.balance ?? MONTHLY_CREDITS),
+      balance: Number(account?.balance ?? 0),
       creditsPerMB: 1,
       billingBasis: "measured_encrypted_stored_bytes",
       maxStoredBytes: MAX_STORED_BYTES,
@@ -291,25 +343,30 @@ export async function handleSecureDropApi(request, env, context) {
 
   if (path === "/api/secure-drop/files" && method === "GET") {
     const rows = await env.DB.prepare(
-      "SELECT id, user_id, recipient_user_id, original_size_bytes, stored_size_bytes, created_at, expires_at, download_count, download_limit, key_envelope_json, status FROM secure_drop_transfers WHERE (user_id=? OR recipient_user_id=?) AND month_key=? AND expires_at>? AND status='ready' ORDER BY created_at DESC LIMIT 100"
+      "SELECT t.id, t.user_id, t.recipient_user_id, owner.user_id AS owner_user_name, recipient.user_id AS recipient_user_name, t.original_size_bytes, t.stored_size_bytes, t.created_at, t.expires_at, t.download_count, t.download_limit, t.key_envelope_json, t.status FROM secure_drop_transfers t JOIN users owner ON owner.id=t.user_id JOIN users recipient ON recipient.id=t.recipient_user_id LEFT JOIN verified_contact_pairs contacts ON contacts.user_a_id=CASE WHEN t.user_id<t.recipient_user_id THEN t.user_id ELSE t.recipient_user_id END AND contacts.user_b_id=CASE WHEN t.user_id<t.recipient_user_id THEN t.recipient_user_id ELSE t.user_id END WHERE (t.user_id=? OR (t.recipient_user_id=? AND contacts.user_a_id IS NOT NULL)) AND t.month_key=? AND t.expires_at>? AND t.status='ready' ORDER BY t.created_at DESC LIMIT 100"
     ).bind(session.id, session.id, currentMonth, now).all();
     return json({
-      files: (rows.results || []).map((row) => ({
-        id: row.id,
-        direction: row.recipient_user_id === session.id ? "received" : "sent",
-        originalSizeBytes: Number(row.original_size_bytes),
-        originalSizeIsClientReported: true,
-        storedSizeBytes: Number(row.stored_size_bytes),
-        createdAt: Number(row.created_at),
-        expiresAt: Number(row.expires_at),
-        downloadCount: Number(row.download_count),
-        downloadLimit: DOWNLOAD_LIMIT,
-        downloadsRemaining: Math.max(0, DOWNLOAD_LIMIT - Number(row.download_count)),
-        downloadPath: "/api/secure-drop/download/" + row.id,
-        ...(row.recipient_user_id === session.id ? {
-          keyEnvelope: (() => { try { return JSON.parse(row.key_envelope_json); } catch { return null; } })()
-        } : {})
-      }))
+      files: (rows.results || []).map((row) => {
+        const received = row.recipient_user_id === session.id;
+        return {
+          id: row.id,
+          direction: received ? "received" : "sent",
+          peerUserId: received ? row.owner_user_name : row.recipient_user_name,
+          senderUserId: row.owner_user_name,
+          originalSizeBytes: Number(row.original_size_bytes),
+          originalSizeIsClientReported: true,
+          storedSizeBytes: Number(row.stored_size_bytes),
+          createdAt: Number(row.created_at),
+          expiresAt: Number(row.expires_at),
+          downloadCount: Number(row.download_count),
+          downloadLimit: DOWNLOAD_LIMIT,
+          downloadsRemaining: Math.max(0, DOWNLOAD_LIMIT - Number(row.download_count)),
+          ...(received ? {
+            downloadPath: "/api/secure-drop/download/" + row.id,
+            keyEnvelope: (() => { try { return JSON.parse(row.key_envelope_json); } catch { return null; } })()
+          } : {})
+        };
+      })
     });
   }
 
@@ -320,13 +377,19 @@ export async function handleSecureDropApi(request, env, context) {
     }
     const transferId = downloadMatch[1];
     const transfer = await env.DB.prepare(
-      "SELECT object_key, stored_size_bytes, expires_at, month_key, download_count, status, user_id, recipient_user_id FROM secure_drop_transfers WHERE id=?"
-    ).bind(transferId).first();
+      "SELECT object_key, stored_size_bytes, expires_at, month_key, download_count, status, user_id, recipient_user_id FROM secure_drop_transfers WHERE id=? AND recipient_user_id=?"
+    ).bind(transferId, session.id).first();
     if (!transfer || transfer.month_key !== currentMonth || transfer.expires_at <= now ||
-        transfer.status !== "ready" ||
-        (transfer.user_id !== session.id && transfer.recipient_user_id !== session.id)) {
+        transfer.status !== "ready") {
       return json({ error: "TRANSFER_EXPIRED_OR_NOT_FOUND" }, 404);
     }
+    const [contactA, contactB] = transfer.user_id < transfer.recipient_user_id
+      ? [transfer.user_id, transfer.recipient_user_id]
+      : [transfer.recipient_user_id, transfer.user_id];
+    const activeContact = await env.DB.prepare(
+      "SELECT 1 AS ok FROM verified_contact_pairs WHERE user_a_id=? AND user_b_id=?"
+    ).bind(contactA, contactB).first();
+    if (!activeContact) return json({ error: "TRANSFER_EXPIRED_OR_NOT_FOUND" }, 404);
     if (Number(transfer.download_count) >= DOWNLOAD_LIMIT) {
       return json({ error: "DOWNLOAD_LIMIT_REACHED" }, 410);
     }
@@ -339,8 +402,8 @@ export async function handleSecureDropApi(request, env, context) {
       return json({ error: "STORED_FILE_INTEGRITY_MISMATCH" }, 503);
     }
     const consumed = await env.DB.prepare(
-      "UPDATE secure_drop_transfers SET download_count=download_count+1, updated_at=? WHERE id=? AND month_key=? AND expires_at>? AND status='ready' AND download_count<3 AND (user_id=? OR recipient_user_id=?) RETURNING download_count"
-    ).bind(now, transferId, currentMonth, now, session.id, session.id).first();
+      "UPDATE secure_drop_transfers SET download_count=download_count+1, updated_at=? WHERE id=? AND month_key=? AND expires_at>? AND status='ready' AND download_count<3 AND recipient_user_id=? RETURNING download_count"
+    ).bind(now, transferId, currentMonth, now, session.id).first();
     if (!consumed) return json({ error: "DOWNLOAD_LIMIT_REACHED" }, 410);
     return new Response(object.body, {
       status: 200,
@@ -361,9 +424,17 @@ export async function handleSecureDropApi(request, env, context) {
       return json({ error: "RATE_LIMITED" }, 429);
     }
     const originalBytes = Number(request.headers.get("X-Secure-Drop-Original-Size"));
-    const declaredStoredBytes = Number(request.headers.get("Content-Length"));
+    const contentLengthHeader = request.headers.get("Content-Length");
+    const storedSizeHeader = request.headers.get("X-Secure-Drop-Stored-Size") || contentLengthHeader;
+    const declaredStoredBytes = /^[1-9][0-9]{0,8}$/.test(storedSizeHeader || "")
+      ? Number(storedSizeHeader)
+      : NaN;
     if (!Number.isSafeInteger(originalBytes) || originalBytes < 1 || originalBytes > MAX_ORIGINAL_BYTES) {
       return json({ error: "INVALID_REPORTED_ORIGINAL_SIZE", maxBytes: MAX_ORIGINAL_BYTES }, 400);
+    }
+    if (contentLengthHeader && storedSizeHeader &&
+        contentLengthHeader !== storedSizeHeader) {
+      return json({ error: "DECLARED_STORED_SIZE_MISMATCH" }, 400);
     }
     if (!Number.isSafeInteger(declaredStoredBytes) || declaredStoredBytes < 1 ||
         declaredStoredBytes > MAX_STORED_BYTES || !request.body) {
@@ -383,9 +454,16 @@ export async function handleSecureDropApi(request, env, context) {
     }
     const recipient = await lookupRecipient(env, session.id, recipientId);
     if (!recipient) return json({ error: "SECURE_DROP_RECIPIENT_NOT_AUTHORIZED" }, 403);
-    const recipientFingerprint = await digest(recipient.identity_public_key);
-    if (!validateSecureDropKeyEnvelope(envelope, recipientFingerprint)) {
+    const [recipientFingerprint, senderSigningPublicKey] = await Promise.all([
+      digest(recipient.identity_public_key),
+      lookupSenderSigningKey(env, session.id)
+    ]);
+    if (!senderSigningPublicKey ||
+        !validateSecureDropKeyEnvelope(envelope, recipientFingerprint, session.user_id, senderSigningPublicKey)) {
       return json({ error: "SECURE_DROP_KEY_ENVELOPE_INVALID" }, 400);
+    }
+    if (!await verifySecureDropKeyEnvelopeSignature(envelope)) {
+      return json({ error: "SECURE_DROP_SENDER_SIGNATURE_INVALID" }, 400);
     }
 
     const credits = secureDropCreditsForBytes(declaredStoredBytes);
