@@ -314,17 +314,21 @@ async function queueDeletionVerification(env, transferId, objectKey, now, reason
 
 async function verifyAndFinalizeDeletion(env, transferId, objectKey, now, reason = "user_delete", storageBackend = "r2") {
   if (storageBackend === "d1") {
-    await env.DB.prepare("DELETE FROM secure_drop_file_chunks WHERE transfer_id=?").bind(transferId).run();
-    const remaining = await env.DB.prepare(
-      "SELECT COUNT(*) AS count FROM secure_drop_file_chunks WHERE transfer_id=?"
-    ).bind(transferId).first();
-    if (Number(remaining?.count || 0) !== 0) return false;
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM secure_drop_transfers WHERE id=? AND status='deleting' AND storage_backend='d1'").bind(transferId),
-      env.DB.prepare("DELETE FROM secure_drop_deletion_jobs WHERE transfer_id=?").bind(transferId)
-    ]);
-    const transfer = await env.DB.prepare("SELECT 1 AS present FROM secure_drop_transfers WHERE id=?").bind(transferId).first();
-    return !transfer;
+    try {
+      await env.DB.prepare("DELETE FROM secure_drop_file_chunks WHERE transfer_id=?").bind(transferId).run();
+      const remaining = await env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM secure_drop_file_chunks WHERE transfer_id=?"
+      ).bind(transferId).first();
+      if (Number(remaining?.count || 0) !== 0) return false;
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM secure_drop_transfers WHERE id=? AND status='deleting' AND storage_backend='d1'").bind(transferId),
+        env.DB.prepare("DELETE FROM secure_drop_deletion_jobs WHERE transfer_id=?").bind(transferId)
+      ]);
+      const transfer = await env.DB.prepare("SELECT 1 AS present FROM secure_drop_transfers WHERE id=?").bind(transferId).first();
+      return !transfer;
+    } catch {
+      return false;
+    }
   }
   const absent = await verifyR2ObjectAbsent(env, objectKey);
   if (!absent) {
@@ -379,18 +383,31 @@ async function processDeletionJobs(env, now) {
 async function abandonPendingTransfer(env, transfer, credits, now) {
   if (transfer.storageBackend === "d1") {
     try {
-      // Refund first. The unique ledger entry makes retries idempotent if cleanup later fails.
-      await refundCredits(env, transfer.ownerId, transfer.month, credits, transfer.id, now);
-      await env.DB.prepare("DELETE FROM secure_drop_file_chunks WHERE transfer_id=?").bind(transfer.id).run();
-      const remaining = await env.DB.prepare(
-        "SELECT COUNT(*) AS count FROM secure_drop_file_chunks WHERE transfer_id=?"
-      ).bind(transfer.id).first();
-      if (Number(remaining?.count || 0) !== 0) throw new Error("D1_CHUNK_DELETION_UNVERIFIED");
-      await env.DB.prepare(
-        "DELETE FROM secure_drop_transfers WHERE id=? AND status='pending' AND storage_backend='d1'"
-      ).bind(transfer.id).run();
+      const statements = [];
+      if (transfer.month === secureDropMonthKey(now) && Number.isSafeInteger(credits) && credits > 0) {
+        statements.push(env.DB.prepare(
+          "INSERT OR IGNORE INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) VALUES (?, ?, ?, ?, 'upload_refund', ?, ?)"
+        ).bind("refund:" + transfer.id, transfer.ownerId, transfer.month, credits, transfer.id, now));
+        statements.push(env.DB.prepare(
+          "UPDATE secure_drop_credit_accounts SET balance=MIN(granted_credits, balance+(SELECT delta FROM secure_drop_credit_ledger WHERE id=?)), updated_at=? WHERE user_id=? AND month_key=? AND changes()=1"
+        ).bind("refund:" + transfer.id, now, transfer.ownerId, transfer.month));
+      }
+      statements.push(
+        env.DB.prepare("DELETE FROM secure_drop_file_chunks WHERE transfer_id=?").bind(transfer.id),
+        env.DB.prepare(
+          "DELETE FROM secure_drop_transfers WHERE id=? AND status='pending' AND storage_backend='d1' AND NOT EXISTS (SELECT 1 FROM secure_drop_file_chunks WHERE transfer_id=?)"
+        ).bind(transfer.id, transfer.id)
+      );
+      await env.DB.batch(statements);
+      const [remainingChunks, remainingTransfer] = await Promise.all([
+        env.DB.prepare("SELECT COUNT(*) AS count FROM secure_drop_file_chunks WHERE transfer_id=?").bind(transfer.id).first(),
+        env.DB.prepare("SELECT 1 AS present FROM secure_drop_transfers WHERE id=?").bind(transfer.id).first()
+      ]);
+      if (Number(remainingChunks?.count || 0) !== 0 || remainingTransfer) {
+        throw new Error("D1_UPLOAD_ROLLBACK_UNVERIFIED");
+      }
     } catch {
-      // Keep the reservation for the stale-transfer janitor; never release its quota early.
+      // The batch is atomic; the stale-transfer janitor can safely retry it later.
       return;
     }
     return;
@@ -410,6 +427,24 @@ async function abandonPendingTransfer(env, transfer, credits, now) {
     ).bind(now, transfer.id).run().catch(() => {});
     await queueDeletionVerification(env, transfer.id, transfer.objectKey, now, "upload_rollback").catch(() => {});
   }
+}
+
+async function reconcileD1ChunkStorage(env, now) {
+  await env.DB.prepare(
+    "UPDATE secure_drop_transfers SET status='deleting', updated_at=? WHERE storage_backend='d1' AND status='ready' AND ((SELECT COUNT(*) FROM secure_drop_file_chunks WHERE transfer_id=secure_drop_transfers.id)<>CAST((stored_size_bytes + 524287) / 524288 AS INTEGER) OR (SELECT COALESCE(SUM(chunk_size_bytes),0) FROM secure_drop_file_chunks WHERE transfer_id=secure_drop_transfers.id)<>stored_size_bytes OR (SELECT MIN(chunk_index) FROM secure_drop_file_chunks WHERE transfer_id=secure_drop_transfers.id)<>0 OR (SELECT MAX(chunk_index) FROM secure_drop_file_chunks WHERE transfer_id=secure_drop_transfers.id)<>CAST((stored_size_bytes + 524287) / 524288 AS INTEGER)-1)"
+  ).bind(now).run();
+  await env.DB.prepare(
+    "DELETE FROM secure_drop_file_chunks WHERE NOT EXISTS (SELECT 1 FROM secure_drop_transfers WHERE id=secure_drop_file_chunks.transfer_id AND storage_backend='d1')"
+  ).run();
+  const [orphaned, incomplete] = await Promise.all([
+    env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM secure_drop_file_chunks c WHERE NOT EXISTS (SELECT 1 FROM secure_drop_transfers t WHERE t.id=c.transfer_id AND t.storage_backend='d1')"
+    ).first(),
+    env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM secure_drop_transfers t WHERE t.storage_backend='d1' AND t.status='ready' AND ((SELECT COUNT(*) FROM secure_drop_file_chunks WHERE transfer_id=t.id)<>CAST((t.stored_size_bytes + 524287) / 524288 AS INTEGER) OR (SELECT COALESCE(SUM(chunk_size_bytes),0) FROM secure_drop_file_chunks WHERE transfer_id=t.id)<>t.stored_size_bytes)"
+    ).first()
+  ]);
+  return Number(orphaned?.count || 0) === 0 && Number(incomplete?.count || 0) === 0;
 }
 
 async function cleanupStaleTransfers(env, now) {
@@ -976,6 +1011,8 @@ export async function runSecureDropMaintenance(env, now = Date.now()) {
   const current = secureDropMonthKey(now);
   try {
     if (env.SECURE_DROP_R2) await processDeletionJobs(env, now);
+    const chunksReconciled = await reconcileD1ChunkStorage(env, now);
+    if (!chunksReconciled) return { month: current, status: "retry_pending" };
     await cleanupStaleTransfers(env, now);
     if (!env.SECURE_DROP_R2) {
       const completed = await purgeOldMonthD1Only(env, now);
