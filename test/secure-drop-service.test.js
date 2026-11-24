@@ -29,3 +29,11 @@ test("chat page no longer mounts SecureDrop controls in the message composer", a
   assert.doesNotMatch(home, /secure-drop-select/);
   assert.doesNotMatch(home, /secure-drop-priority/);
 });
+
+
+test("standalone SecureDrop shows the 2.5 GB capacity and uses the same fallback", async () => {
+  const page = await readFile(new URL("../public/secure-drop.html", import.meta.url), "utf8");
+  const app = await readFile(new URL("../public/secure-drop-app.js", import.meta.url), "utf8");
+  assert.match(page, /専用容量 2\.5 GB/);
+  assert.match(app, /storageCapacityBytes \|\| 2_500_000_000/);
+});
