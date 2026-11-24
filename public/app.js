@@ -1558,7 +1558,7 @@ async function refreshSecureDrop() {
         const detail=unavailable
           ? "端末内に再送信データが見つからない予約もあります。該当ファイルを選び直してください。"
           : "取り消された暗号化データは端末内に残っています。保留一覧から再送信できます。";
-        toast("優先送信のため "+preempted.length+" 件の予約が解除されました。"+detail,9000);
+        window.alert("SecureDropの優先容量確保により、通常アップロードの予約が "+preempted.length+" 件解除されました。\n"+detail);
       }
     }
     const localPending=await listSecureDropPending(currentUser.id,activeConversation.peerUserId);
