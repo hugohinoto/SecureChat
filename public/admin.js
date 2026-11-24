@@ -68,16 +68,35 @@ function statusText(s){return ({open:"未確認",triaged:"調査中",resolved:"�
 async function loadBugReports(){
  const d=await api("/api/admin/bug-reports"),root=$("#bug-reports");root.replaceChildren();
  for(const item of d.reports){
-  const card=document.createElement("article");card.className="announcement-item";
+  const card=document.createElement("article");card.className="announcement-item bug-report-item";
   const copy=document.createElement("div"),h=document.createElement("h3"),p=document.createElement("p"),small=document.createElement("small");
   h.textContent=({bug:"不具合",security:"セキュリティ",other:"その他"})[item.report.category]+"： "+item.report.title;
   p.textContent=item.report.description;small.textContent="報告者 @"+item.reporter+" · "+date(item.createdAt)+" · 状態："+statusText(item.status);
   const details=document.createElement("details"),summary=document.createElement("summary");summary.textContent="再現手順・補足を表示";const pre=document.createElement("pre");
-  pre.textContent=["再現手順：\n"+(item.report.steps||"—"),"期待した動作：\n"+(item.report.expected||"—"),"実際の動作：\n"+(item.report.actual||"—")].join("\n\n");details.append(summary,pre);copy.append(h,p,small,details);
-  const actions=document.createElement("div");actions.className="item-actions";const select=document.createElement("select");
+  pre.textContent=["再現手順：\n"+(item.report.steps||"—"),"期待した動作：\n"+(item.report.expected||"—"),"実際の動作：\n"+(item.report.actual||"—")].join("\n\n");details.append(summary,pre);
+  const thread=document.createElement("div");thread.className="bug-report-thread";
+  const threadTitle=document.createElement("strong");threadTitle.textContent="返信履歴";thread.append(threadTitle);
+  for(const reply of item.replies||[]){
+   const entry=document.createElement("article");entry.className="bug-report-reply";
+   const meta=document.createElement("small");meta.textContent="管理者 · "+date(reply.createdAt);
+   const text=document.createElement("p");text.textContent=reply.message;entry.append(meta,text);thread.append(entry);
+  }
+  if(!(item.replies||[]).length){const empty=document.createElement("p");empty.className="muted";empty.textContent="まだ返信はありません。";thread.append(empty);}
+  copy.append(h,p,small,details,thread);
+  const actions=document.createElement("div");actions.className="item-actions bug-report-actions";const select=document.createElement("select");
   for(const [value,label] of [["open","未確認"],["triaged","調査中"],["resolved","解決済み"]]){const option=document.createElement("option");option.value=value;option.textContent=label;select.append(option);}
   select.value=item.status;select.addEventListener("change",async()=>{try{await api("/api/admin/bug-reports/"+item.id,{method:"PUT",body:{status:select.value}});message("報告ステータスを更新しました。","ok");await loadBugReports();}catch(e){message(e.message,"error");}});
-  actions.append(select);card.append(copy,actions);root.append(card);
+  const replyForm=document.createElement("form");replyForm.className="bug-report-reply-form";
+  const replyInput=document.createElement("textarea");replyInput.rows=3;replyInput.maxLength=4000;replyInput.required=true;replyInput.placeholder="報告者への返信を入力（最大4000文字）";
+  const send=makeButton("返信を送信",async()=>{}, "primary");send.type="submit";
+  replyForm.append(replyInput,send);
+  replyForm.addEventListener("submit",async event=>{
+   event.preventDefault();const messageText=replyInput.value.trim();if(!messageText)return;
+   send.disabled=true;
+   try{await api("/api/admin/bug-reports/"+item.id+"/replies",{method:"POST",body:{message:messageText}});message("返信を暗号化して送信しました。","ok");await loadBugReports();}
+   catch(error){message(error.message,"error");send.disabled=false;}
+  });
+  actions.append(select);copy.append(replyForm);card.append(copy,actions);root.append(card);
  }
  if(!d.reports.length){const p=document.createElement("p");p.className="muted";p.textContent="バグ報告はまだありません。";root.append(p);}
 }
