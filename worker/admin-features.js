@@ -42,10 +42,30 @@ export async function handleAdminFeatures(request, env, deps) {
       return json({ submitted: true, id }, 201);
     } catch (error) { return json({ error: error?.message === "APP_DATA_ENCRYPTION_KEY_NOT_CONFIGURED" ? "DATA_ENCRYPTION_NOT_CONFIGURED" : "REPORT_UNAVAILABLE" }, 503); }
   }
+  if (path === "/api/bug-reports" && method === "GET") {
+    let session; try { session = await deps.getSession(env, deps.readCookie(request)); } catch { return json({ error: "AUTH_UNAVAILABLE" }, 503); }
+    if (!session) return json({ error: "UNAUTHENTICATED" }, 401);
+    try {
+      const rows = await env.DB.prepare("SELECT id,encrypted_payload,status,created_at,updated_at,resolved_at FROM bug_reports WHERE reporter_user_id=? ORDER BY created_at DESC LIMIT 100").bind(session.id).all();
+      const reports = [];
+      for (const row of rows.results || []) {
+        const report = JSON.parse(await decryptStored(env, "bug-report:" + row.id, row.encrypted_payload));
+        const replyRows = await env.DB.prepare("SELECT id,encrypted_payload,created_at FROM bug_report_replies WHERE bug_report_id=? ORDER BY created_at ASC LIMIT 100").bind(row.id).all();
+        const replies = [];
+        for (const reply of replyRows.results || []) {
+          replies.push({ id: reply.id, message: await decryptStored(env, "bug-report-reply:" + reply.id, reply.encrypted_payload), createdAt: reply.created_at });
+        }
+        reports.push({ id: row.id, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at, resolvedAt: row.resolved_at, report, replies });
+      }
+      return json({ reports });
+    } catch (error) {
+      return json({ error: error?.message === "APP_DATA_ENCRYPTION_KEY_NOT_CONFIGURED" ? "DATA_ENCRYPTION_NOT_CONFIGURED" : "REPORTS_UNAVAILABLE" }, 503);
+    }
+  }
   const noticeRoute = path === "/api/admin/announcements" || /^\/api\/admin\/announcements\/[a-f0-9-]+$/i.test(path);
   const usersRoute = path === "/api/admin/users" && method === "GET";
   const securityRoute = path === "/api/admin/security-check" && method === "GET";
-  const reportsRoute = path === "/api/admin/bug-reports" || /^\/api\/admin\/bug-reports\/[a-f0-9-]+$/i.test(path);
+  const reportsRoute = path === "/api/admin/bug-reports" || /^\/api\/admin\/bug-reports\/[a-f0-9-]+(?:\/replies)?$/i.test(path);
   const auditRoute = path === "/api/admin/audit-logs" && method === "GET";
   if (noticeRoute || usersRoute || securityRoute || reportsRoute || auditRoute) {
     const admin = await adminAuth(request, env, deps); if (admin instanceof Response) return admin;
@@ -109,9 +129,28 @@ export async function handleAdminFeatures(request, env, deps) {
         const reports = [];
         for (const row of rows.results || []) {
           const report = JSON.parse(await decryptStored(env, "bug-report:" + row.id, row.encrypted_payload));
-          reports.push({ id: row.id, reporter: row.reporter || "(削除済みユーザー)", status: row.status, createdAt: row.created_at, updatedAt: row.updated_at, resolvedAt: row.resolved_at, report });
+          const replyRows = await env.DB.prepare("SELECT id,encrypted_payload,created_at FROM bug_report_replies WHERE bug_report_id=? ORDER BY created_at ASC LIMIT 100").bind(row.id).all();
+          const replies = [];
+          for (const reply of replyRows.results || []) {
+            replies.push({ id: reply.id, message: await decryptStored(env, "bug-report-reply:" + reply.id, reply.encrypted_payload), createdAt: reply.created_at });
+          }
+          reports.push({ id: row.id, reporter: row.reporter || "(削除済みユーザー)", status: row.status, createdAt: row.created_at, updatedAt: row.updated_at, resolvedAt: row.resolved_at, report, replies });
         }
         return json({ reports });
+      }
+      const replyMatch = path.match(/^\/api\/admin\/bug-reports\/([a-f0-9-]+)\/replies$/i);
+      if (replyMatch && method === "POST") {
+        let body; try { body = await deps.readJson(request); } catch { return json({ error: "INVALID_JSON" }, 400); }
+        const message = typeof body?.message === "string" ? body.message.trim() : "";
+        if (!message || message.length > 4000) return json({ error: "INVALID_REPLY" }, 400);
+        const report = await env.DB.prepare("SELECT id FROM bug_reports WHERE id=?").bind(replyMatch[1]).first();
+        if (!report) return json({ error: "BUG_REPORT_NOT_FOUND" }, 404);
+        const id = crypto.randomUUID(), now = Date.now();
+        const encrypted = await encryptStored(env, "bug-report-reply:" + id, message);
+        await env.DB.prepare("INSERT INTO bug_report_replies (id,bug_report_id,admin_user_id,encrypted_payload,created_at) VALUES (?, ?, ?, ?, ?)").bind(id, report.id, admin.id, encrypted, now).run();
+        await env.DB.prepare("UPDATE bug_reports SET updated_at=? WHERE id=?").bind(now, report.id).run();
+        await deps.writeAdminAudit(env, admin, "bug-report.reply", report.id, { replyId: id, encrypted: true });
+        return json({ sent: true, id, createdAt: now }, 201);
       }
       const reportMatch = path.match(/^\/api\/admin\/bug-reports\/([a-f0-9-]+)$/i);
       if (reportMatch && method === "PUT") {
