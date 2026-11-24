@@ -1,5 +1,5 @@
 const FILE_KEY_LENGTH = 32;
-const MAX_FILE_BYTES = 100_000_000;
+const MAX_FILE_BYTES = 25_000_000;
 const ENVELOPE_ALGORITHM = "ECDH-P256-HKDF-SHA256-AES-GCM-256";
 const encoder = new TextEncoder();
 
