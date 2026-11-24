@@ -1,4 +1,5 @@
 import { decryptIdentityBackup, encryptIdentityBackup } from "./identity-backup.js";
+import { decryptSecureDropFile, encryptSecureDropFile } from "./secure-drop-crypto.js";
 const $ = (s) => document.querySelector(s);
 const el = {
   connection: $("#connection-pill"), connectionLabel: $("#connection-label"),
@@ -21,7 +22,9 @@ const el = {
   mobileBack: $("#mobile-back-button"),
   unreadTotal: $("#unread-total"), notificationButton: $("#notification-enable-button"),
   cryptoV2Approve: $("#crypto-v2-approve-button"), cryptoV2Status: $("#crypto-v2-status"),
-  cryptoV2DevicesToggle: $("#crypto-v2-devices-toggle"), cryptoV2Devices: $("#crypto-v2-devices"), cryptoV2DeviceList: $("#crypto-v2-device-list")
+  cryptoV2DevicesToggle: $("#crypto-v2-devices-toggle"), cryptoV2Devices: $("#crypto-v2-devices"), cryptoV2DeviceList: $("#crypto-v2-device-list"),
+  secureDropPanel: $("#secure-drop-panel"), secureDropCredits: $("#secure-drop-credits"), secureDropSelect: $("#secure-drop-select"),
+  secureDropFile: $("#secure-drop-file"), secureDropNote: $("#secure-drop-note"), secureDropList: $("#secure-drop-list")
 };
 const MAX_MESSAGE_LENGTH = 2000;
 const DB_NAME = "securechat-local-keys";
@@ -37,6 +40,7 @@ const originalDocumentTitle = document.title;
 let unreadCountsInitialized = false;
 let activeCryptoMode = { protocolVersion: 1, approvedByMe: false, approvedByPeer: false };
 let activePeerSigningKey = null, activePeerFingerprintVerified = false;
+let secureDropBusy = false, secureDropRefreshBusy = false;
 
 function toast(message, duration = 3200) {
   el.toast.textContent = message;
@@ -975,6 +979,7 @@ async function signIn(user,password=null) {
     await refreshSidebar();
   } catch (error) {
     await closeCryptoV2Session();
+    clearSecureDropView();
     currentUser=null;
     identityPrivateKey=null;
     identityPublicKey=null;
@@ -990,13 +995,16 @@ async function signIn(user,password=null) {
   clearInterval(refreshTimer);
   refreshTimer=setInterval(()=>{
     if(document.visibilityState==="visible" && document.hasFocus() && activeConversation) loadMessages(false).catch(()=>{});
-    if(++sidebarRefreshTick % 5 === 0) refreshSidebar().catch(()=>{});
+    if(++sidebarRefreshTick % 5 === 0) {
+      refreshSidebar().catch(()=>{});
+      if(activeConversation)refreshSecureDrop().catch(()=>{});
+    }
   },1000);
 }
 function startAuthCheck() {
   clearInterval(authTimer);
   authTimer=setInterval(async()=>{
-    try { const s=await checkSession(); if(!s.authenticated){await closeCryptoV2Session();currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;showAuth(formatError(appError("SESSION_EXPIRED","セッションの有効期限が切れました。再ログインしてください。")));} }
+    try { const s=await checkSession(); if(!s.authenticated){await closeCryptoV2Session();clearSecureDropView();currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;showAuth(formatError(appError("SESSION_EXPIRED","セッションの有効期限が切れました。再ログインしてください。")));} }
     catch {showError(appError("AUTH_RECHECK_FAILED","認証サーバーに接続できません。"));}
   },300000);
 }
@@ -1065,6 +1073,7 @@ async function deleteAccount() {
     await api("/api/auth/delete",{method:"POST",body:{password}});
     await removeIdentity(userId);
     await closeCryptoV2Session();
+    clearSecureDropView();
     cryptoV2Module=null;cryptoV2Ready=false;currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;activeProtocolVersion=1;
     clearInterval(authTimer);clearInterval(refreshTimer);
     setAuthMode("login");showAuth();toast("アカウントと関連データを削除しました。");
@@ -1076,6 +1085,7 @@ async function logout() {
   try {
     await api("/api/auth/logout",{method:"POST"});
     await closeCryptoV2Session();
+    clearSecureDropView();
     currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;
     clearInterval(authTimer);clearInterval(refreshTimer);setAuthMode("login");showAuth();toast("ログアウトしました。");
   } catch(e) {showError(e);}
@@ -1281,6 +1291,7 @@ async function selectConversation(c) {
       el.securityTag.textContent="v1 / FSなし";
     }
     await loadMessages(true);
+    await refreshSecureDrop();
     updateSend();
   } catch(e) {
     showError(e,"暗号鍵を準備できません: ");
@@ -1334,6 +1345,219 @@ async function loadMessages(fullSync=false) {
     messageLoadBusy=false;
   }
 }
+function clearSecureDropView() {
+  if(el.secureDropPanel)el.secureDropPanel.hidden=true;
+  if(el.secureDropList)el.secureDropList.replaceChildren();
+  if(el.secureDropFile)el.secureDropFile.value="";
+  if(el.secureDropSelect)el.secureDropSelect.disabled=true;
+  if(el.secureDropCredits)el.secureDropCredits.textContent="";
+  if(el.secureDropNote)el.secureDropNote.textContent="";
+}
+const SECURE_DROP_MAX_FILE_BYTES = 100_000_000;
+function formatFileSize(bytes) {
+  const value=Number(bytes);
+  if(!Number.isFinite(value)||value<0)return "容量不明";
+  if(value<1_000_000)return Math.max(1,Math.round(value/1000))+" KB";
+  return (value/1_000_000).toFixed(2)+" MB";
+}
+async function secureDropRequest(path, options={}) {
+  let response;
+  try {
+    response=await fetch(path,{
+      method:options.method||"GET",
+      credentials:"same-origin",
+      cache:"no-store",
+      headers:options.headers||{},
+      ...(options.body!==undefined?{body:options.body}:{})
+    });
+  } catch {
+    throw appError("SECURE_DROP_NETWORK_ERROR","SecureDrop サーバーに接続できません。");
+  }
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok) {
+    const messages={
+      UNAUTHENTICATED:"ログインし直してください。",
+      SECURE_DROP_RECIPIENT_NOT_AUTHORIZED:"送信先は相互確認済みの連絡先ではありません。",
+      SECURE_DROP_KEY_ENVELOPE_INVALID:"受信者向け暗号鍵 envelope が正しくありません。",
+      INSUFFICIENT_CREDITS:"今月のクレジットが不足しています。",
+      STORED_FILE_TOO_LARGE:"暗号化後のファイルが上限を超えています。",
+      STORED_SIZE_MISMATCH:"転送中にファイル容量が変わりました。",
+      TRANSFER_EXPIRED_OR_NOT_FOUND:"ファイルは期限切れか、削除されています。",
+      DOWNLOAD_LIMIT_REACHED:"このファイルはダウンロード上限に達しました。",
+      STORED_FILE_INTEGRITY_MISMATCH:"保存ファイルの整合性を確認できませんでした。"
+    };
+    throw appError(data.error||"SECURE_DROP_REQUEST_FAILED",messages[data.error]||data.message||"SecureDrop の処理に失敗しました。");
+  }
+  return data;
+}
+async function refreshSecureDrop() {
+  if(!el.secureDropPanel || !currentUser || !activeConversation) {
+    if(el.secureDropPanel)el.secureDropPanel.hidden=true;
+    return;
+  }
+  if(secureDropRefreshBusy)return;
+  secureDropRefreshBusy=true;
+  const conversationId=activeConversation.id;
+  el.secureDropPanel.hidden=false;
+  try {
+    const [account,listing]=await Promise.all([
+      secureDropRequest("/api/secure-drop/credits"),
+      secureDropRequest("/api/secure-drop/files")
+    ]);
+    if(!activeConversation || activeConversation.id!==conversationId)return;
+    el.secureDropCredits.textContent="今月の残り "+account.balance+" / "+account.granted+" クレジット · 暗号化後容量で課金";
+    el.secureDropSelect.disabled=secureDropBusy || !identityPrivateKey;
+    el.secureDropNote.textContent="送信先の署名・指紋確認が必要です。最大100 MB。AES-256-GCMで暗号化し、gzipで圧縮します。課金はサーバー実測の暗号化後容量（1 MBごとに1クレジット、切り上げ）です。";
+    el.secureDropList.replaceChildren();
+    const files=Array.isArray(listing.files)?listing.files:[];
+    const forPeer=files.filter(file => file.peerUserId===activeConversation.peerUserId);
+    if(!forPeer.length) {
+      const empty=document.createElement("p");
+      empty.className="sidebar-empty";
+      empty.textContent="この会話のファイルはありません。";
+      el.secureDropList.append(empty);
+    }
+    for(const file of forPeer) {
+      const row=document.createElement("article");
+      row.className="secure-drop-item";
+      const copy=document.createElement("div");
+      copy.className="secure-drop-item-copy";
+      const title=document.createElement("strong");
+      title.textContent=file.direction==="received"?"受信した暗号化ファイル":"送信した暗号化ファイル";
+      const detail=document.createElement("span");
+      const expires=file.expiresAt?new Intl.DateTimeFormat("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}).format(new Date(file.expiresAt)):"不明";
+      detail.textContent=formatFileSize(file.storedSizeBytes)+" · 残り "+file.downloadsRemaining+" 回 · "+expires+" まで";
+      copy.append(title,detail);
+      const actions=document.createElement("div");
+      actions.className="secure-drop-item-actions";
+      if(file.direction==="received") {
+        const download=document.createElement("button");
+        download.type="button";
+        download.className="secure-drop-action";
+        download.textContent="取得・復号";
+        download.disabled=!identityPrivateKey || !file.keyEnvelope;
+        download.addEventListener("click",()=>downloadSecureDropFile(file,download));
+        actions.append(download);
+      } else {
+        const sent=document.createElement("span");
+        sent.textContent="送信済み";
+        sent.style.fontSize="10px";
+        sent.style.color="var(--muted)";
+        actions.append(sent);
+        const remove=document.createElement("button");
+        remove.type="button";
+        remove.className="secure-drop-action";
+        remove.textContent="削除";
+        remove.addEventListener("click",()=>deleteSecureDropFile(file,remove));
+        actions.append(remove);
+      }
+      row.append(copy,actions);
+      el.secureDropList.append(row);
+    }
+  } catch(error) {
+    if(activeConversation?.id===conversationId) {
+      el.secureDropCredits.textContent="SecureDrop を利用できません";
+      el.secureDropNote.textContent=formatError(error);
+      el.secureDropSelect.disabled=true;
+    }
+  } finally {
+    secureDropRefreshBusy=false;
+  }
+}
+async function uploadSecureDropFile(file) {
+  if(!activeConversation || !currentUser || !file)return;
+  if(file.size<1 || file.size>SECURE_DROP_MAX_FILE_BYTES) {
+    showError(appError("SECURE_DROP_FILE_SIZE_INVALID","ファイルは1バイト以上100 MB以下にしてください。"));
+    return;
+  }
+  const peerUserId=activeConversation.peerUserId;
+  secureDropBusy=true;
+  el.secureDropSelect.disabled=true;
+  el.secureDropNote.textContent="受信者と送信者のアカウント鍵を検証しています…";
+  try {
+    const peer=await verifiedAccountRoot(peerUserId);
+    if(!peer?.identityPublicKey)throw appError("SECURE_DROP_RECIPIENT_KEY_MISSING","相手の署名付きアカウント公開鍵がありません。");
+    const ownRecord=await storedIdentity(currentUser.userId);
+    if(!ownRecord?.signingPrivateKey || !identitySigningPublicKey) {
+      throw appError("SECURE_DROP_SENDER_SIGNING_KEY_REQUIRED","この端末でアカウント署名鍵を利用できません。");
+    }
+    const encrypted=await encryptSecureDropFile(
+      file,peer.identityPublicKey,currentUser.userId,ownRecord.signingPrivateKey,identitySigningPublicKey
+    );
+    if(!activeConversation || activeConversation.peerUserId!==peerUserId) {
+      throw appError("SECURE_DROP_CONVERSATION_CHANGED","送信中に会話が切り替わりました。");
+    }
+    el.secureDropNote.textContent="暗号化済みファイルを送信しています…";
+    const result=await secureDropRequest("/api/secure-drop/files",{
+      method:"POST",
+      headers:{
+        "X-Secure-Drop-Original-Size":String(file.size),
+        "X-Secure-Drop-Stored-Size":String(encrypted.storedSizeBytes),
+        "X-Secure-Drop-Payload":"encrypted-v1",
+        "X-Secure-Drop-Recipient-Id":peerUserId,
+        "X-Secure-Drop-Key-Envelope":encrypted.encodedEnvelope,
+        "Content-Type":"application/octet-stream"
+      },
+      body:new Blob([encrypted.ciphertext],{type:"application/octet-stream"})
+    });
+    toast("ファイルを暗号化して送信しました。課金: "+result.creditsConsumed+" クレジット");
+    await refreshSecureDrop();
+  } catch(error) {
+    showError(error,"SecureDrop 送信失敗: ");
+    await refreshSecureDrop();
+  } finally {
+    secureDropBusy=false;
+    if(el.secureDropFile)el.secureDropFile.value="";
+    if(el.secureDropSelect)el.secureDropSelect.disabled=!activeConversation || !identityPrivateKey;
+  }
+}
+async function downloadSecureDropFile(file,button) {
+  if(!identityPrivateKey || !identityPublicKey || !file?.keyEnvelope)return;
+  button.disabled=true;
+  try {
+    const response=await fetch(file.downloadPath,{
+      method:"GET",credentials:"same-origin",cache:"no-store"
+    });
+    if(!response.ok) {
+      const error=await response.json().catch(()=>({}));
+      throw appError(error.error||"SECURE_DROP_DOWNLOAD_FAILED",error.message||"ファイルを取得できませんでした。");
+    }
+    const ciphertext=await response.arrayBuffer();
+    const sender=await verifiedAccountRoot(file.senderUserId);
+    const restored=await decryptSecureDropFile(
+      ciphertext,file.keyEnvelope,identityPrivateKey,identityPublicKey,
+      file.senderUserId,sender.identitySigningPublicKey
+    );
+    const blob=new Blob([restored.bytes],{type:restored.type||"application/octet-stream"});
+    const objectUrl=URL.createObjectURL(blob);
+    const anchor=document.createElement("a");
+    anchor.href=objectUrl;
+    anchor.download=restored.name||("secure-drop-"+file.id);
+    anchor.hidden=true;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(()=>URL.revokeObjectURL(objectUrl),60_000);
+    toast("ファイルを端末内で復号しました。");
+    await refreshSecureDrop();
+  } catch(error) {
+    showError(error,"SecureDrop 復号失敗: ");
+  } finally {
+    button.disabled=false;
+  }
+}
+async function deleteSecureDropFile(file,button) {
+  if(!confirm("このファイルを削除しますか？受信者もダウンロードできなくなります。"))return;
+  button.disabled=true;
+  try {
+    await secureDropRequest("/api/secure-drop/files/"+encodeURIComponent(file.id),{method:"DELETE"});
+    toast("SecureDrop ファイルを削除しました。");
+    await refreshSecureDrop();
+  } catch(error) {
+    showError(error);
+    button.disabled=false;
+  }
+}
 async function sendMessage() {
   if(busy||!activeConversation)return;
   const text=el.input.value.trim();if(!text)return;
@@ -1376,6 +1600,11 @@ el.input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isCo
 el.send.addEventListener("click",sendMessage);
 el.cryptoV2Approve?.addEventListener("click",approveCryptoV2ForActiveConversation);
 el.cryptoV2DevicesToggle?.addEventListener("click",toggleCryptoDeviceList);
+el.secureDropSelect?.addEventListener("click",()=>el.secureDropFile?.click());
+el.secureDropFile?.addEventListener("change",()=>{
+  const file=el.secureDropFile.files?.[0];
+  if(file)uploadSecureDropFile(file);
+});
 window.addEventListener("focus",()=>{
   if(!currentUser)return;
   if(activeConversation)loadMessages(false).catch(()=>{});
