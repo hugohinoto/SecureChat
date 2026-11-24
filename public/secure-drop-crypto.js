@@ -72,32 +72,6 @@ function senderSignatureMessage(envelope) {
     envelope.senderUserId + "\n" + JSON.stringify(signedFields)
   );
 }
-async function readStreamBounded(stream, maxBytes) {
-  const reader = stream.getReader();
-  const chunks = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => {});
-        throw new RangeError("SECURE_DROP_DECOMPRESSED_SIZE_INVALID");
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const output = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return output;
-}
 async function deriveWrappingKey(privateKey, publicKey, salt, fingerprint) {
   const sharedSecret = new Uint8Array(await crypto.subtle.deriveBits(
     { name: "ECDH", public: publicKey }, privateKey, 256
