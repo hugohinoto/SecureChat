@@ -1,5 +1,7 @@
 const FILE_KEY_LENGTH = 32;
 const MAX_FILE_BYTES = 100_000_000;
+const MAX_UPLOAD_FILE_BYTES = 25_000_000;
+const MAX_STORED_BYTES = 26_000_000;
 const ENVELOPE_ALGORITHM = "ECDH-P256-HKDF-SHA256-AES-GCM-256";
 const encoder = new TextEncoder();
 
@@ -153,7 +155,7 @@ export function encodeSecureDropKeyEnvelope(envelope) {
 }
 
 export async function encryptSecureDropFile(file, recipientPublicKeyBase64, senderUserId, senderSigningPrivateKey, senderSigningPublicKeyBase64) {
-  if (!(file instanceof Blob) || file.size < 1 || file.size > MAX_FILE_BYTES) {
+  if (!(file instanceof Blob) || file.size < 1 || file.size > MAX_UPLOAD_FILE_BYTES) {
     throw new RangeError("SECURE_DROP_FILE_SIZE_INVALID");
   }
   if (typeof recipientPublicKeyBase64 !== "string") {
@@ -177,7 +179,7 @@ export async function encryptSecureDropFile(file, recipientPublicKeyBase64, send
   new DataView(metadataLength.buffer).setUint32(0, metadataBytes.length, false);
   const plaintext = await readStreamBounded(
     new Blob([metadataLength, metadataBytes, file]).stream().pipeThrough(new CompressionStream("gzip")),
-    MAX_FILE_BYTES
+    MAX_STORED_BYTES
   );
   const fileKeyBytes = crypto.getRandomValues(new Uint8Array(FILE_KEY_LENGTH));
   const fileIv = crypto.getRandomValues(new Uint8Array(12));
@@ -191,7 +193,7 @@ export async function encryptSecureDropFile(file, recipientPublicKeyBase64, send
       fileKey,
       plaintext
     );
-    if (ciphertext.byteLength > MAX_FILE_BYTES) throw new RangeError("SECURE_DROP_ENCRYPTED_FILE_TOO_LARGE");
+    if (ciphertext.byteLength > MAX_STORED_BYTES) throw new RangeError("SECURE_DROP_ENCRYPTED_FILE_TOO_LARGE");
     const envelope = await wrapFileKey(fileKeyBytes, recipientPublicKeyBase64, fileIv);
     envelope.senderUserId = senderUserId;
     envelope.senderSigningPublicKey = senderSigningPublicKeyBase64;
@@ -299,5 +301,7 @@ export async function decryptSecureDropFile(ciphertext, envelope, recipientPriva
 export const SECURE_DROP_CRYPTO = Object.freeze({
   algorithm: ENVELOPE_ALGORITHM,
   maxFileBytes: MAX_FILE_BYTES,
+  maxUploadFileBytes: MAX_UPLOAD_FILE_BYTES,
+  maxStoredBytes: MAX_STORED_BYTES,
   fileKeyBytes: FILE_KEY_LENGTH
 });

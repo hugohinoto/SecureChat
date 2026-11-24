@@ -10,7 +10,8 @@ import {
   secureDropNextMonthStart,
   validateSecureDropKeyEnvelope,
   verifySecureDropKeyEnvelopeSignature,
-  runSecureDropMaintenance
+  runSecureDropMaintenance,
+  SECURE_DROP_LIMITS
 } from "../worker/secure-drop.js";
 import {
   decryptSecureDropFile,
@@ -51,13 +52,24 @@ test("SecureDrop month accounting changes at midnight Japan time", () => {
   assert.equal(secureDropNextMonthStart(reset), Date.parse("2026-12-31T15:00:00.000Z"));
 });
 
-test("SecureDrop charges from measured stored bytes using decimal MB rounding", () => {
+test("SecureDrop charges by decimal MB and applies the priority multiplier", () => {
   assert.equal(secureDropCreditsForBytes(1), 1);
   assert.equal(secureDropCreditsForBytes(1_000_000), 1);
   assert.equal(secureDropCreditsForBytes(1_000_001), 2);
-  assert.equal(secureDropCreditsForBytes(100_000_000), 100);
+  assert.equal(secureDropCreditsForBytes(26_000_000), 26);
+  assert.equal(secureDropCreditsForBytes(1_000_001, 5), 10);
   assert.throws(() => secureDropCreditsForBytes(0), /INVALID_STORED_SIZE/);
-  assert.throws(() => secureDropCreditsForBytes(100_000_001), /INVALID_STORED_SIZE/);
+  assert.throws(() => secureDropCreditsForBytes(26_000_001), /INVALID_STORED_SIZE/);
+  assert.throws(() => secureDropCreditsForBytes(1_000_000, 2), /INVALID_STORED_SIZE/);
+});
+
+test("SecureDrop D1 allocation, soft stop and chunk limits are explicit", () => {
+  assert.equal(SECURE_DROP_LIMITS.storageCapacityBytes, 3_000_000_000);
+  assert.equal(SECURE_DROP_LIMITS.storageSoftLimitBytes, 2_700_000_000);
+  assert.equal(SECURE_DROP_LIMITS.chunkSizeBytes, 512 * 1024);
+  assert.equal(SECURE_DROP_LIMITS.maxOriginalBytes, 25_000_000);
+  assert.equal(SECURE_DROP_LIMITS.maxStoredBytes, 26_000_000);
+  assert.equal(SECURE_DROP_LIMITS.priorityCreditMultiplier, 5);
 });
 
 test("recipient key envelopes require a P-256 ephemeral key, wrapped key, payload IV and matching fingerprint", () => {
@@ -222,7 +234,8 @@ test("month-end sweeping waits while any old-month upload is still pending", asy
           }
           if (sql.includes("status='pending'")) return { count: 1 };
           return null;
-        }
+        },
+        async run() { return { meta: { changes: 0 } }; }
       };
     },
     async batch() { oldMonthMetadataDeleted = true; }
@@ -252,7 +265,8 @@ test("monthly maintenance paginates old-month R2 objects and removes old D1 stat
             return { current_month: month, cursor: null, completed_at: null };
           }
           return null;
-        }
+        },
+        async run() { return { meta: { changes: 0 } }; }
       };
     },
     async batch(statements) { batches.push(statements.map(statement => statement.sql)); }
@@ -270,7 +284,8 @@ test("monthly maintenance paginates old-month R2 objects and removes old D1 stat
         truncated:false
       };
     },
-    async delete(keys) { deleted.push(...keys); }
+    async delete(keys) { deleted.push(...keys); },
+    async head() { return null; }
   };
   const result = await runSecureDropMaintenance({ DB:db, SECURE_DROP_R2:bucket }, now);
   assert.deepEqual(result, { month, status:"ok" });
@@ -295,7 +310,10 @@ test("monthly maintenance retains its cursor when R2 deletion fails so the next 
           }
           return null;
         },
-        async run() { cursorUpdates++; }
+        async run() {
+          if(sql.includes("UPDATE secure_drop_maintenance")) cursorUpdates++;
+          return { meta: { changes: 0 } };
+        }
       };
     },
     async batch() { throw new Error("D1 finalization should not run after R2 failure"); }
@@ -341,14 +359,17 @@ test("the sender cannot consume a recipient download allowance", async () => {
   assert.equal(r2Read, false);
 });
 
-test("upload billing accepts a size hint only when the measured stream matches it", async () => {
+test("D1 upload size declarations are checked against the received encrypted bytes", async () => {
   const source = await readFile(new URL("../worker/secure-drop.js", import.meta.url), "utf8");
   assert.match(source, /X-Secure-Drop-Stored-Size/);
   assert.match(source, /contentLengthHeader !== storedSizeHeader/);
-  assert.match(source, /actualBytes !== declaredStoredBytes/);
-  assert.match(source, /Number\(storedObject\?\.size\) !== actualBytes/);
+  assert.match(source, /ciphertext\.byteLength !== declaredStoredBytes/);
+  assert.match(source, /digestBytes\(ciphertext\) !== envelope\.ciphertextSha256/);
   const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(app, /X-Secure-Drop-Stored-Size/);
+  assert.match(app, /X-Secure-Drop-Upload-Id/);
+  assert.match(app, /SECURE_DROP_PENDING_DB/);
+  assert.match(app, /preemptions\/ack/);
 });
 
 test("SecureDrop downloads use a conditional atomic three-download update", async () => {
@@ -356,6 +377,23 @@ test("SecureDrop downloads use a conditional atomic three-download update", asyn
   assert.match(source, /download_count=download_count\+1[\s\S]*?status='ready'[\s\S]*?download_count<3/);
   assert.match(source, /recipient_user_id=\?/);
   assert.doesNotMatch(source, /downloadToken/);
+});
+
+test("SecureDrop D1 migration keeps chunk data keyed by transfer and ordered index", async () => {
+  const migration = await readFile(
+    new URL("../database/d1-migrations/0016_secure_drop_d1_chunk_storage.sql", import.meta.url),
+    "utf8"
+  );
+  assert.match(migration, /storage_backend TEXT NOT NULL DEFAULT 'r2'/);
+  assert.match(migration, /chunk_index INTEGER NOT NULL/);
+  assert.match(migration, /chunk_size_bytes BETWEEN 1 AND 524288/);
+  assert.match(migration, /secure_drop_preempted_uploads/);
+  const source = await readFile(new URL("../worker/secure-drop.js", import.meta.url), "utf8");
+  assert.match(source, /X-Secure-Drop-Upload-Id/);
+  assert.match(source, /storage_backend='d1'/);
+  assert.match(source, /D1_STORAGE_SOFT_LIMIT_BYTES/);
+  assert.match(source, /UPLOAD_PREEMPTED/);
+  assert.match(source, /ciphertextSha256/);
 });
 
 test("browser file encryption wraps the AES-GCM key to the recipient identity and detects tampering", async () => {
