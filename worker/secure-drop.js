@@ -1,5 +1,9 @@
-const MAX_ORIGINAL_BYTES = 100_000_000;
-const MAX_STORED_BYTES = 100_000_000;
+const MAX_ORIGINAL_BYTES = 25_000_000;
+const MAX_STORED_BYTES = 25_000_000;
+const D1_STORAGE_CAPACITY_BYTES = 3_000_000_000;
+const D1_STORAGE_SOFT_LIMIT_BYTES = Math.floor(D1_STORAGE_CAPACITY_BYTES * 0.9);
+const D1_CHUNK_SIZE_BYTES = 512 * 1024;
+const PRIORITY_CREDIT_MULTIPLIER = 5;
 const MONTHLY_CREDITS = 100;
 const DOWNLOAD_LIMIT = 3;
 const TRANSFER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -35,11 +39,12 @@ export function secureDropNextMonthStart(now) {
   return Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth() + 1, 1) - JST_OFFSET_MS;
 }
 
-export function secureDropCreditsForBytes(bytes) {
-  if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > MAX_STORED_BYTES) {
+export function secureDropCreditsForBytes(bytes, multiplier = 1) {
+  if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > MAX_STORED_BYTES ||
+      (multiplier !== 1 && multiplier !== PRIORITY_CREDIT_MULTIPLIER)) {
     throw new RangeError("INVALID_STORED_SIZE");
   }
-  return Math.max(1, Math.ceil(bytes / 1_000_000));
+  return Math.max(1, Math.ceil(bytes / 1_000_000)) * multiplier;
 }
 
 function decodeBase64(value) {
@@ -196,21 +201,99 @@ async function lookupRecipient(env, ownerId, recipientValue) {
 async function createPendingTransfer(env, details) {
   const {
     transferId, ownerId, recipientId, month, objectKey, tokenHash, originalBytes,
-    envelopeJson, credits, now, expiresAt
+    storedBytes, envelopeJson, credits, now, expiresAt, priority, capacityLimit
   } = details;
   const results = await env.DB.batch([
     env.DB.prepare(
-      "UPDATE secure_drop_credit_accounts SET balance=balance-?, updated_at=? WHERE user_id=? AND month_key=? AND balance>=?"
-    ).bind(credits, now, ownerId, month, credits),
+      "UPDATE secure_drop_credit_accounts SET balance=balance-?, updated_at=? WHERE user_id=? AND month_key=? AND balance>=? AND (SELECT COALESCE(SUM(stored_size_bytes),0) FROM secure_drop_transfers WHERE storage_backend='d1' AND status IN ('pending','ready','deleting')) + ? <= ?"
+    ).bind(credits, now, ownerId, month, credits, storedBytes, capacityLimit),
     env.DB.prepare(
-      "INSERT INTO secure_drop_transfers (id, user_id, month_key, object_key, token_hash, original_size_bytes, stored_size_bytes, created_at, expires_at, download_count, download_limit, recipient_user_id, key_envelope_json, status, updated_at) SELECT ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, 3, ?, ?, 'pending', ? WHERE changes()=1"
-    ).bind(transferId, ownerId, month, objectKey, tokenHash, originalBytes, now, expiresAt, recipientId, envelopeJson, now),
+      "INSERT INTO secure_drop_transfers (id, user_id, month_key, object_key, token_hash, original_size_bytes, stored_size_bytes, created_at, expires_at, download_count, download_limit, recipient_user_id, key_envelope_json, status, updated_at, storage_backend, priority) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 3, ?, ?, 'pending', ?, 'd1', ? WHERE changes()=1"
+    ).bind(transferId, ownerId, month, objectKey, tokenHash, originalBytes, storedBytes, now, expiresAt, recipientId, envelopeJson, now, priority),
     env.DB.prepare(
       "INSERT INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) SELECT ?, ?, ?, ?, 'upload_debit', ?, ? WHERE EXISTS (SELECT 1 FROM secure_drop_transfers WHERE id=? AND status='pending')"
     ).bind("debit:" + transferId, ownerId, month, -credits, transferId, now, transferId)
   ]);
   return Number(results?.[0]?.meta?.changes || 0) === 1 &&
     Number(results?.[1]?.meta?.changes || 0) === 1;
+}
+
+async function digestBytes(value) {
+  const hash = await crypto.subtle.digest("SHA-256", value);
+  return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function readBodyBounded(body, maxBytes) {
+  if (!body) throw new Error("UPLOAD_BODY_REQUIRED");
+  const reader = body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error("STORED_SIZE_LIMIT_EXCEEDED");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
+async function getD1StorageUsedBytes(env) {
+  const row = await env.DB.prepare(
+    "SELECT COALESCE(SUM(stored_size_bytes),0) AS used_bytes FROM secure_drop_transfers WHERE storage_backend='d1' AND status IN ('pending','ready','deleting')"
+  ).first();
+  return Number(row?.used_bytes || 0);
+}
+
+async function preemptPendingUploads(env, requestedBytes, now) {
+  const usedBytes = await getD1StorageUsedBytes(env);
+  const requiredBytes = Math.max(0, usedBytes + requestedBytes - D1_STORAGE_CAPACITY_BYTES);
+  if (!requiredBytes) return true;
+  const candidates = await env.DB.prepare(
+    "SELECT id, stored_size_bytes FROM secure_drop_transfers WHERE storage_backend='d1' AND status='pending' AND priority=0 ORDER BY updated_at ASC LIMIT 200"
+  ).all();
+  const selected = [];
+  let released = 0;
+  for (const row of candidates.results || []) {
+    selected.push(row);
+    released += Number(row.stored_size_bytes || 0);
+    if (released >= requiredBytes) break;
+  }
+  if (released < requiredBytes) return false;
+
+  const statements = [];
+  for (const row of selected) {
+    statements.push(
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO secure_drop_preempted_uploads (transfer_id, user_id, recipient_user_id, month_key, original_size_bytes, stored_size_bytes, created_at) SELECT id, user_id, recipient_user_id, month_key, original_size_bytes, stored_size_bytes, ? FROM secure_drop_transfers WHERE id=? AND storage_backend='d1' AND status='pending' AND priority=0"
+      ).bind(now, row.id),
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) SELECT 'refund:preempt:' || t.id, t.user_id, t.month_key, -l.delta, 'upload_refund', t.id, ? FROM secure_drop_transfers t JOIN secure_drop_credit_ledger l ON l.id='debit:' || t.id WHERE t.id=? AND t.storage_backend='d1' AND t.status='pending' AND t.priority=0 AND l.delta<0"
+      ).bind(now, row.id),
+      env.DB.prepare(
+        "UPDATE secure_drop_credit_accounts SET balance=MIN(granted_credits, balance + (SELECT delta FROM secure_drop_credit_ledger WHERE id='refund:preempt:' || ?)), updated_at=? WHERE user_id=(SELECT user_id FROM secure_drop_transfers WHERE id=?) AND month_key=(SELECT month_key FROM secure_drop_transfers WHERE id=?) AND changes()=1"
+      ).bind(row.id, now, row.id, row.id),
+      env.DB.prepare("DELETE FROM secure_drop_file_chunks WHERE transfer_id=?").bind(row.id),
+      env.DB.prepare(
+        "DELETE FROM secure_drop_transfers WHERE id=? AND storage_backend='d1' AND status='pending' AND priority=0 AND EXISTS (SELECT 1 FROM secure_drop_preempted_uploads WHERE transfer_id=?)"
+      ).bind(row.id, row.id)
+    );
+  }
+  await env.DB.batch(statements);
+  return (await getD1StorageUsedBytes(env)) + requestedBytes <= D1_STORAGE_CAPACITY_BYTES;
 }
 
 async function verifyR2ObjectAbsent(env, objectKey) {
@@ -229,7 +312,20 @@ async function queueDeletionVerification(env, transferId, objectKey, now, reason
   ).bind(transferId, objectKey, reason, now, now, now).run();
 }
 
-async function verifyAndFinalizeDeletion(env, transferId, objectKey, now, reason = "user_delete") {
+async function verifyAndFinalizeDeletion(env, transferId, objectKey, now, reason = "user_delete", storageBackend = "r2") {
+  if (storageBackend === "d1") {
+    await env.DB.prepare("DELETE FROM secure_drop_file_chunks WHERE transfer_id=?").bind(transferId).run();
+    const remaining = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM secure_drop_file_chunks WHERE transfer_id=?"
+    ).bind(transferId).first();
+    if (Number(remaining?.count || 0) !== 0) return false;
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM secure_drop_transfers WHERE id=? AND status='deleting' AND storage_backend='d1'").bind(transferId),
+      env.DB.prepare("DELETE FROM secure_drop_deletion_jobs WHERE transfer_id=?").bind(transferId)
+    ]);
+    const transfer = await env.DB.prepare("SELECT 1 AS present FROM secure_drop_transfers WHERE id=?").bind(transferId).first();
+    return !transfer;
+  }
   const absent = await verifyR2ObjectAbsent(env, objectKey);
   if (!absent) {
     await queueDeletionVerification(env, transferId, objectKey, now, reason).catch(() => {});
@@ -264,6 +360,25 @@ async function processDeletionJobs(env, now) {
 }
 
 async function abandonPendingTransfer(env, transfer, credits, now) {
+  if (transfer.storageBackend === "d1") {
+    try {
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM secure_drop_file_chunks WHERE transfer_id=?").bind(transfer.id),
+        env.DB.prepare("DELETE FROM secure_drop_transfers WHERE id=? AND status='pending' AND storage_backend='d1'").bind(transfer.id)
+      ]);
+      const remaining = await env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM secure_drop_file_chunks WHERE transfer_id=?"
+      ).bind(transfer.id).first();
+      if (Number(remaining?.count || 0) !== 0) throw new Error("D1_CHUNK_DELETION_UNVERIFIED");
+      await refundCredits(env, transfer.ownerId, transfer.month, credits, transfer.id, now);
+      return;
+    } catch {
+      await env.DB.prepare(
+        "UPDATE secure_drop_transfers SET status='deleting', updated_at=? WHERE id=? AND storage_backend='d1'"
+      ).bind(now, transfer.id).run().catch(() => {});
+      return;
+    }
+  }
   const objectDeleted = await verifyR2ObjectAbsent(env, transfer.objectKey);
   let refundCompleted = false;
   try {
@@ -283,13 +398,22 @@ async function abandonPendingTransfer(env, transfer, credits, now) {
 
 async function cleanupStaleTransfers(env, now) {
   const rows = await env.DB.prepare(
-    "SELECT id, user_id, month_key, object_key, status FROM secure_drop_transfers WHERE (status='pending' AND updated_at<=?) OR (status='deleting' AND updated_at<=?) OR (status='ready' AND expires_at<=?) ORDER BY updated_at LIMIT ?"
+    "SELECT id, user_id, month_key, object_key, storage_backend, status FROM secure_drop_transfers WHERE (status='pending' AND updated_at<=?) OR (status='deleting' AND updated_at<=?) OR (status='ready' AND expires_at<=?) ORDER BY updated_at LIMIT ?"
   ).bind(now - PENDING_GRACE_MS, now - PENDING_GRACE_MS, now, CLEANUP_BATCH_SIZE).all();
   for (const row of rows.results || []) {
-    const objectDeleted = await verifyR2ObjectAbsent(env, row.object_key);
-    if (!objectDeleted) {
-      await queueDeletionVerification(env, row.id, row.object_key, now, "stale_transfer").catch(() => {});
-      continue;
+    if (row.storage_backend === "d1") {
+      await env.DB.prepare("DELETE FROM secure_drop_file_chunks WHERE transfer_id=?").bind(row.id).run();
+      const remaining = await env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM secure_drop_file_chunks WHERE transfer_id=?"
+      ).bind(row.id).first();
+      if (Number(remaining?.count || 0) !== 0) continue;
+    } else {
+      if (!env.SECURE_DROP_R2) continue;
+      const objectDeleted = await verifyR2ObjectAbsent(env, row.object_key);
+      if (!objectDeleted) {
+        await queueDeletionVerification(env, row.id, row.object_key, now, "stale_transfer").catch(() => {});
+        continue;
+      }
     }
     if (row.status === "pending" && row.month_key === secureDropMonthKey(now)) {
       try {
@@ -308,6 +432,28 @@ async function cleanupStaleTransfers(env, now) {
   }
 }
 
+async function purgeOldMonthD1Only(env, now) {
+  const current = secureDropMonthKey(now);
+  const pending = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM secure_drop_transfers WHERE storage_backend='d1' AND month_key<>? AND status='pending'"
+  ).bind(current).first();
+  if (Number(pending?.count || 0) > 0) return false;
+  await env.DB.prepare(
+    "DELETE FROM secure_drop_file_chunks WHERE transfer_id IN (SELECT id FROM secure_drop_transfers WHERE storage_backend='d1' AND month_key<>?)"
+  ).bind(current).run();
+  const remaining = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM secure_drop_file_chunks c JOIN secure_drop_transfers t ON t.id=c.transfer_id WHERE t.storage_backend='d1' AND t.month_key<>?"
+  ).bind(current).first();
+  if (Number(remaining?.count || 0) !== 0) return false;
+  await env.DB.prepare(
+    "DELETE FROM secure_drop_transfers WHERE storage_backend='d1' AND month_key<>?"
+  ).bind(current).run();
+  const legacy = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM secure_drop_transfers WHERE storage_backend='r2' AND month_key<>?"
+  ).bind(current).first();
+  return Number(legacy?.count || 0) === 0;
+}
+
 async function purgeOldMonthObjects(env, now) {
   const bucket = env.SECURE_DROP_R2;
   const current = secureDropMonthKey(now);
@@ -323,10 +469,7 @@ async function purgeOldMonthObjects(env, now) {
   const inFlightOldMonth = await env.DB.prepare(
     "SELECT COUNT(*) AS count FROM secure_drop_transfers WHERE month_key<>? AND status='pending'"
   ).bind(current).first();
-  if (Number(inFlightOldMonth?.count || 0) > 0) {
-    // Let active uploads finish or be reclaimed by the stale-pending janitor before sweeping old-month R2 objects.
-    return false;
-  }
+  if (Number(inFlightOldMonth?.count || 0) > 0) return false;
   if (state.completed_at) return true;
 
   let cursor = state.cursor || undefined;
@@ -354,9 +497,16 @@ async function purgeOldMonthObjects(env, now) {
         "UPDATE secure_drop_maintenance SET cursor=?, completed_at=NULL WHERE id=1 AND current_month=?"
       ).bind(cursor, current).run();
     } else {
+      await env.DB.prepare(
+        "DELETE FROM secure_drop_file_chunks WHERE transfer_id IN (SELECT id FROM secure_drop_transfers WHERE storage_backend='d1' AND month_key<>?)"
+      ).bind(current).run();
+      const remainingChunks = await env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM secure_drop_file_chunks c JOIN secure_drop_transfers t ON t.id=c.transfer_id WHERE t.storage_backend='d1' AND t.month_key<>?"
+      ).bind(current).first();
+      if (Number(remainingChunks?.count || 0) !== 0) throw new Error("D1_CHUNK_DELETION_VERIFICATION_FAILED");
       await env.DB.batch([
         env.DB.prepare("DELETE FROM secure_drop_deletion_jobs WHERE transfer_id IN (SELECT id FROM secure_drop_transfers WHERE month_key<>?)").bind(current),
-        env.DB.prepare("DELETE FROM secure_drop_deletion_jobs WHERE transfer_id IN (SELECT id FROM secure_drop_transfers WHERE month_key<>?)").bind(current),
+        env.DB.prepare("DELETE FROM secure_drop_preempted_uploads WHERE month_key<>?").bind(current),
         env.DB.prepare("DELETE FROM secure_drop_transfers WHERE month_key<>?").bind(current),
         env.DB.prepare("DELETE FROM secure_drop_credit_ledger WHERE month_key<>?").bind(current),
         env.DB.prepare("DELETE FROM secure_drop_credit_accounts WHERE month_key<>?").bind(current),
@@ -383,21 +533,27 @@ export async function handleSecureDropApi(request, env, context) {
     return json({ error: "AUTH_UNAVAILABLE" }, 503);
   }
   if (!session) return json({ error: "UNAUTHENTICATED" }, 401);
-  if (!env.SECURE_DROP_R2) {
-    return json({ error: "SECURE_DROP_STORAGE_UNAVAILABLE", message: "ファイル保存先がまだ設定されていません。" }, 503);
-  }
-
   const now = Date.now();
   const currentMonth = secureDropMonthKey(now);
 
   if (path === "/api/secure-drop/credits" && method === "GET") {
-    const account = await ensureMonthlyAccount(env, session.id, currentMonth, now);
+    const [account, usedBytes] = await Promise.all([
+      ensureMonthlyAccount(env, session.id, currentMonth, now),
+      getD1StorageUsedBytes(env)
+    ]);
     return json({
       month: currentMonth,
       granted: Number(account?.granted_credits || MONTHLY_CREDITS),
       balance: Number(account?.balance ?? 0),
       creditsPerMB: 1,
+      priorityCreditsPerMB: PRIORITY_CREDIT_MULTIPLIER,
       billingBasis: "measured_encrypted_stored_bytes",
+      storageBackend: "d1-chunks",
+      storageUsedBytes: usedBytes,
+      storageCapacityBytes: D1_STORAGE_CAPACITY_BYTES,
+      storageSoftLimitBytes: D1_STORAGE_SOFT_LIMIT_BYTES,
+      uploadsPaused: usedBytes >= D1_STORAGE_SOFT_LIMIT_BYTES,
+      chunkSizeBytes: D1_CHUNK_SIZE_BYTES,
       maxStoredBytes: MAX_STORED_BYTES,
       maxOriginalBytes: MAX_ORIGINAL_BYTES,
       originalSizeIsClientReported: true,
@@ -409,6 +565,9 @@ export async function handleSecureDropApi(request, env, context) {
     const rows = await env.DB.prepare(
       "SELECT t.id, t.user_id, t.recipient_user_id, owner.user_id AS owner_user_name, recipient.user_id AS recipient_user_name, t.original_size_bytes, t.stored_size_bytes, t.created_at, t.expires_at, t.download_count, t.download_limit, t.key_envelope_json, t.status FROM secure_drop_transfers t JOIN users owner ON owner.id=t.user_id JOIN users recipient ON recipient.id=t.recipient_user_id LEFT JOIN verified_contact_pairs contacts ON contacts.user_a_id=CASE WHEN t.user_id<t.recipient_user_id THEN t.user_id ELSE t.recipient_user_id END AND contacts.user_b_id=CASE WHEN t.user_id<t.recipient_user_id THEN t.recipient_user_id ELSE t.user_id END WHERE (t.user_id=? OR (t.recipient_user_id=? AND contacts.user_a_id IS NOT NULL)) AND t.month_key=? AND t.expires_at>? AND t.status='ready' ORDER BY t.created_at DESC LIMIT 100"
     ).bind(session.id, session.id, currentMonth, now).all();
+    const preempted = await env.DB.prepare(
+      "SELECT p.transfer_id, recipient.user_id AS peer_user_id, p.original_size_bytes, p.stored_size_bytes, p.created_at FROM secure_drop_preempted_uploads p JOIN users recipient ON recipient.id=p.recipient_user_id WHERE p.user_id=? AND p.month_key=? AND p.acknowledged_at IS NULL ORDER BY p.created_at ASC LIMIT 20"
+    ).bind(session.id, currentMonth).all();
     return json({
       files: (rows.results || []).map((row) => {
         const received = row.recipient_user_id === session.id;
@@ -425,12 +584,20 @@ export async function handleSecureDropApi(request, env, context) {
           downloadCount: Number(row.download_count),
           downloadLimit: DOWNLOAD_LIMIT,
           downloadsRemaining: Math.max(0, DOWNLOAD_LIMIT - Number(row.download_count)),
+          priority: Number(row.priority || 0) === 1,
           ...(received ? {
             downloadPath: "/api/secure-drop/download/" + row.id,
             keyEnvelope: (() => { try { return JSON.parse(row.key_envelope_json); } catch { return null; } })()
           } : {})
         };
-      })
+      }),
+      preemptedUploads: (preempted.results || []).map((row) => ({
+        transferId: row.transfer_id,
+        peerUserId: row.peer_user_id,
+        originalSizeBytes: Number(row.original_size_bytes),
+        storedSizeBytes: Number(row.stored_size_bytes),
+        createdAt: Number(row.created_at)
+      }))
     });
   }
 
@@ -441,7 +608,7 @@ export async function handleSecureDropApi(request, env, context) {
     }
     const transferId = downloadMatch[1];
     const transfer = await env.DB.prepare(
-      "SELECT object_key, stored_size_bytes, expires_at, month_key, download_count, status, user_id, recipient_user_id FROM secure_drop_transfers WHERE id=? AND recipient_user_id=?"
+      "SELECT object_key, stored_size_bytes, expires_at, month_key, download_count, status, user_id, recipient_user_id, storage_backend, key_envelope_json FROM secure_drop_transfers WHERE id=? AND recipient_user_id=?"
     ).bind(transferId, session.id).first();
     if (!transfer || transfer.month_key !== currentMonth || transfer.expires_at <= now ||
         transfer.status !== "ready") {
@@ -457,23 +624,65 @@ export async function handleSecureDropApi(request, env, context) {
     if (Number(transfer.download_count) >= DOWNLOAD_LIMIT) {
       return json({ error: "DOWNLOAD_LIMIT_REACHED" }, 410);
     }
-    const object = await env.SECURE_DROP_R2.get(transfer.object_key);
-    if (!object) return json({ error: "FILE_NOT_FOUND" }, 404);
-    if (Number(object.size) !== Number(transfer.stored_size_bytes)) {
-      await env.DB.prepare(
-        "UPDATE secure_drop_transfers SET status='deleting', updated_at=? WHERE id=? AND status='ready'"
-      ).bind(now, transferId).run().catch(() => {});
-      return json({ error: "STORED_FILE_INTEGRITY_MISMATCH" }, 503);
+    let payloadBody;
+    let payloadSize = Number(transfer.stored_size_bytes);
+    if (transfer.storage_backend === "d1") {
+      const chunks = await env.DB.prepare(
+        "SELECT chunk_index, chunk_data, chunk_size_bytes, sha256 FROM secure_drop_file_chunks WHERE transfer_id=? ORDER BY chunk_index ASC"
+      ).bind(transferId).all();
+      const rows = chunks.results || [];
+      const expectedCount = Math.ceil(payloadSize / D1_CHUNK_SIZE_BYTES);
+      let total = 0;
+      const assembled = new Uint8Array(payloadSize);
+      let valid = rows.length === expectedCount;
+      for (let i = 0; valid && i < rows.length; i += 1) {
+        const row = rows[i];
+        const data = row.chunk_data instanceof Uint8Array
+          ? row.chunk_data
+          : new Uint8Array(row.chunk_data);
+        const expectedLength = Math.min(D1_CHUNK_SIZE_BYTES, payloadSize - total);
+        if (Number(row.chunk_index) !== i || data.byteLength !== expectedLength ||
+            Number(row.chunk_size_bytes) !== expectedLength ||
+            await digestBytes(data) !== row.sha256) {
+          valid = false;
+          break;
+        }
+        assembled.set(data, total);
+        total += data.byteLength;
+      }
+      let envelope = null;
+      try { envelope = JSON.parse(transfer.key_envelope_json); } catch {}
+      if (!valid || total !== payloadSize || !envelope ||
+          await digestBytes(assembled) !== envelope.ciphertextSha256) {
+        await env.DB.prepare(
+          "UPDATE secure_drop_transfers SET status='deleting', updated_at=? WHERE id=? AND status='ready'"
+        ).bind(now, transferId).run().catch(() => {});
+        return json({ error: "STORED_FILE_INTEGRITY_MISMATCH" }, 503);
+      }
+      payloadBody = assembled;
+    } else {
+      if (!env.SECURE_DROP_R2) {
+        return json({ error: "LEGACY_STORAGE_UNAVAILABLE", message: "この旧保存ファイルは現在取得できません。" }, 503);
+      }
+      const object = await env.SECURE_DROP_R2.get(transfer.object_key);
+      if (!object) return json({ error: "FILE_NOT_FOUND" }, 404);
+      if (Number(object.size) !== payloadSize) {
+        await env.DB.prepare(
+          "UPDATE secure_drop_transfers SET status='deleting', updated_at=? WHERE id=? AND status='ready'"
+        ).bind(now, transferId).run().catch(() => {});
+        return json({ error: "STORED_FILE_INTEGRITY_MISMATCH" }, 503);
+      }
+      payloadBody = object.body;
     }
     const consumed = await env.DB.prepare(
       "UPDATE secure_drop_transfers SET download_count=download_count+1, updated_at=? WHERE id=? AND month_key=? AND expires_at>? AND status='ready' AND download_count<3 AND recipient_user_id=? RETURNING download_count"
     ).bind(now, transferId, currentMonth, now, session.id).first();
     if (!consumed) return json({ error: "DOWNLOAD_LIMIT_REACHED" }, 410);
-    return new Response(object.body, {
+    return new Response(payloadBody, {
       status: 200,
       headers: {
         "Content-Type": "application/octet-stream",
-        "Content-Length": String(object.size),
+        "Content-Length": String(payloadSize),
         "Content-Disposition": 'attachment; filename="secure-drop-' + transferId + '.bin"',
         "Cache-Control": "no-store",
         "Pragma": "no-cache",
@@ -488,26 +697,23 @@ export async function handleSecureDropApi(request, env, context) {
       return json({ error: "RATE_LIMITED" }, 429);
     }
     const originalBytes = Number(request.headers.get("X-Secure-Drop-Original-Size"));
-    const contentLengthHeader = request.headers.get("Content-Length");
-    const storedSizeHeader = request.headers.get("X-Secure-Drop-Stored-Size") || contentLengthHeader;
+    const storedSizeHeader = request.headers.get("X-Secure-Drop-Stored-Size") || request.headers.get("Content-Length");
     const declaredStoredBytes = /^[1-9][0-9]{0,8}$/.test(storedSizeHeader || "")
       ? Number(storedSizeHeader)
       : NaN;
     if (!Number.isSafeInteger(originalBytes) || originalBytes < 1 || originalBytes > MAX_ORIGINAL_BYTES) {
       return json({ error: "INVALID_REPORTED_ORIGINAL_SIZE", maxBytes: MAX_ORIGINAL_BYTES }, 400);
     }
-    if (contentLengthHeader && storedSizeHeader &&
-        contentLengthHeader !== storedSizeHeader) {
-      return json({ error: "DECLARED_STORED_SIZE_MISMATCH" }, 400);
-    }
-    if (!Number.isSafeInteger(declaredStoredBytes) || declaredStoredBytes < 1 ||
+    if (!Number.isSafeInteger(declaredStoredBytes) || declaredStoredBytes < 17 ||
         declaredStoredBytes > MAX_STORED_BYTES || !request.body) {
       return json({ error: "INVALID_STORED_FILE_SIZE", maxBytes: MAX_STORED_BYTES }, 413);
     }
     if (request.headers.get("X-Secure-Drop-Payload") !== "encrypted-v1") {
       return json({ error: "ENCRYPTED_PAYLOAD_REQUIRED" }, 400);
     }
-
+    const uploadId = request.headers.get("X-Secure-Drop-Upload-Id") || "";
+    if (!UUID_PATTERN.test(uploadId)) return json({ error: "UPLOAD_ID_REQUIRED" }, 400);
+    const priority = request.headers.get("X-Secure-Drop-Priority") === "1" ? 1 : 0;
     const recipientId = request.headers.get("X-Secure-Drop-Recipient-Id") || "";
     const encodedEnvelope = request.headers.get("X-Secure-Drop-Key-Envelope") || "";
     let envelope;
@@ -530,91 +736,174 @@ export async function handleSecureDropApi(request, env, context) {
       return json({ error: "SECURE_DROP_SENDER_SIGNATURE_INVALID" }, 400);
     }
 
-    const credits = secureDropCreditsForBytes(declaredStoredBytes);
+    const credits = secureDropCreditsForBytes(
+      declaredStoredBytes,
+      priority ? PRIORITY_CREDIT_MULTIPLIER : 1
+    );
     const account = await ensureMonthlyAccount(env, session.id, currentMonth, now);
     if (!account || Number(account.balance) < credits) {
       return json({ error: "INSUFFICIENT_CREDITS", required: credits, balance: Number(account?.balance || 0) }, 402);
     }
 
-    const transferId = crypto.randomUUID();
-    const expiresAt = Math.min(now + TRANSFER_TTL_MS, secureDropNextMonthStart(now));
-    const objectKey = "secure-drop/" + currentMonth + "/" + transferId;
-    const tokenHash = await digest("disabled-secure-drop-token:" + transferId);
     const envelopeJson = JSON.stringify(envelope);
-
-    let pendingCreated = false;
-    try {
-      pendingCreated = await createPendingTransfer(env, {
-        transferId,
-        ownerId: session.id,
-        recipientId: recipient.id,
-        month: currentMonth,
-        objectKey,
-        tokenHash,
-        originalBytes,
-        envelopeJson,
-        credits,
-        now,
-        expiresAt
-      });
-    } catch {
-      return json({ error: "CREDIT_RESERVATION_FAILED" }, 503);
+    const existing = await env.DB.prepare(
+      "SELECT id, recipient_user_id, original_size_bytes, stored_size_bytes, key_envelope_json, status, storage_backend, priority, month_key FROM secure_drop_transfers WHERE id=? AND user_id=?"
+    ).bind(uploadId, session.id).first();
+    if (existing && (
+      existing.recipient_user_id !== recipient.id ||
+      Number(existing.original_size_bytes) !== originalBytes ||
+      Number(existing.stored_size_bytes) !== declaredStoredBytes ||
+      existing.key_envelope_json !== envelopeJson ||
+      existing.storage_backend !== "d1" ||
+      Number(existing.priority || 0) !== priority
+    )) {
+      return json({ error: "UPLOAD_ID_CONFLICT" }, 409);
     }
-    if (!pendingCreated) {
-      const refreshed = await env.DB.prepare(
-        "SELECT balance FROM secure_drop_credit_accounts WHERE user_id=? AND month_key=?"
-      ).bind(session.id, currentMonth).first();
+    if (existing?.status === "ready") {
       return json({
-        error: "INSUFFICIENT_CREDITS",
-        required: credits,
-        balance: Number(refreshed?.balance || 0)
-      }, 402);
+        created: true,
+        alreadyComplete: true,
+        id: uploadId,
+        recipientUserId: recipient.user_id,
+        downloadPath: "/api/secure-drop/download/" + uploadId,
+        originalSizeBytes: originalBytes,
+        originalSizeIsClientReported: true,
+        storedSizeBytes: declaredStoredBytes,
+        creditsConsumed: credits,
+        downloadsRemaining: Math.max(0, DOWNLOAD_LIMIT - Number(existing.download_count || 0)),
+        expiresAt: Math.min(now + TRANSFER_TTL_MS, secureDropNextMonthStart(now))
+      }, 201);
+    }
+    if (existing && (existing.status !== "pending" || existing.month_key !== currentMonth)) {
+      return json({ error: "UPLOAD_RESERVATION_UNAVAILABLE" }, 409);
     }
 
-    const metered = createMeteredBody(request.body, MAX_STORED_BYTES);
+    const expiresAt = Math.min(now + TRANSFER_TTL_MS, secureDropNextMonthStart(now));
+    const objectKey = "d1:" + uploadId;
+    const tokenHash = await digest("disabled-secure-drop-token:" + uploadId);
+    if (!existing) {
+      let usedBytes = await getD1StorageUsedBytes(env);
+      const capacityLimit = priority ? D1_STORAGE_CAPACITY_BYTES : D1_STORAGE_SOFT_LIMIT_BYTES;
+      if (priority && usedBytes + declaredStoredBytes > D1_STORAGE_CAPACITY_BYTES) {
+        const reclaimed = await preemptPendingUploads(env, declaredStoredBytes, now);
+        if (!reclaimed) {
+          return json({
+            error: "SECURE_DROP_CAPACITY_REACHED",
+            usedBytes,
+            capacityBytes: D1_STORAGE_CAPACITY_BYTES
+          }, 507);
+        }
+        usedBytes = await getD1StorageUsedBytes(env);
+      }
+      if (usedBytes + declaredStoredBytes > capacityLimit) {
+        return json({
+          error: priority ? "SECURE_DROP_CAPACITY_REACHED" : "SECURE_DROP_UPLOADS_PAUSED",
+          usedBytes,
+          capacityBytes: D1_STORAGE_CAPACITY_BYTES,
+          softLimitBytes: D1_STORAGE_SOFT_LIMIT_BYTES
+        }, 507);
+      }
+      let pendingCreated = false;
+      try {
+        pendingCreated = await createPendingTransfer(env, {
+          transferId: uploadId,
+          ownerId: session.id,
+          recipientId: recipient.id,
+          month: currentMonth,
+          objectKey,
+          tokenHash,
+          originalBytes,
+          storedBytes: declaredStoredBytes,
+          envelopeJson,
+          credits,
+          now,
+          expiresAt,
+          priority,
+          capacityLimit
+        });
+      } catch {
+        return json({ error: "CREDIT_RESERVATION_FAILED" }, 503);
+      }
+      if (!pendingCreated) {
+        const [refreshed, refreshedUsage] = await Promise.all([
+          env.DB.prepare(
+            "SELECT balance FROM secure_drop_credit_accounts WHERE user_id=? AND month_key=?"
+          ).bind(session.id, currentMonth).first(),
+          getD1StorageUsedBytes(env)
+        ]);
+        if (Number(refreshed?.balance || 0) < credits) {
+          return json({ error: "INSUFFICIENT_CREDITS", required: credits, balance: Number(refreshed?.balance || 0) }, 402);
+        }
+        return json({
+          error: priority ? "SECURE_DROP_CAPACITY_REACHED" : "SECURE_DROP_UPLOADS_PAUSED",
+          usedBytes: refreshedUsage,
+          capacityBytes: D1_STORAGE_CAPACITY_BYTES,
+          softLimitBytes: D1_STORAGE_SOFT_LIMIT_BYTES
+        }, 507);
+      }
+    }
+
+    let ciphertext;
     try {
-      const storedObject = await env.SECURE_DROP_R2.put(objectKey, metered.stream, {
-        httpMetadata: { contentType: "application/octet-stream" },
-        customMetadata: { month: currentMonth, transferId, payload: "encrypted-v1" }
-      });
-      const actualBytes = metered.state.bytes;
-      if (!metered.state.finished || actualBytes < 1 || actualBytes !== declaredStoredBytes ||
-          Number(storedObject?.size) !== actualBytes) {
-        throw new Error("STORED_SIZE_MISMATCH");
+      ciphertext = await readBodyBounded(request.body, MAX_STORED_BYTES);
+      if (ciphertext.byteLength !== declaredStoredBytes) throw new Error("STORED_SIZE_MISMATCH");
+      if (await digestBytes(ciphertext) !== envelope.ciphertextSha256) {
+        throw new Error("STORED_FILE_INTEGRITY_MISMATCH");
       }
-      if (secureDropMonthKey(Date.now()) !== currentMonth || Date.now() >= expiresAt) {
-        throw new Error("MONTH_CLOSED");
-      }
-      const updated = await env.DB.prepare(
-        "UPDATE secure_drop_transfers SET original_size_bytes=?, stored_size_bytes=?, status='ready', updated_at=? WHERE id=? AND user_id=? AND recipient_user_id=? AND month_key=? AND status='pending' AND expires_at>?"
-      ).bind(originalBytes, actualBytes, Date.now(), transferId, session.id, recipient.id, currentMonth, Date.now()).run();
-      if (Number(updated.meta?.changes || 0) !== 1) throw new Error("TRANSFER_FINALIZE_FAILED");
     } catch (error) {
-      const cleanupNow = Date.now();
-      await abandonPendingTransfer(env, {
-        id: transferId,
-        ownerId: session.id,
-        month: currentMonth,
-        objectKey
-      }, credits, cleanupNow);
       const code = String(error?.message || error);
+      if (code !== "UPLOAD_BODY_REQUIRED") {
+        await abandonPendingTransfer(env, {
+          id: uploadId,
+          ownerId: session.id,
+          month: currentMonth,
+          objectKey,
+          storageBackend: "d1"
+        }, credits, Date.now());
+      }
       if (code === "STORED_SIZE_LIMIT_EXCEEDED") {
         return json({ error: "STORED_FILE_TOO_LARGE", maxBytes: MAX_STORED_BYTES }, 413);
       }
-      if (code === "STORED_SIZE_MISMATCH") {
-        return json({ error: "STORED_SIZE_MISMATCH" }, 400);
+      if (code === "STORED_SIZE_MISMATCH") return json({ error: "STORED_SIZE_MISMATCH" }, 400);
+      if (code === "STORED_FILE_INTEGRITY_MISMATCH") return json({ error: code }, 400);
+      return json({ error: "UPLOAD_BODY_INVALID" }, 400);
+    }
+
+    const statements = [];
+    const chunkCount = Math.ceil(ciphertext.byteLength / D1_CHUNK_SIZE_BYTES);
+    for (let index = 0; index < chunkCount; index += 1) {
+      const start = index * D1_CHUNK_SIZE_BYTES;
+      const data = ciphertext.slice(start, Math.min(ciphertext.byteLength, start + D1_CHUNK_SIZE_BYTES));
+      const chunkHash = await digestBytes(data);
+      statements.push(env.DB.prepare(
+        "INSERT INTO secure_drop_file_chunks (transfer_id, chunk_index, chunk_data, chunk_size_bytes, sha256, created_at) SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM secure_drop_transfers WHERE id=? AND user_id=? AND month_key=? AND status='pending' AND storage_backend='d1')"
+      ).bind(uploadId, index, data, data.byteLength, chunkHash, now, uploadId, session.id, currentMonth));
+    }
+    statements.push(env.DB.prepare(
+      "UPDATE secure_drop_transfers SET status='ready', stored_size_bytes=?, updated_at=? WHERE id=? AND user_id=? AND month_key=? AND status='pending' AND storage_backend='d1' AND (SELECT COUNT(*) FROM secure_drop_file_chunks WHERE transfer_id=?)=? AND (SELECT COALESCE(SUM(chunk_size_bytes),0) FROM secure_drop_file_chunks WHERE transfer_id=?)=? AND (SELECT MIN(chunk_index) FROM secure_drop_file_chunks WHERE transfer_id=?)=0 AND (SELECT MAX(chunk_index) FROM secure_drop_file_chunks WHERE transfer_id=?)=?"
+    ).bind(declaredStoredBytes, Date.now(), uploadId, session.id, currentMonth, uploadId, chunkCount, uploadId, declaredStoredBytes, uploadId, uploadId, chunkCount - 1));
+
+    let storedResults;
+    try {
+      storedResults = await env.DB.batch(statements);
+    } catch {
+      return json({ error: "UPLOAD_STORAGE_FAILED", message: "D1への暗号化データ保存に失敗しました。暗号化データは送信端末に保持してください。" }, 503);
+    }
+    if (Number(storedResults?.[storedResults.length - 1]?.meta?.changes || 0) !== 1) {
+      const current = await env.DB.prepare(
+        "SELECT status FROM secure_drop_transfers WHERE id=? AND user_id=?"
+      ).bind(uploadId, session.id).first();
+      if (!current) return json({ error: "UPLOAD_PREEMPTED", message: "優先容量確保のため、このアップロード予約は取り消されました。端末内の保留データから再送信できます。" }, 409);
+      if (current.status !== "ready") {
+        return json({ error: "UPLOAD_FINALIZATION_PENDING", message: "保存完了を確認できませんでした。端末内データを保持して再送信してください。" }, 503);
       }
-      if (code === "MONTH_CLOSED") {
-        return json({ error: "MONTHLY_RESET_IN_PROGRESS", message: "月次リセット時刻をまたいだため、転送を中止しました。" }, 409);
-      }
-      return json({ error: "UPLOAD_STORAGE_FAILED", message: "転送を確定できませんでした。保存物の削除とクレジット返却を再試行します。" }, 503);
     }
 
     return json({
       created: true,
-      id: transferId,
+      id: uploadId,
       recipientUserId: recipient.user_id,
-      downloadPath: "/api/secure-drop/download/" + transferId,
+      downloadPath: "/api/secure-drop/download/" + uploadId,
       originalSizeBytes: originalBytes,
       originalSizeIsClientReported: true,
       storedSizeBytes: declaredStoredBytes,
@@ -628,13 +917,13 @@ export async function handleSecureDropApi(request, env, context) {
   if (deleteMatch && method === "DELETE") {
     const transferId = deleteMatch[1];
     const row = await env.DB.prepare(
-      "SELECT object_key FROM secure_drop_transfers WHERE id=? AND user_id=? AND month_key=? AND status IN ('ready','deleting')"
+      "SELECT object_key, storage_backend FROM secure_drop_transfers WHERE id=? AND user_id=? AND month_key=? AND status IN ('ready','deleting')"
     ).bind(transferId, session.id, currentMonth).first();
     if (!row) return json({ error: "TRANSFER_NOT_FOUND" }, 404);
     await env.DB.prepare(
       "UPDATE secure_drop_transfers SET status='deleting', updated_at=? WHERE id=? AND user_id=? AND month_key=?"
     ).bind(now, transferId, session.id, currentMonth).run();
-    const verified = await verifyAndFinalizeDeletion(env, transferId, row.object_key, now, "user_delete");
+    const verified = await verifyAndFinalizeDeletion(env, transferId, row.object_key, now, "user_delete", row.storage_backend);
     if (!verified) {
       return json({
         deleted: false,
@@ -651,10 +940,13 @@ export async function handleSecureDropApi(request, env, context) {
 
 export async function runSecureDropMaintenance(env, now = Date.now()) {
   const current = secureDropMonthKey(now);
-  if (!env.SECURE_DROP_R2) return { month: current, status: "storage_unavailable" };
   try {
-    await processDeletionJobs(env, now);
+    if (env.SECURE_DROP_R2) await processDeletionJobs(env, now);
     await cleanupStaleTransfers(env, now);
+    if (!env.SECURE_DROP_R2) {
+      const completed = await purgeOldMonthD1Only(env, now);
+      return { month: current, status: completed ? "ok" : "more_pending" };
+    }
     const completed = await purgeOldMonthObjects(env, now);
     return { month: current, status: completed ? "ok" : "more_pending" };
   } catch {
@@ -666,6 +958,10 @@ export async function runSecureDropMaintenance(env, now = Date.now()) {
 export const SECURE_DROP_LIMITS = Object.freeze({
   maxOriginalBytes: MAX_ORIGINAL_BYTES,
   maxStoredBytes: MAX_STORED_BYTES,
+  storageCapacityBytes: D1_STORAGE_CAPACITY_BYTES,
+  storageSoftLimitBytes: D1_STORAGE_SOFT_LIMIT_BYTES,
+  chunkSizeBytes: D1_CHUNK_SIZE_BYTES,
+  priorityCreditMultiplier: PRIORITY_CREDIT_MULTIPLIER,
   monthlyCredits: MONTHLY_CREDITS,
   downloadLimit: DOWNLOAD_LIMIT,
   transferTtlMs: TRANSFER_TTL_MS
