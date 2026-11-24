@@ -1490,15 +1490,15 @@ async function sendSecureDropPendingUpload(pending) {
   await deleteSecureDropPending(pending.id);
   return result;
 }
-async function retrySecureDropPending(pending,button,priorityOverride=false) {
+async function retrySecureDropPending(pending,button,priorityOverride=null) {
   if(!activeConversation || activeConversation.peerUserId!==pending.peerUserId)return;
   button.disabled=true;
   try {
-    if(priorityOverride && pending.canChangePriority && !pending.priority) {
+    if(priorityOverride!==null && pending.canChangePriority && pending.priority!==priorityOverride) {
       const oldId=pending.id;
       pending.id=crypto.randomUUID();
       pending.preemptedReservationIds=[...(pending.preemptedReservationIds||[]),oldId];
-      pending.priority=true;
+      pending.priority=priorityOverride;
       pending.canChangePriority=false;
       await saveSecureDropPending(pending);
       await deleteSecureDropPending(oldId);
@@ -1513,7 +1513,8 @@ async function retrySecureDropPending(pending,button,priorityOverride=false) {
       await saveSecureDropPending(pending).catch(()=>{});
       await refreshSecureDrop();
       toast("優先容量確保のため予約が解除されました。暗号化データはこの端末に保持されています。",7000);
-    } else if(error.code==="SECURE_DROP_UPLOADS_PAUSED" || error.code==="SECURE_DROP_CAPACITY_REACHED") {
+    } else if(error.code==="SECURE_DROP_UPLOADS_PAUSED" || (error.code==="SECURE_DROP_CAPACITY_REACHED" && !pending.priority) ||
+      (error.code==="INSUFFICIENT_CREDITS" && pending.priority)) {
       pending.canChangePriority=true;
       await saveSecureDropPending(pending).catch(()=>{});
       await refreshSecureDrop();
@@ -1641,13 +1642,13 @@ async function refreshSecureDrop() {
       retry.classList.add("secure-drop-pending-retry");
       retry.addEventListener("click",()=>retrySecureDropPending(pending,retry));
       actions.append(retry);
-      if(pending.canChangePriority && !pending.priority) {
-        const priorityRetry=document.createElement("button");
-        priorityRetry.type="button";
-        priorityRetry.className="secure-drop-action";
-        priorityRetry.textContent="優先で再送信";
-        priorityRetry.addEventListener("click",()=>retrySecureDropPending(pending,priorityRetry,true));
-        actions.append(priorityRetry);
+      if(pending.canChangePriority) {
+        const tierRetry=document.createElement("button");
+        tierRetry.type="button";
+        tierRetry.className="secure-drop-action";
+        tierRetry.textContent=pending.priority?"通常で再送信":"優先で再送信";
+        tierRetry.addEventListener("click",()=>retrySecureDropPending(pending,tierRetry,!pending.priority));
+        actions.append(tierRetry);
       }
       row.append(copy,actions);
       el.secureDropList.append(row);
@@ -1716,7 +1717,10 @@ async function uploadSecureDropFile(file) {
     toast("ファイルを暗号化して送信しました。課金: "+result.creditsConsumed+" クレジット");
     await refreshSecureDrop();
   } catch(error) {
-    if(pending && (error.code==="UPLOAD_PREEMPTED" || error.code==="SECURE_DROP_UPLOADS_PAUSED" || error.code==="SECURE_DROP_CAPACITY_REACHED")) {
+    if(pending && (error.code==="UPLOAD_PREEMPTED" ||
+      (error.code==="SECURE_DROP_UPLOADS_PAUSED" && !pending.priority) ||
+      (error.code==="SECURE_DROP_CAPACITY_REACHED" && !pending.priority) ||
+      (error.code==="INSUFFICIENT_CREDITS" && pending.priority))) {
       pending.canChangePriority=true;
       await saveSecureDropPending(pending).catch(()=>{});
     }
