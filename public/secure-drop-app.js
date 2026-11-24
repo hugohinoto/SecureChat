@@ -192,7 +192,7 @@ function renderCredits(account) {
   credits = account;
   ui.credits.textContent = Number(account.balance || 0) + " / " + Number(account.granted || 0);
   const used = Number(account.storageUsedBytes || 0);
-  const capacity = Number(account.storageCapacityBytes || 3_000_000_000);
+  const capacity = Number(account.storageCapacityBytes || 2_500_000_000);
   const percent = capacity > 0 ? Math.min(100, used / capacity * 100) : 0;
   ui.meter.style.width = percent.toFixed(1) + "%";
   ui.storage.textContent = formatSize(used) + " / " + formatSize(capacity) +
