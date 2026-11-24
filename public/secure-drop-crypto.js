@@ -3,8 +3,8 @@ const MAX_UPLOAD_FILE_BYTES = 25_000_000;
 const MAX_STORED_BYTES = 26_000_000;
 const ENVELOPE_ALGORITHM = "ECDH-P256-HKDF-SHA256-AES-GCM-256";
 const encoder = new TextEncoder();
-const ARCHIVE_EXTENSION = /\\.(?:zip|zipx|7z|rar|tar|tgz|tbz|tbz2|txz|tzst|gz|gzip|bz2|bzip2|xz|zst|zstd|lz|lzma|lz4|br|cab|ar|cpio|jar|war|ear|apk|aab|epub|cbz|cbr|ace|alz|sit|sitx)$/i;
-const ARCHIVE_MIME = /^application\\/(?:zip|x-zip-compressed|x-7z-compressed|x-rar-compressed|vnd\\.rar|gzip|x-gzip|x-bzip2|x-xz|zstd|x-zstd|x-tar|x-cpio|x-archive|java-archive|vnd\\.android\\.package-archive|epub\\+zip)$/i;
+const ARCHIVE_EXTENSION = /\.(?:zip|zipx|7z|rar|tar|tgz|tbz|tbz2|txz|tzst|gz|gzip|bz2|bzip2|xz|zst|zstd|lz|lzma|lz4|br|cab|ar|cpio|jar|war|ear|apk|aab|epub|cbz|cbr|ace|alz|sit|sitx)$/i;
+const ARCHIVE_MIME = /^application\/(?:zip|x-zip-compressed|x-7z-compressed|x-rar-compressed|vnd\.rar|gzip|x-gzip|x-bzip2|x-xz|zstd|x-zstd|x-tar|x-cpio|x-archive|java-archive|vnd\.android\.package-archive|epub\+zip)$/i;
 
 function archiveNotSupported() {
   const error = new Error("ZIP・7z・RAR・gzip・tarなどの圧縮／アーカイブ形式は送信できません。");
@@ -368,7 +368,7 @@ export async function decryptSecureDropFile(ciphertext, envelope, recipientPriva
 
 export const SECURE_DROP_CRYPTO = Object.freeze({
   algorithm: ENVELOPE_ALGORITHM,
-  maxFileBytes: MAX_FILE_BYTES,
+  maxFileBytes: MAX_UPLOAD_FILE_BYTES,
   maxUploadFileBytes: MAX_UPLOAD_FILE_BYTES,
   maxStoredBytes: MAX_STORED_BYTES,
   fileKeyBytes: FILE_KEY_LENGTH
