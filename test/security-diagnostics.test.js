@@ -164,6 +164,7 @@ test("forward secrecy remains critical while the v2 flag is disabled", async () 
   const forward=result.checks.find(item=>item.id==="forward-secrecy");
   assert.equal(forward.status,"critical");
   assert.match(forward.detail,/機能フラグは無効/);
+  assert.match(forward.detail,/v2の新規利用・会話切り替えは停止/);
   assert.equal(result.checks.find(item=>item.id==="passkeys").status,"warning");
   const logs=result.checks.find(item=>item.id==="cloudflare-logs");
   assert.equal(logs.status,"warning");
