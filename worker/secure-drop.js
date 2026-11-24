@@ -812,6 +812,16 @@ export async function handleSecureDropApi(request, env, context) {
     const existing = await env.DB.prepare(
       "SELECT id, recipient_user_id, original_size_bytes, stored_size_bytes, key_envelope_json, status, storage_backend, priority, month_key, download_count, expires_at FROM secure_drop_transfers WHERE id=? AND user_id=?"
     ).bind(uploadId, session.id).first();
+    if (!existing) {
+      const preemptedReservation = await env.DB.prepare(
+        "SELECT 1 AS found FROM secure_drop_preempted_uploads WHERE transfer_id=? AND user_id=?"
+      ).bind(uploadId, session.id).first();
+      if (preemptedReservation) return json({ error: "UPLOAD_PREEMPTED" }, 409);
+      const priorAttempt = await env.DB.prepare(
+        "SELECT 1 AS found FROM secure_drop_credit_ledger WHERE id IN (?, ?) LIMIT 1"
+      ).bind("debit:" + uploadId, "refund:" + uploadId).first();
+      if (priorAttempt) return json({ error: "UPLOAD_ID_REUSED", message: "この予約IDは以前の送信で使用済みです。端末内の暗号化データから新しい予約で再送信します。" }, 409);
+    }
     if (existing && (
       existing.recipient_user_id !== recipient.id ||
       Number(existing.original_size_bytes) !== originalBytes ||
