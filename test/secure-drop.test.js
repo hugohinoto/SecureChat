@@ -206,6 +206,37 @@ test("an in-flight pending upload is not deleted merely because its month-end ex
   );
 });
 
+test("month-end sweeping waits while any old-month upload is still pending", async () => {
+  const now = Date.parse("2026-11-24T04:00:00.000Z");
+  const month = secureDropMonthKey(now);
+  let objectListingStarted = false;
+  let oldMonthMetadataDeleted = false;
+  const db = {
+    prepare(sql) {
+      return {
+        bind() { return this; },
+        async all() { return { results: [] }; },
+        async first() {
+          if (sql.includes("FROM secure_drop_maintenance")) {
+            return { current_month: month, cursor: null, completed_at: null };
+          }
+          if (sql.includes("status='pending'")) return { count: 1 };
+          return null;
+        }
+      };
+    },
+    async batch() { oldMonthMetadataDeleted = true; }
+  };
+  const bucket = {
+    async list() { objectListingStarted = true; return { objects: [], truncated: false }; },
+    async delete() {}
+  };
+  const result = await runSecureDropMaintenance({ DB: db, SECURE_DROP_R2: bucket }, now);
+  assert.deepEqual(result, { month, status: "more_pending" });
+  assert.equal(objectListingStarted, false);
+  assert.equal(oldMonthMetadataDeleted, false);
+});
+
 test("monthly maintenance paginates old-month R2 objects and removes old D1 state only after the last page", async () => {
   const now = Date.parse("2026-11-24T04:00:00.000Z");
   const month = secureDropMonthKey(now);

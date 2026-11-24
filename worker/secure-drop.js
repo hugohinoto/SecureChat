@@ -271,6 +271,13 @@ async function purgeOldMonthObjects(env, now) {
     ).bind(current).run();
     state = { current_month: current, cursor: null, completed_at: null };
   }
+  const inFlightOldMonth = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM secure_drop_transfers WHERE month_key<>? AND status='pending'"
+  ).bind(current).first();
+  if (Number(inFlightOldMonth?.count || 0) > 0) {
+    // Let active uploads finish or be reclaimed by the stale-pending janitor before sweeping old-month R2 objects.
+    return false;
+  }
   if (state.completed_at) return true;
 
   let cursor = state.cursor || undefined;
