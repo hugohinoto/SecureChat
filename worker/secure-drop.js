@@ -254,7 +254,7 @@ async function readBodyBounded(body, maxBytes) {
 
 async function getD1StorageUsedBytes(env) {
   const row = await env.DB.prepare(
-    "SELECT COALESCE(SUM(stored_size_bytes),0) AS used_bytes FROM secure_drop_transfers WHERE storage_backend='d1' AND status IN ('pending','ready','deleting')"
+    "SELECT (SELECT COALESCE(SUM(stored_size_bytes),0) FROM secure_drop_transfers WHERE storage_backend='d1' AND status IN ('pending','ready','deleting')) + (SELECT COALESCE(SUM(c.chunk_size_bytes),0) FROM secure_drop_file_chunks c WHERE NOT EXISTS (SELECT 1 FROM secure_drop_transfers t WHERE t.id=c.transfer_id AND t.storage_backend='d1')) AS used_bytes"
   ).first();
   return Number(row?.used_bytes || 0);
 }
