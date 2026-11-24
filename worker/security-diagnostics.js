@@ -415,7 +415,7 @@ export async function summarizeSecurityDiagnostics(env) {
   add(checks,"forward-secrecy","前方秘匿性","critical",
     cryptoV2Configured
       ? "暗号v2の機能フラグは有効ですが、独立レビュー・2ユーザー複数端末E2E試験・復旧/再送/順序制御のリリースゲートを満たした証拠がありません。本番で前方秘匿性を保証済みとは判定しません。"
-      : "端末別Olm/Megolm v2の機能フラグは有効です。v2の新規利用・会話切り替えは可能ですが、独立レビュー・複数端末E2E試験・復旧検証の証跡が未完了です。安全性を検証済みとは判定しません。");
+      : "端末別Olm/Megolm v2の機能フラグは無効です。v2の新規利用・会話切り替えは停止しています。独立レビュー・複数端末E2E試験・復旧検証の証跡も未完了です。安全性を検証済みとは判定しません。");
   add(checks,"passkeys","管理者パスキー","warning",
     "管理者ログインはパスワード認証のみです。WebAuthnパスキーによる追加認証、予備認証器、回復手順は未実装です。");
   add(checks,"cloudflare-logs","Cloudflare Invocation Logs","warning",
