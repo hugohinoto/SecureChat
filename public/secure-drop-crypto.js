@@ -301,5 +301,7 @@ export async function decryptSecureDropFile(ciphertext, envelope, recipientPriva
 export const SECURE_DROP_CRYPTO = Object.freeze({
   algorithm: ENVELOPE_ALGORITHM,
   maxFileBytes: MAX_FILE_BYTES,
+  maxUploadFileBytes: MAX_UPLOAD_FILE_BYTES,
+  maxStoredBytes: MAX_STORED_BYTES,
   fileKeyBytes: FILE_KEY_LENGTH
 });
