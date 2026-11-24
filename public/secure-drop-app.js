@@ -100,7 +100,7 @@ function openDb(name, storeName) {
     const request = indexedDB.open(name, 1);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(storeName)) {
-        request.result.createObjectStore(storeName, { keyPath:"id" === storeName ? "id" : "userId" });
+        request.result.createObjectStore(storeName, { keyPath:storeName === PENDING_STORE ? "id" : "userId" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -411,6 +411,7 @@ async function uploadSelectedFile() {
     return;
   }
   busy = true;
+  let pending = null;
   updateSendButton();
   ui.uploadStatus.textContent = "送信先の署名付き公開鍵と、この端末の照合済み指紋を確認しています…";
   try {
@@ -425,7 +426,7 @@ async function uploadSelectedFile() {
     const bytes = encrypted.ciphertext instanceof Uint8Array
       ? encrypted.ciphertext
       : new Uint8Array(encrypted.ciphertext);
-    const pending = {
+    pending = {
       id:crypto.randomUUID(),
       userId:currentUser.id,
       peerUserId,
@@ -448,13 +449,10 @@ async function uploadSelectedFile() {
     ui.fileName.textContent = "選択されていません（最大25 MB）";
     ui.uploadStatus.textContent = "送信が完了しました。";
   } catch (failure) {
-    if (failure.code === "UPLOAD_PREEMPTED" || failure.code === "SECURE_DROP_UPLOADS_PAUSED" ||
-        failure.code === "SECURE_DROP_CAPACITY_REACHED" || failure.code === "INSUFFICIENT_CREDITS") {
-      const pending = (await readPending()).find(item => item.peerUserId === peerUserId);
-      if (pending) {
-        pending.canChangePriority = true;
-        await savePending(pending).catch(() => {});
-      }
+    if (pending && (failure.code === "UPLOAD_PREEMPTED" || failure.code === "SECURE_DROP_UPLOADS_PAUSED" ||
+        failure.code === "SECURE_DROP_CAPACITY_REACHED" || failure.code === "INSUFFICIENT_CREDITS")) {
+      pending.canChangePriority = true;
+      await savePending(pending).catch(() => {});
     }
     ui.uploadStatus.textContent = errorText(failure);
     notify(errorText(failure), 8500);
