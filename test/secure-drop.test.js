@@ -64,8 +64,8 @@ test("SecureDrop charges by decimal MB and applies the priority multiplier", () 
 });
 
 test("SecureDrop D1 allocation, soft stop and chunk limits are explicit", () => {
-  assert.equal(SECURE_DROP_LIMITS.storageCapacityBytes, 3_000_000_000);
-  assert.equal(SECURE_DROP_LIMITS.storageSoftLimitBytes, 2_700_000_000);
+  assert.equal(SECURE_DROP_LIMITS.storageCapacityBytes, 2_500_000_000);
+  assert.equal(SECURE_DROP_LIMITS.storageSoftLimitBytes, 2_250_000_000);
   assert.equal(SECURE_DROP_LIMITS.chunkSizeBytes, 512 * 1024);
   assert.equal(SECURE_DROP_LIMITS.maxOriginalBytes, 25_000_000);
   assert.equal(SECURE_DROP_LIMITS.maxStoredBytes, 26_000_000);
