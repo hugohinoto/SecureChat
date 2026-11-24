@@ -284,7 +284,8 @@ test("monthly maintenance paginates old-month R2 objects and removes old D1 stat
         truncated:false
       };
     },
-    async delete(keys) { deleted.push(...keys); }
+    async delete(keys) { deleted.push(...keys); },
+    async head() { return null; }
   };
   const result = await runSecureDropMaintenance({ DB:db, SECURE_DROP_R2:bucket }, now);
   assert.deepEqual(result, { month, status:"ok" });
