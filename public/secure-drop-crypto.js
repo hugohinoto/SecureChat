@@ -1,9 +1,76 @@
 const FILE_KEY_LENGTH = 32;
-const MAX_FILE_BYTES = 100_000_000;
 const MAX_UPLOAD_FILE_BYTES = 25_000_000;
 const MAX_STORED_BYTES = 26_000_000;
 const ENVELOPE_ALGORITHM = "ECDH-P256-HKDF-SHA256-AES-GCM-256";
 const encoder = new TextEncoder();
+const ARCHIVE_EXTENSION = /\.(?:zip|zipx|7z|rar|tar|tgz|tbz|tbz2|txz|tzst|gz|gzip|bz2|bzip2|xz|zst|zstd|lz|lzma|lz4|br|cab|ar|cpio|jar|war|ear|apk|aab|epub|cbz|cbr|ace|alz|sit|sitx)$/i;
+const ARCHIVE_MIME = /^application\/(?:zip|x-zip-compressed|x-7z-compressed|x-rar-compressed|vnd\.rar|gzip|x-gzip|x-bzip2|x-xz|zstd|x-zstd|x-tar|x-cpio|x-archive|java-archive|vnd\.android\.package-archive|epub\+zip)$/i;
+
+function archiveNotSupported() {
+  const error = new Error("ZIP・7z・RAR・gzip・tarなどの圧縮／アーカイブ形式は送信できません。");
+  error.code = "SECURE_DROP_ARCHIVE_NOT_SUPPORTED";
+  return error;
+}
+
+export function assertSecureDropFileNameAllowed(name) {
+  if (typeof name === "string" && ARCHIVE_EXTENSION.test(name.trim())) {
+    throw archiveNotSupported();
+  }
+}
+
+function containsSignature(bytes, signature) {
+  outer: for (let offset = 0; offset <= bytes.length - signature.length; offset += 1) {
+    for (let i = 0; i < signature.length; i += 1) {
+      if (bytes[offset + i] !== signature[i]) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
+
+export async function assertSecureDropFileAllowed(file) {
+  if (!(file instanceof Blob)) throw new TypeError("SECURE_DROP_FILE_REQUIRED");
+  assertSecureDropFileNameAllowed(file.name);
+  if (typeof file.type === "string" && ARCHIVE_MIME.test(file.type.split(";")[0].trim())) {
+    throw archiveNotSupported();
+  }
+
+  // ZIP EOCD/ZIP64 records live at the end; scanning both ends also catches
+  // common self-extracting ZIPs whose executable stub precedes the ZIP data.
+  const head = new Uint8Array(await file.slice(0, Math.min(file.size, 1_048_576)).arrayBuffer());
+  const tailStart = Math.max(0, file.size - 65_557);
+  const tail = tailStart ? new Uint8Array(await file.slice(tailStart).arrayBuffer()) : head;
+  const zipSignatures = [
+    [0x50, 0x4b, 0x03, 0x04], // local file header
+    [0x50, 0x4b, 0x05, 0x06], // end of central directory / empty ZIP
+    [0x50, 0x4b, 0x07, 0x08], // spanning marker
+    [0x50, 0x4b, 0x06, 0x06], // ZIP64 end of central directory
+    [0x50, 0x4b, 0x06, 0x07]  // ZIP64 locator
+  ];
+  const zipFound = zipSignatures.some(signature =>
+    containsSignature(head, signature) || containsSignature(tail, signature)
+  );
+  const startsWith = signature => signature.every((byte, index) => head[index] === byte);
+  const gzip = startsWith([0x1f, 0x8b]);
+  const bzip2 = startsWith([0x42, 0x5a, 0x68]);
+  const xz = startsWith([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
+  const zstd = startsWith([0x28, 0xb5, 0x2f, 0xfd]);
+  const lz4 = startsWith([0x04, 0x22, 0x4d, 0x18]);
+  const sevenZip = startsWith([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]);
+  const rar = startsWith([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07]);
+  const cab = startsWith([0x4d, 0x53, 0x43, 0x46]);
+  const unixCompress = startsWith([0x1f, 0x9d]) || startsWith([0x1f, 0xa0]);
+  const ar = startsWith([0x21, 0x3c, 0x61, 0x72, 0x63, 0x68, 0x3e, 0x0a]);
+  const cpio = ["070701", "070702", "070707"].some(magic =>
+    head.length >= 6 && new TextDecoder().decode(head.slice(0, 6)) === magic
+  );
+  const tar = head.length >= 262 &&
+    new TextDecoder().decode(head.slice(257, 262)) === "ustar";
+  if (zipFound || gzip || bzip2 || xz || zstd || lz4 || sevenZip || rar ||
+      cab || unixCompress || ar || cpio || tar) {
+    throw archiveNotSupported();
+  }
+}
 
 function toBase64(bytes) {
   let binary = "";
@@ -158,6 +225,7 @@ export async function encryptSecureDropFile(file, recipientPublicKeyBase64, send
   if (!(file instanceof Blob) || file.size < 1 || file.size > MAX_UPLOAD_FILE_BYTES) {
     throw new RangeError("SECURE_DROP_FILE_SIZE_INVALID");
   }
+  await assertSecureDropFileAllowed(file);
   if (typeof recipientPublicKeyBase64 !== "string") {
     throw new TypeError("SECURE_DROP_RECIPIENT_KEY_REQUIRED");
   }
@@ -222,7 +290,7 @@ export async function decryptSecureDropFile(ciphertext, envelope, recipientPriva
     : ArrayBuffer.isView(ciphertext)
       ? ciphertext.buffer.slice(ciphertext.byteOffset, ciphertext.byteOffset + ciphertext.byteLength)
       : null;
-  if (!bytes || bytes.byteLength < 17 || bytes.byteLength > MAX_FILE_BYTES) {
+  if (!bytes || bytes.byteLength < 17 || bytes.byteLength > MAX_STORED_BYTES) {
     throw new RangeError("SECURE_DROP_CIPHERTEXT_SIZE_INVALID");
   }
   if (!envelope || envelope.senderUserId !== expectedSenderUserId ||
@@ -264,7 +332,7 @@ export async function decryptSecureDropFile(ciphertext, envelope, recipientPriva
     }
     const packed = await readStreamBounded(
       new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip")),
-      MAX_FILE_BYTES + 2048
+      MAX_UPLOAD_FILE_BYTES + 2048
     );
     if (packed.byteLength < 5) throw new Error("SECURE_DROP_METADATA_INVALID");
     const metadataLength = new DataView(packed.buffer, packed.byteOffset, packed.byteLength).getUint32(0, false);
@@ -284,7 +352,7 @@ export async function decryptSecureDropFile(ciphertext, envelope, recipientPriva
     }
     const name = metadata.name.replaceAll("\\", "_").replaceAll("/", "_").replace(/[\u0000-\u001f\u007f]/g, "_") || "secure-drop-file";
     const restoredBytes = new Uint8Array(packed.slice(4 + metadataLength));
-    if (restoredBytes.byteLength < 1 || restoredBytes.byteLength > MAX_FILE_BYTES) {
+    if (restoredBytes.byteLength < 1 || restoredBytes.byteLength > MAX_UPLOAD_FILE_BYTES) {
       throw new RangeError("SECURE_DROP_DECOMPRESSED_SIZE_INVALID");
     }
     return {
@@ -300,7 +368,7 @@ export async function decryptSecureDropFile(ciphertext, envelope, recipientPriva
 
 export const SECURE_DROP_CRYPTO = Object.freeze({
   algorithm: ENVELOPE_ALGORITHM,
-  maxFileBytes: MAX_FILE_BYTES,
+  maxFileBytes: MAX_UPLOAD_FILE_BYTES,
   maxUploadFileBytes: MAX_UPLOAD_FILE_BYTES,
   maxStoredBytes: MAX_STORED_BYTES,
   fileKeyBytes: FILE_KEY_LENGTH

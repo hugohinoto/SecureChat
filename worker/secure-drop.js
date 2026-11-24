@@ -224,7 +224,7 @@ async function digestBytes(value) {
   return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function readBodyBounded(body, maxBytes) {
+async function readBodyBounded(body, maxBytes, overflowCode = "STORED_SIZE_LIMIT_EXCEEDED") {
   if (!body) throw new Error("UPLOAD_BODY_REQUIRED");
   const reader = body.getReader();
   const chunks = [];
@@ -236,7 +236,7 @@ async function readBodyBounded(body, maxBytes) {
       total += value.byteLength;
       if (total > maxBytes) {
         await reader.cancel().catch(() => {});
-        throw new Error("STORED_SIZE_LIMIT_EXCEEDED");
+        throw new Error(overflowCode);
       }
       chunks.push(value);
     }
@@ -761,6 +761,8 @@ export async function handleSecureDropApi(request, env, context) {
     if (!await checkRateLimit(env, request, "secure-drop-upload", 10)) {
       return json({ error: "RATE_LIMITED" }, 429);
     }
+    // The original size is client-reported because the payload is end-to-end encrypted.
+    // It is never used for quota or credit calculations; those use the exact received ciphertext bytes.
     const originalBytes = Number(request.headers.get("X-Secure-Drop-Original-Size"));
     const storedSizeHeader = request.headers.get("X-Secure-Drop-Stored-Size") || request.headers.get("Content-Length");
     const declaredStoredBytes = /^[1-9][0-9]{0,8}$/.test(storedSizeHeader || "")
@@ -936,7 +938,11 @@ export async function handleSecureDropApi(request, env, context) {
 
     let ciphertext;
     try {
-      ciphertext = await readBodyBounded(request.body, MAX_STORED_BYTES);
+      ciphertext = await readBodyBounded(
+        request.body,
+        declaredStoredBytes,
+        declaredStoredBytes >= MAX_STORED_BYTES ? "STORED_SIZE_LIMIT_EXCEEDED" : "STORED_SIZE_MISMATCH"
+      );
       if (ciphertext.byteLength !== declaredStoredBytes) throw new Error("STORED_SIZE_MISMATCH");
       if (await digestBytes(ciphertext) !== envelope.ciphertextSha256) {
         throw new Error("STORED_FILE_INTEGRITY_MISMATCH");

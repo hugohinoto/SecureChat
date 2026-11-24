@@ -14,6 +14,8 @@ import {
   SECURE_DROP_LIMITS
 } from "../worker/secure-drop.js";
 import {
+  assertSecureDropFileAllowed,
+  assertSecureDropFileNameAllowed,
   decryptSecureDropFile,
   encodeSecureDropKeyEnvelope,
   encryptSecureDropFile
@@ -42,6 +44,39 @@ function keyEnvelopeFixture(fingerprint = "a".repeat(64)) {
     ciphertextSha256: "b".repeat(64)
   };
 }
+
+test("SecureDrop rejects archive extensions and compressed container signatures before encryption", async () => {
+  for (const name of ["backup.zip", "backup.7z", "logs.tar.gz", "bundle.rar", "book.epub", "app.apk"]) {
+    assert.throws(() => assertSecureDropFileNameAllowed(name), error =>
+      error.code === "SECURE_DROP_ARCHIVE_NOT_SUPPORTED"
+    );
+  }
+  assert.doesNotThrow(() => assertSecureDropFileNameAllowed("photo.png"));
+
+  const disguisedZip = new Blob([Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00])]);
+  Object.defineProperty(disguisedZip, "name", { value: "ordinary-document.bin" });
+  await assert.rejects(() => assertSecureDropFileAllowed(disguisedZip), error =>
+    error.code === "SECURE_DROP_ARCHIVE_NOT_SUPPORTED"
+  );
+
+  const disguised7z = new Blob([Uint8Array.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])]);
+  Object.defineProperty(disguised7z, "name", { value: "payload.dat" });
+  await assert.rejects(() => assertSecureDropFileAllowed(disguised7z), error =>
+    error.code === "SECURE_DROP_ARCHIVE_NOT_SUPPORTED"
+  );
+
+  const disguisedTar = new Uint8Array(512);
+  disguisedTar.set(new TextEncoder().encode("ustar"), 257);
+  const tarBlob = new Blob([disguisedTar]);
+  Object.defineProperty(tarBlob, "name", { value: "payload.data" });
+  await assert.rejects(() => assertSecureDropFileAllowed(tarBlob), error =>
+    error.code === "SECURE_DROP_ARCHIVE_NOT_SUPPORTED"
+  );
+
+  const ordinary = new Blob(["ordinary plain text content"]);
+  Object.defineProperty(ordinary, "name", { value: "notes.txt" });
+  await assert.doesNotReject(() => assertSecureDropFileAllowed(ordinary));
+});
 
 test("SecureDrop month accounting changes at midnight Japan time", () => {
   const beforeReset = Date.parse("2026-11-30T14:59:59.999Z");
@@ -364,7 +399,10 @@ test("D1 upload size declarations are checked against the received encrypted byt
   assert.match(source, /X-Secure-Drop-Stored-Size/);
   assert.match(source, /contentLengthHeader !== storedSizeHeader/);
   assert.match(source, /ciphertext\.byteLength !== declaredStoredBytes/);
+  assert.match(source, /readBodyBounded\(\s*request\.body,\s*declaredStoredBytes/);
   assert.match(source, /digestBytes\(ciphertext\) !== envelope\.ciphertextSha256/);
+  assert.match(source, /originalSizeIsClientReported: true/);
+  assert.match(source, /secureDropCreditsForBytes\(\s*declaredStoredBytes/);
   const app = await readFile(new URL("../public/secure-drop-app.js", import.meta.url), "utf8");
   assert.match(app, /X-Secure-Drop-Stored-Size/);
   assert.match(app, /X-Secure-Drop-Upload-Id/);
@@ -417,6 +455,7 @@ test("browser file encryption wraps the AES-GCM key to the recipient identity an
   assert.ok(encrypted.storedSizeBytes < file.size + 256);
   assert.equal(encrypted.originalSizeBytes, file.size);
   assert.equal(encrypted.compression, "gzip");
+  assert.ok(encrypted.storedSizeBytes <= 26_000_000);
   const header = Buffer.from(encrypted.encodedEnvelope.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
   assert.deepEqual(JSON.parse(header), encrypted.envelope);
 
