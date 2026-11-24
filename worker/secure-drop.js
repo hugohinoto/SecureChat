@@ -213,23 +213,71 @@ async function createPendingTransfer(env, details) {
     Number(results?.[1]?.meta?.changes || 0) === 1;
 }
 
-async function abandonPendingTransfer(env, transfer, credits, now) {
-  let objectDeleted = false;
-  let refundCompleted = false;
+async function verifyR2ObjectAbsent(env, objectKey) {
   try {
-    await env.SECURE_DROP_R2.delete(transfer.objectKey);
-    objectDeleted = true;
-  } catch {}
+    await env.SECURE_DROP_R2.delete(objectKey);
+    const remaining = await env.SECURE_DROP_R2.head(objectKey);
+    return remaining === null;
+  } catch {
+    return false;
+  }
+}
+
+async function queueDeletionVerification(env, transferId, objectKey, now, reason) {
+  await env.DB.prepare(
+    "INSERT INTO secure_drop_deletion_jobs (transfer_id, object_key, reason, attempts, next_attempt_at, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?) ON CONFLICT(transfer_id) DO UPDATE SET object_key=excluded.object_key, reason=excluded.reason, next_attempt_at=MIN(secure_drop_deletion_jobs.next_attempt_at, excluded.next_attempt_at), updated_at=excluded.updated_at"
+  ).bind(transferId, objectKey, reason, now, now, now).run();
+}
+
+async function verifyAndFinalizeDeletion(env, transferId, objectKey, now, reason = "user_delete") {
+  const absent = await verifyR2ObjectAbsent(env, objectKey);
+  if (!absent) {
+    await queueDeletionVerification(env, transferId, objectKey, now, reason).catch(() => {});
+    return false;
+  }
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM secure_drop_transfers WHERE id=? AND status='deleting'").bind(transferId),
+    env.DB.prepare("DELETE FROM secure_drop_deletion_jobs WHERE transfer_id=?").bind(transferId)
+  ]);
+  return true;
+}
+
+async function processDeletionJobs(env, now) {
+  const rows = await env.DB.prepare(
+    "SELECT transfer_id, object_key, reason, attempts FROM secure_drop_deletion_jobs WHERE next_attempt_at<=? ORDER BY next_attempt_at LIMIT ?"
+  ).bind(now, CLEANUP_BATCH_SIZE).all();
+  for (const row of rows.results || []) {
+    const absent = await verifyR2ObjectAbsent(env, row.object_key);
+    if (absent) {
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM secure_drop_transfers WHERE id=? AND status='deleting'").bind(row.transfer_id),
+        env.DB.prepare("DELETE FROM secure_drop_deletion_jobs WHERE transfer_id=?").bind(row.transfer_id)
+      ]);
+      continue;
+    }
+    const attempts = Number(row.attempts || 0) + 1;
+    const delay = Math.min(60 * 60 * 1000, 30_000 * (2 ** Math.min(attempts - 1, 7)));
+    await env.DB.prepare(
+      "UPDATE secure_drop_deletion_jobs SET attempts=?, next_attempt_at=?, updated_at=? WHERE transfer_id=?"
+    ).bind(attempts, now + delay, now, row.transfer_id).run();
+  }
+}
+
+async function abandonPendingTransfer(env, transfer, credits, now) {
+  const objectDeleted = await verifyR2ObjectAbsent(env, transfer.objectKey);
+  let refundCompleted = false;
   try {
     await refundCredits(env, transfer.ownerId, transfer.month, credits, transfer.id, now);
     refundCompleted = true;
   } catch {}
   if (objectDeleted && refundCompleted) {
     await env.DB.prepare("DELETE FROM secure_drop_transfers WHERE id=? AND status='pending'").bind(transfer.id).run().catch(() => {});
+    await env.DB.prepare("DELETE FROM secure_drop_deletion_jobs WHERE transfer_id=?").bind(transfer.id).run().catch(() => {});
   } else {
     await env.DB.prepare(
-      "UPDATE secure_drop_transfers SET status='pending', updated_at=? WHERE id=?"
+      "UPDATE secure_drop_transfers SET status='deleting', updated_at=? WHERE id=?"
     ).bind(now, transfer.id).run().catch(() => {});
+    await queueDeletionVerification(env, transfer.id, transfer.objectKey, now, "upload_rollback").catch(() => {});
   }
 }
 
@@ -238,9 +286,9 @@ async function cleanupStaleTransfers(env, now) {
     "SELECT id, user_id, month_key, object_key, status FROM secure_drop_transfers WHERE (status='pending' AND updated_at<=?) OR (status='deleting' AND updated_at<=?) OR (status='ready' AND expires_at<=?) ORDER BY updated_at LIMIT ?"
   ).bind(now - PENDING_GRACE_MS, now - PENDING_GRACE_MS, now, CLEANUP_BATCH_SIZE).all();
   for (const row of rows.results || []) {
-    try {
-      await env.SECURE_DROP_R2.delete(row.object_key);
-    } catch {
+    const objectDeleted = await verifyR2ObjectAbsent(env, row.object_key);
+    if (!objectDeleted) {
+      await queueDeletionVerification(env, row.id, row.object_key, now, "stale_transfer").catch(() => {});
       continue;
     }
     if (row.status === "pending" && row.month_key === secureDropMonthKey(now)) {
@@ -256,6 +304,7 @@ async function cleanupStaleTransfers(env, now) {
       }
     }
     await env.DB.prepare("DELETE FROM secure_drop_transfers WHERE id=?").bind(row.id).run();
+    await env.DB.prepare("DELETE FROM secure_drop_deletion_jobs WHERE transfer_id=?").bind(row.id).run();
   }
 }
 
@@ -291,7 +340,13 @@ async function purgeOldMonthObjects(env, now) {
       const parts = item.key.split("/");
       return parts.length >= 3 && parts[0] === "secure-drop" && parts[1] !== current;
     }).map((item) => item.key);
-    if (obsolete.length) await bucket.delete(obsolete);
+    if (obsolete.length) {
+      await bucket.delete(obsolete);
+      for (const key of obsolete) {
+        const remaining = await bucket.head(key);
+        if (remaining !== null) throw new Error("R2_DELETION_VERIFICATION_FAILED");
+      }
+    }
 
     if (page.truncated) {
       cursor = page.cursor;
@@ -577,13 +632,16 @@ export async function handleSecureDropApi(request, env, context) {
     await env.DB.prepare(
       "UPDATE secure_drop_transfers SET status='deleting', updated_at=? WHERE id=? AND user_id=? AND month_key=?"
     ).bind(now, transferId, session.id, currentMonth).run();
-    try {
-      await env.SECURE_DROP_R2.delete(row.object_key);
-    } catch {
-      return json({ error: "DELETE_PENDING", message: "削除を受け付けました。バックグラウンドで再試行します。" }, 202);
+    const verified = await verifyAndFinalizeDeletion(env, transferId, row.object_key, now, "user_delete");
+    if (!verified) {
+      return json({
+        deleted: false,
+        status: "verifying",
+        error: "DELETE_PENDING",
+        message: "削除要求を受け付けました。実際の削除を確認できるまで再試行します。"
+      }, 202);
     }
-    await env.DB.prepare("DELETE FROM secure_drop_transfers WHERE id=? AND user_id=?").bind(transferId, session.id).run();
-    return json({ deleted: true });
+    return json({ deleted: true, verified: true });
   }
 
   return json({ error: "NOT_FOUND" }, 404);
@@ -593,6 +651,7 @@ export async function runSecureDropMaintenance(env, now = Date.now()) {
   const current = secureDropMonthKey(now);
   if (!env.SECURE_DROP_R2) return { month: current, status: "storage_unavailable" };
   try {
+    await processDeletionJobs(env, now);
     await cleanupStaleTransfers(env, now);
     const completed = await purgeOldMonthObjects(env, now);
     return { month: current, status: completed ? "ok" : "more_pending" };
