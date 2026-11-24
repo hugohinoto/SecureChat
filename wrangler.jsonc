@@ -22,12 +22,7 @@
       "/bug-report.html"
     ]
   },
-  "r2_buckets": [
-    {
-      "binding": "SECURE_DROP_R2",
-      "bucket_name": "securechat-files"
-    }
-  ],
+
   "d1_databases": [
     {
       "binding": "DB",
