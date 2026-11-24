@@ -7,7 +7,8 @@ const PRIORITY_CREDIT_MULTIPLIER = 5;
 const MONTHLY_CREDITS = 100;
 const DOWNLOAD_LIMIT = 3;
 const TRANSFER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const PENDING_GRACE_MS = 15 * 60 * 1000;
+// Give slow/temporary uploads a wide lease window before stale reservations can be reclaimed.
+const PENDING_GRACE_MS = 30 * 60 * 1000;
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const CLEANUP_PAGE_SIZE = 1000;
 const CLEANUP_MAX_PAGES_PER_RUN = 10;
@@ -849,6 +850,17 @@ export async function handleSecureDropApi(request, env, context) {
     }
     if (existing && (existing.status !== "pending" || existing.month_key !== currentMonth)) {
       return json({ error: "UPLOAD_RESERVATION_UNAVAILABLE" }, 409);
+    }
+    if (existing?.status === "pending") {
+      const renewed = await env.DB.prepare(
+        "UPDATE secure_drop_transfers SET updated_at=? WHERE id=? AND user_id=? AND month_key=? AND status='pending' AND storage_backend='d1' RETURNING id"
+      ).bind(now, uploadId, session.id, currentMonth).first();
+      if (!renewed) {
+        const preemptedReservation = await env.DB.prepare(
+          "SELECT 1 AS found FROM secure_drop_preempted_uploads WHERE transfer_id=? AND user_id=?"
+        ).bind(uploadId, session.id).first();
+        return json({ error: preemptedReservation ? "UPLOAD_PREEMPTED" : "UPLOAD_RESERVATION_UNAVAILABLE" }, 409);
+      }
     }
     if (!existing) {
       const account = await ensureMonthlyAccount(env, session.id, currentMonth, now);
