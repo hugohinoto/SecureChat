@@ -368,7 +368,7 @@ test("D1 upload size declarations are checked against the received encrypted byt
   const app = await readFile(new URL("../public/secure-drop-app.js", import.meta.url), "utf8");
   assert.match(app, /X-Secure-Drop-Stored-Size/);
   assert.match(app, /X-Secure-Drop-Upload-Id/);
-  assert.match(app, /SECURE_DROP_PENDING_DB/);
+  assert.match(app, /securechat-securedrop-pending/);
   assert.match(app, /preemptions\/ack/);
 });
 
