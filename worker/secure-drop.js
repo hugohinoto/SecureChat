@@ -263,8 +263,8 @@ async function preemptPendingUploads(env, requestedBytes, now) {
   const requiredBytes = Math.max(0, usedBytes + requestedBytes - D1_STORAGE_CAPACITY_BYTES);
   if (!requiredBytes) return true;
   const candidates = await env.DB.prepare(
-    "SELECT id, stored_size_bytes FROM secure_drop_transfers WHERE storage_backend='d1' AND status='pending' AND priority=0 ORDER BY updated_at ASC LIMIT 200"
-  ).all();
+    "SELECT id, stored_size_bytes FROM secure_drop_transfers WHERE storage_backend='d1' AND status='pending' AND priority=0 AND updated_at<=? ORDER BY updated_at ASC LIMIT 200"
+  ).bind(now - PENDING_GRACE_MS).all();
   const selected = [];
   let released = 0;
   for (const row of candidates.results || []) {
@@ -563,7 +563,7 @@ export async function handleSecureDropApi(request, env, context) {
 
   if (path === "/api/secure-drop/files" && method === "GET") {
     const rows = await env.DB.prepare(
-      "SELECT t.id, t.user_id, t.recipient_user_id, owner.user_id AS owner_user_name, recipient.user_id AS recipient_user_name, t.original_size_bytes, t.stored_size_bytes, t.created_at, t.expires_at, t.download_count, t.download_limit, t.key_envelope_json, t.status FROM secure_drop_transfers t JOIN users owner ON owner.id=t.user_id JOIN users recipient ON recipient.id=t.recipient_user_id LEFT JOIN verified_contact_pairs contacts ON contacts.user_a_id=CASE WHEN t.user_id<t.recipient_user_id THEN t.user_id ELSE t.recipient_user_id END AND contacts.user_b_id=CASE WHEN t.user_id<t.recipient_user_id THEN t.recipient_user_id ELSE t.user_id END WHERE (t.user_id=? OR (t.recipient_user_id=? AND contacts.user_a_id IS NOT NULL)) AND t.month_key=? AND t.expires_at>? AND t.status='ready' ORDER BY t.created_at DESC LIMIT 100"
+      "SELECT t.id, t.user_id, t.recipient_user_id, owner.user_id AS owner_user_name, recipient.user_id AS recipient_user_name, t.original_size_bytes, t.stored_size_bytes, t.created_at, t.expires_at, t.download_count, t.download_limit, t.key_envelope_json, t.status, t.priority FROM secure_drop_transfers t JOIN users owner ON owner.id=t.user_id JOIN users recipient ON recipient.id=t.recipient_user_id LEFT JOIN verified_contact_pairs contacts ON contacts.user_a_id=CASE WHEN t.user_id<t.recipient_user_id THEN t.user_id ELSE t.recipient_user_id END AND contacts.user_b_id=CASE WHEN t.user_id<t.recipient_user_id THEN t.recipient_user_id ELSE t.user_id END WHERE (t.user_id=? OR (t.recipient_user_id=? AND contacts.user_a_id IS NOT NULL)) AND t.month_key=? AND t.expires_at>? AND t.status='ready' ORDER BY t.created_at DESC LIMIT 100"
     ).bind(session.id, session.id, currentMonth, now).all();
     const preempted = await env.DB.prepare(
       "SELECT p.transfer_id, recipient.user_id AS peer_user_id, p.original_size_bytes, p.stored_size_bytes, p.created_at FROM secure_drop_preempted_uploads p JOIN users recipient ON recipient.id=p.recipient_user_id WHERE p.user_id=? AND p.month_key=? AND p.acknowledged_at IS NULL ORDER BY p.created_at ASC LIMIT 20"
@@ -692,6 +692,19 @@ export async function handleSecureDropApi(request, env, context) {
     });
   }
 
+  if (path === "/api/secure-drop/preemptions/ack" && method === "POST") {
+    let body;
+    try { body = await request.json(); } catch { return json({ error: "INVALID_JSON" }, 400); }
+    const ids = Array.isArray(body?.transferIds) ? body.transferIds : [];
+    if (!ids.length || ids.length > 20 || ids.some((id) => typeof id !== "string" || !UUID_PATTERN.test(id))) {
+      return json({ error: "INVALID_PREEMPTION_IDS" }, 400);
+    }
+    await env.DB.batch(ids.map((id) => env.DB.prepare(
+      "UPDATE secure_drop_preempted_uploads SET acknowledged_at=? WHERE transfer_id=? AND user_id=? AND acknowledged_at IS NULL"
+    ).bind(now, id, session.id)));
+    return json({ acknowledged: true, count: ids.length });
+  }
+
   if (path === "/api/secure-drop/files" && method === "POST") {
     if (!await checkRateLimit(env, request, "secure-drop-upload", 10)) {
       return json({ error: "RATE_LIMITED" }, 429);
@@ -701,6 +714,10 @@ export async function handleSecureDropApi(request, env, context) {
     const declaredStoredBytes = /^[1-9][0-9]{0,8}$/.test(storedSizeHeader || "")
       ? Number(storedSizeHeader)
       : NaN;
+    const contentLengthHeader = request.headers.get("Content-Length");
+    if (contentLengthHeader && contentLengthHeader !== storedSizeHeader) {
+      return json({ error: "DECLARED_STORED_SIZE_MISMATCH" }, 400);
+    }
     if (!Number.isSafeInteger(originalBytes) || originalBytes < 1 || originalBytes > MAX_ORIGINAL_BYTES) {
       return json({ error: "INVALID_REPORTED_ORIGINAL_SIZE", maxBytes: MAX_ORIGINAL_BYTES }, 400);
     }
@@ -747,7 +764,7 @@ export async function handleSecureDropApi(request, env, context) {
 
     const envelopeJson = JSON.stringify(envelope);
     const existing = await env.DB.prepare(
-      "SELECT id, recipient_user_id, original_size_bytes, stored_size_bytes, key_envelope_json, status, storage_backend, priority, month_key FROM secure_drop_transfers WHERE id=? AND user_id=?"
+      "SELECT id, recipient_user_id, original_size_bytes, stored_size_bytes, key_envelope_json, status, storage_backend, priority, month_key, download_count FROM secure_drop_transfers WHERE id=? AND user_id=?"
     ).bind(uploadId, session.id).first();
     if (existing && (
       existing.recipient_user_id !== recipient.id ||
