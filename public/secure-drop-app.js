@@ -531,6 +531,7 @@ async function start() {
     currentUser = session.user;
     ui.user.textContent = "@" + currentUser.userId;
     ui.logout.hidden = false;
+    ui.logout.addEventListener("click", signOut);
     identity = await readIdentity(currentUser.userId).catch(() => null);
     if (!identity?.privateKey || !identity?.publicKey || !identity?.signingPrivateKey || !identity?.signingPublicKey) {
       ui.keyWarning.hidden = false;
@@ -550,7 +551,6 @@ async function start() {
     ui.send.addEventListener("click", uploadSelectedFile);
     ui.chooseFile.addEventListener("click", () => ui.file.click());
     ui.refresh.addEventListener("click", refresh);
-    ui.logout.addEventListener("click", signOut);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") refresh();
