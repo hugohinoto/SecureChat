@@ -234,7 +234,8 @@ test("month-end sweeping waits while any old-month upload is still pending", asy
           }
           if (sql.includes("status='pending'")) return { count: 1 };
           return null;
-        }
+        },
+        async run() { return { meta: { changes: 0 } }; }
       };
     },
     async batch() { oldMonthMetadataDeleted = true; }
@@ -264,7 +265,8 @@ test("monthly maintenance paginates old-month R2 objects and removes old D1 stat
             return { current_month: month, cursor: null, completed_at: null };
           }
           return null;
-        }
+        },
+        async run() { return { meta: { changes: 0 } }; }
       };
     },
     async batch(statements) { batches.push(statements.map(statement => statement.sql)); }
@@ -307,7 +309,10 @@ test("monthly maintenance retains its cursor when R2 deletion fails so the next 
           }
           return null;
         },
-        async run() { cursorUpdates++; }
+        async run() {
+          if(sql.includes("UPDATE secure_drop_maintenance")) cursorUpdates++;
+          return { meta: { changes: 0 } };
+        }
       };
     },
     async batch() { throw new Error("D1 finalization should not run after R2 failure"); }
