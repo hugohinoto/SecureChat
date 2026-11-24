@@ -19,6 +19,8 @@ Render/PostgreSQLの代わりにCloudflare内で完結する構成です。Cloud
 - **リリースバージョン: SecureChat v0.5.0**
 - **暗号プロトコル: Crypto Protocol v2（Olm / Megolm）**
 - Crypto v2 feature flag 有効化。会話ごとの相互承認でv2へ移行
+- SecureDrop API基盤（R2暗号化ペイロード保存、月100クレジット、1MB=1クレジット、7日以内・月末までの早い期限、3回ダウンロード制限）
+- SecureDropの月次メタデータ・クレジット台帳削除とR2旧月オブジェクト削除ジョブ（5分Cron、ページ単位）
 - 旧v1の復号互換性
 
 - Liquid Glass風のレスポンシブUI
@@ -49,6 +51,19 @@ Render/PostgreSQLの代わりにCloudflare内で完結する構成です。Cloud
 - 暗号化ファイル送信
 - アカウント復旧・パスワードリセット
 - 専門家によるセキュリティレビュー
+
+## SecureDrop セットアップ（機能は段階実装中）
+
+SecureDrop APIを有効にするには、Cloudflare R2バケットを先に作成してください。
+
+```bash
+npx wrangler r2 bucket create securechat-files
+npx wrangler d1 migrations apply securechat-db --remote
+```
+
+`wrangler.jsonc` の `SECURE_DROP_R2` binding は `securechat-files` を参照します。R2バケット作成とD1 migrationの適用が終わるまで、SecureDrop APIはストレージ未設定として503を返します。現段階はAPI・保存管理の基盤であり、7zブラウザー圧縮UI、受信側の復号・自動解凍UI、共有リンク画面はまだ未実装です。
+
+月次リセットは日本時間の月替わりを基準にします。月替わり直後から旧月の転送はAPIで無効になり、5分CronがD1の旧月レコードとR2オブジェクトをページ単位で削除します。Cloudflare側のバックアップ保持まで即時消去するものではありません。
 
 ## Cloudflareへの初回セットアップ
 
