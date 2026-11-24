@@ -24,6 +24,7 @@ jobs:
       - run: node --check worker/data-crypto.js
       - run: node --check worker/identity-keys.js
       - run: node --check public/app.js
+      - run: node --check public/secure-drop-app.js
       - run: node --check public/crypto-v2.js
       - run: node --check scripts/build-crypto-v2.js
       - run: npm run build
