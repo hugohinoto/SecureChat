@@ -47,3 +47,15 @@ details pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#b7c5df;font:10px/
 .stats{grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-bottom:12px}.stat,.panel{border-radius:8px;box-shadow:none;background:#131d2c;border:1px solid #263246}.stat{padding:14px}.stat span{font-size:10px;color:#9aabc5}.stat strong{font-size:24px;margin-top:6px}.panel{padding:17px;margin-top:11px;scroll-margin-top:12px}.panel-heading h2,.note-panel h2{font-size:15px}.eyebrow{font-size:9px;letter-spacing:1.5px}input,textarea,select{border-radius:6px;background:#0d1522;border-color:#2a3a52}button,.secondary,.search-row button{border-radius:6px}.table-wrap{border-radius:7px}th,td{font-size:11px;padding:10px}.security-summary{border-radius:7px}.announcement-form{border-radius:7px;background:#0f1826}
 @media(max-width:850px){.layout{padding:12px}.admin-workspace{grid-template-columns:1fr}.admin-rail{position:static;height:auto;min-height:0;display:flex;flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid #263246;padding:8px}.rail-title{display:none}.rail-item{font-size:10px;padding:8px}.rail-footer{display:none}.admin-content{padding:0 10px 12px}.content-tabs{margin:0 -10px 10px;padding:0 10px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.topbar{height:auto;min-height:48px;flex-wrap:wrap;padding:8px 10px}.top-actions{font-size:10px;gap:7px}.top-actions a:first-of-type{display:none}.layout{padding:10px}.intro h1{font-size:20px}.stats{gap:7px}.stat{padding:11px}.stat strong{font-size:20px}.admin-rail{gap:2px}.rail-item{flex:1 1 30%;justify-content:center}.panel{padding:12px}.search-row{gap:6px}}
+
+
+.bug-report-item{align-items:stretch}
+.bug-report-item>div:first-child{min-width:0;flex:1}
+.bug-report-thread{display:grid;gap:8px;margin-top:14px;padding:12px;border:1px solid rgba(112,190,220,.16);border-radius:8px;background:rgba(7,16,30,.35)}
+.bug-report-thread>strong{font-size:10px;color:#a9d7e8}
+.bug-report-reply{padding:9px 10px;border-left:2px solid #4b91ad;background:rgba(76,145,173,.07)}
+.bug-report-reply small{color:#8198b8;font-size:9px}
+.bug-report-reply p{margin:5px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.bug-report-reply-form{display:grid;gap:8px;margin-top:12px;max-width:760px}
+.bug-report-reply-form .primary{justify-self:start}
+.bug-report-actions{align-items:flex-start}
