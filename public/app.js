@@ -1475,8 +1475,7 @@ async function retrySecureDropPending(pending,button) {
   if(!activeConversation || activeConversation.peerUserId!==pending.peerUserId)return;
   button.disabled=true;
   try {
-    pending.priority=!!el.secureDropPriority?.checked;
-    await saveSecureDropPending(pending);
+    // Keep the original priority tier: the server may already hold a matching reservation.
     const result=await sendSecureDropPendingUpload(pending);
     toast("保留ファイルを送信しました。課金: "+result.creditsConsumed+" クレジット");
     await refreshSecureDrop();
@@ -1600,7 +1599,8 @@ async function refreshSecureDrop() {
       retry.type="button";
       retry.className="secure-drop-action";
       retry.textContent="再送信";
-      retry.disabled=secureDropBusy || (secureDropNormalPaused && !el.secureDropPriority?.checked);
+      retry.disabled=secureDropBusy;
+      retry.classList.add("secure-drop-pending-retry");
       retry.addEventListener("click",()=>retrySecureDropPending(pending,retry));
       actions.append(retry);
       row.append(copy,actions);
