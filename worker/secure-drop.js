@@ -31,6 +31,17 @@ async function digest(value) {
   return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function boundedBody(body, maxBytes) {
+  let received = 0;
+  return body.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      received += chunk.byteLength;
+      if (received > maxBytes) throw new RangeError("STORED_SIZE_LIMIT_EXCEEDED");
+      controller.enqueue(chunk);
+    }
+  }));
+}
+
 async function ensureMonthlyAccount(env, userId, month, now) {
   await env.DB.batch([
     env.DB.prepare(
@@ -49,12 +60,14 @@ async function refundCredits(env, userId, month, credits, transferId, now) {
   // A previous month's balance is expired; never recreate rows after the monthly purge.
   if (monthKey(now) !== month) return;
   await env.DB.batch([
-    env.DB.prepare(
-      "UPDATE secure_drop_credit_accounts SET balance=MIN(granted_credits, balance+?), updated_at=? WHERE user_id=? AND month_key=?"
-    ).bind(credits, now, userId, month),
+    // Insert the unique refund record first. SQLite changes() gates the balance
+    // update, so a retry cannot credit the same transfer more than once.
     env.DB.prepare(
       "INSERT OR IGNORE INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) VALUES (?, ?, ?, ?, 'upload_refund', ?, ?)"
-    ).bind("refund:" + transferId, userId, month, credits, transferId, now)
+    ).bind("refund:" + transferId, userId, month, credits, transferId, now),
+    env.DB.prepare(
+      "UPDATE secure_drop_credit_accounts SET balance=MIN(granted_credits, balance+?), updated_at=? WHERE user_id=? AND month_key=? AND changes()=1"
+    ).bind(credits, now, userId, month)
   ]);
 }
 
@@ -192,7 +205,7 @@ export async function handleSecureDropApi(request, env, context) {
     if (!debit) return json({ error: "INSUFFICIENT_CREDITS" }, 402);
 
     try {
-      const storedObject = await env.SECURE_DROP_R2.put(objectKey, request.body, {
+      const storedObject = await env.SECURE_DROP_R2.put(objectKey, boundedBody(request.body, MAX_STORED_BYTES), {
         httpMetadata: { contentType: "application/octet-stream" },
         customMetadata: { month: currentMonth, transferId }
       });
