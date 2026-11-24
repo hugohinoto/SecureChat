@@ -353,14 +353,17 @@ test("the sender cannot consume a recipient download allowance", async () => {
   assert.equal(r2Read, false);
 });
 
-test("upload billing accepts a size hint only when the measured stream matches it", async () => {
+test("D1 upload size declarations are checked against the received encrypted bytes", async () => {
   const source = await readFile(new URL("../worker/secure-drop.js", import.meta.url), "utf8");
   assert.match(source, /X-Secure-Drop-Stored-Size/);
   assert.match(source, /contentLengthHeader !== storedSizeHeader/);
-  assert.match(source, /actualBytes !== declaredStoredBytes/);
-  assert.match(source, /Number\(storedObject\?\.size\) !== actualBytes/);
+  assert.match(source, /ciphertext\.byteLength !== declaredStoredBytes/);
+  assert.match(source, /digestBytes\(ciphertext\) !== envelope\.ciphertextSha256/);
   const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(app, /X-Secure-Drop-Stored-Size/);
+  assert.match(app, /X-Secure-Drop-Upload-Id/);
+  assert.match(app, /SECURE_DROP_PENDING_DB/);
+  assert.match(app, /preemptions\/ack/);
 });
 
 test("SecureDrop downloads use a conditional atomic three-download update", async () => {
