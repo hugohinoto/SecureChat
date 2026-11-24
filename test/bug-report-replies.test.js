@@ -27,7 +27,7 @@ test("only an authenticated report owner can read their reports and replies", as
 
 test("admin replies require the existing administrator authorization gate and validate content", async () => {
   const worker = await read("../worker/admin-features.js");
-  assert.ok(worker.includes('(?:\\\\/replies)?'));
+  assert.match(worker, /const reportsRoute = .*replies/);
   assert.match(worker, /if \(replyMatch && method === "POST"\)/);
   assert.match(worker, /message\.length > 4000/);
   assert.match(worker, /deps\.writeAdminAudit\(env, admin, "bug-report\.reply"/);
