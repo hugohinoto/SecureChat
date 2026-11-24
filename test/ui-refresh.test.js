@@ -30,10 +30,9 @@ test("refreshed UI includes keyboard focus, reduced-motion, and mobile navigatio
 });
 
 test("UI clearly states that the current messaging prototype has no forward secrecy", () => {
-  assert.match(html, /メッセージごとの鍵更新（前方秘匿性）は未対応/);
-  assert.match(html, /機密情報の送信には使用しないでください/);
+  assert.match(html, /メッセージ単位の鍵更新（前方秘匿性）には未対応/);
+  assert.match(html, /機密情報は送信しないでください/);
 });
-
 
 test("device-scoped crypto vault uses a single IndexedDB readwrite transaction", () => {
   const cryptoClient = readFileSync(new URL("../public/crypto-v2.js", import.meta.url), "utf8");
@@ -54,7 +53,6 @@ test("device revocation controls are present and the current device cannot be re
   assert.match(cryptoClient, /CRYPTO_CANNOT_REVOKE_CURRENT_DEVICE/);
   assert.ok(cryptoClient.includes("org.securechat.device_revoked"));
 });
-
 
 test("crypto v2 requires an exclusive Web Lock for each browser-profile device", () => {
   const cryptoClient = readFileSync(new URL("../public/crypto-v2.js", import.meta.url), "utf8");
