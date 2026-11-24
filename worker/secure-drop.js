@@ -355,6 +355,7 @@ async function purgeOldMonthObjects(env, now) {
       ).bind(cursor, current).run();
     } else {
       await env.DB.batch([
+        env.DB.prepare("DELETE FROM secure_drop_deletion_jobs WHERE transfer_id IN (SELECT id FROM secure_drop_transfers WHERE month_key<>?)").bind(current),
         env.DB.prepare("DELETE FROM secure_drop_transfers WHERE month_key<>?").bind(current),
         env.DB.prepare("DELETE FROM secure_drop_credit_ledger WHERE month_key<>?").bind(current),
         env.DB.prepare("DELETE FROM secure_drop_credit_accounts WHERE month_key<>?").bind(current),

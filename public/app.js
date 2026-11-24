@@ -1384,8 +1384,7 @@ async function secureDropRequest(path, options={}) {
       STORED_SIZE_MISMATCH:"転送中にファイル容量が変わりました。",
       TRANSFER_EXPIRED_OR_NOT_FOUND:"ファイルは期限切れか、削除されています。",
       DOWNLOAD_LIMIT_REACHED:"このファイルはダウンロード上限に達しました。",
-      STORED_FILE_INTEGRITY_MISMATCH:"保存ファイルの整合性を確認できませんでした。",
-      DELETE_PENDING:"削除要求を受け付けました。削除完了を確認するまでサーバー側で再試行します。"
+      STORED_FILE_INTEGRITY_MISMATCH:"保存ファイルの整合性を確認できませんでした。"
     };
     throw appError(data.error||"SECURE_DROP_REQUEST_FAILED",messages[data.error]||data.message||"SecureDrop の処理に失敗しました。");
   }
