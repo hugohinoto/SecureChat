@@ -194,6 +194,18 @@ test("a logged-in user who is neither sender nor recipient cannot consume a down
   assert.equal(r2Read, false);
 });
 
+test("an in-flight pending upload is not deleted merely because its month-end expiry arrived", async () => {
+  const source = await readFile(new URL("../worker/secure-drop.js", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /status='pending' AND updated_at<=\?\) OR \(status='deleting' AND updated_at<=\?\) OR \(status='ready' AND expires_at<=\?/
+  );
+  assert.doesNotMatch(
+    source,
+    /WHERE expires_at<=\? OR \(status IN \('pending','deleting'\)/
+  );
+});
+
 test("monthly maintenance paginates old-month R2 objects and removes old D1 state only after the last page", async () => {
   const now = Date.parse("2026-11-24T04:00:00.000Z");
   const month = secureDropMonthKey(now);

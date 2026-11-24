@@ -235,8 +235,8 @@ async function abandonPendingTransfer(env, transfer, credits, now) {
 
 async function cleanupStaleTransfers(env, now) {
   const rows = await env.DB.prepare(
-    "SELECT id, user_id, month_key, object_key, status FROM secure_drop_transfers WHERE expires_at<=? OR (status IN ('pending','deleting') AND updated_at<=?) ORDER BY updated_at LIMIT ?"
-  ).bind(now, now - PENDING_GRACE_MS, CLEANUP_BATCH_SIZE).all();
+    "SELECT id, user_id, month_key, object_key, status FROM secure_drop_transfers WHERE (status='pending' AND updated_at<=?) OR (status='deleting' AND updated_at<=?) OR (status='ready' AND expires_at<=?) ORDER BY updated_at LIMIT ?"
+  ).bind(now - PENDING_GRACE_MS, now - PENDING_GRACE_MS, now, CLEANUP_BATCH_SIZE).all();
   for (const row of rows.results || []) {
     try {
       await env.SECURE_DROP_R2.delete(row.object_key);
