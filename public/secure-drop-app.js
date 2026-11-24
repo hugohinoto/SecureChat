@@ -270,10 +270,12 @@ async function handlePreemptions(events, localPending) {
         const oldId = match.id;
         match.id = crypto.randomUUID();
         match.preemptedReservationIds = [...(match.preemptedReservationIds || []), oldId];
-        await deletePending(oldId);
       }
       match.canChangePriority = true;
       await savePending(match);
+      if (match.preemptedReservationIds?.includes(event.transferId)) {
+        await deletePending(event.transferId);
+      }
       restored++;
     } else {
       unavailable++;
