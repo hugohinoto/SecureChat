@@ -757,14 +757,9 @@ export async function handleSecureDropApi(request, env, context) {
       declaredStoredBytes,
       priority ? PRIORITY_CREDIT_MULTIPLIER : 1
     );
-    const account = await ensureMonthlyAccount(env, session.id, currentMonth, now);
-    if (!account || Number(account.balance) < credits) {
-      return json({ error: "INSUFFICIENT_CREDITS", required: credits, balance: Number(account?.balance || 0) }, 402);
-    }
-
     const envelopeJson = JSON.stringify(envelope);
     const existing = await env.DB.prepare(
-      "SELECT id, recipient_user_id, original_size_bytes, stored_size_bytes, key_envelope_json, status, storage_backend, priority, month_key, download_count FROM secure_drop_transfers WHERE id=? AND user_id=?"
+      "SELECT id, recipient_user_id, original_size_bytes, stored_size_bytes, key_envelope_json, status, storage_backend, priority, month_key, download_count, expires_at FROM secure_drop_transfers WHERE id=? AND user_id=?"
     ).bind(uploadId, session.id).first();
     if (existing && (
       existing.recipient_user_id !== recipient.id ||
@@ -788,11 +783,17 @@ export async function handleSecureDropApi(request, env, context) {
         storedSizeBytes: declaredStoredBytes,
         creditsConsumed: credits,
         downloadsRemaining: Math.max(0, DOWNLOAD_LIMIT - Number(existing.download_count || 0)),
-        expiresAt: Math.min(now + TRANSFER_TTL_MS, secureDropNextMonthStart(now))
+        expiresAt: Number(existing.expires_at || Math.min(now + TRANSFER_TTL_MS, secureDropNextMonthStart(now)))
       }, 201);
     }
     if (existing && (existing.status !== "pending" || existing.month_key !== currentMonth)) {
       return json({ error: "UPLOAD_RESERVATION_UNAVAILABLE" }, 409);
+    }
+    if (!existing) {
+      const account = await ensureMonthlyAccount(env, session.id, currentMonth, now);
+      if (!account || Number(account.balance) < credits) {
+        return json({ error: "INSUFFICIENT_CREDITS", required: credits, balance: Number(account?.balance || 0) }, 402);
+      }
     }
 
     const expiresAt = Math.min(now + TRANSFER_TTL_MS, secureDropNextMonthStart(now));
