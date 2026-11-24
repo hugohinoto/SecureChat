@@ -119,6 +119,7 @@ export async function handleSecureDropApi(request, env, context) {
 
     const object = await env.SECURE_DROP_R2.get(transfer.object_key);
     if (!object) return json({ error: "FILE_NOT_FOUND" }, 404);
+    if (monthKey(Date.now()) !== currentMonth) return json({ error: "TRANSFER_EXPIRED_OR_NOT_FOUND" }, 404);
     const consumed = await env.DB.prepare(
       "UPDATE secure_drop_transfers SET download_count=download_count+1 WHERE id=? AND month_key=? AND expires_at>? AND download_count<3 AND token_hash=? RETURNING download_count"
     ).bind(transferId, currentMonth, now, transfer.token_hash).first();
