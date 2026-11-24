@@ -1,4 +1,9 @@
-import { decryptSecureDropFile, encryptSecureDropFile } from "./secure-drop-crypto.js";
+import {
+  assertSecureDropFileAllowed,
+  assertSecureDropFileNameAllowed,
+  decryptSecureDropFile,
+  encryptSecureDropFile
+} from "./secure-drop-crypto.js";
 
 const $ = (selector) => document.querySelector(selector);
 const ui = {
@@ -224,6 +229,7 @@ async function acknowledgePreemptions(ids) {
   });
 }
 async function sendPendingUpload(pending) {
+  assertSecureDropFileNameAllowed(pending.fileName);
   const ciphertext = pending.ciphertext instanceof ArrayBuffer
     ? new Uint8Array(pending.ciphertext)
     : new Uint8Array(pending.ciphertext.buffer, pending.ciphertext.byteOffset, pending.ciphertext.byteLength);
@@ -410,6 +416,12 @@ async function uploadSelectedFile() {
   if (!file || !peerUserId || busy || !currentUser) return;
   if (file.size < 1 || file.size > MAX_FILE_BYTES) {
     notify("ファイルは1バイト以上25 MB以下にしてください。");
+    return;
+  }
+  try {
+    await assertSecureDropFileAllowed(file);
+  } catch (failure) {
+    notify(errorText(failure), 8500);
     return;
   }
   busy = true;
