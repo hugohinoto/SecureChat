@@ -38,7 +38,7 @@ test("reporter page renders replies and admin console provides a reply composer"
   const admin = await read("../public/admin.js");
   const html = await read("../public/bug-report.html");
   assert.match(reporter, /api\("\/api\/bug-reports"\)/);
-  assert.match(reporter, /text\.textContent=reply\.message/);
+  assert.match(reporter, /message\.textContent=reply\.message/);
   assert.match(html, /id="my-reports"/);
   assert.match(admin, /\/replies/);
   assert.match(admin, /replyInput\.maxLength=4000/);
