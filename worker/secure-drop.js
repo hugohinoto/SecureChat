@@ -278,19 +278,19 @@ async function preemptPendingUploads(env, requestedBytes, now) {
   const statements = [];
   for (const row of selected) {
     statements.push(
+      env.DB.prepare("DELETE FROM secure_drop_file_chunks WHERE transfer_id=?").bind(row.id),
       env.DB.prepare(
-        "INSERT OR IGNORE INTO secure_drop_preempted_uploads (transfer_id, user_id, recipient_user_id, month_key, original_size_bytes, stored_size_bytes, created_at) SELECT id, user_id, recipient_user_id, month_key, original_size_bytes, stored_size_bytes, ? FROM secure_drop_transfers WHERE id=? AND storage_backend='d1' AND status='pending' AND priority=0"
-      ).bind(now, row.id),
+        "INSERT OR IGNORE INTO secure_drop_preempted_uploads (transfer_id, user_id, recipient_user_id, month_key, original_size_bytes, stored_size_bytes, created_at) SELECT id, user_id, recipient_user_id, month_key, original_size_bytes, stored_size_bytes, ? FROM secure_drop_transfers WHERE id=? AND storage_backend='d1' AND status='pending' AND priority=0 AND NOT EXISTS (SELECT 1 FROM secure_drop_file_chunks WHERE transfer_id=?)"
+      ).bind(now, row.id, row.id),
       env.DB.prepare(
-        "INSERT OR IGNORE INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) SELECT 'refund:preempt:' || t.id, t.user_id, t.month_key, -l.delta, 'upload_refund', t.id, ? FROM secure_drop_transfers t JOIN secure_drop_credit_ledger l ON l.id='debit:' || t.id WHERE t.id=? AND t.storage_backend='d1' AND t.status='pending' AND t.priority=0 AND l.delta<0"
+        "INSERT OR IGNORE INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) SELECT 'refund:preempt:' || t.id, t.user_id, t.month_key, -l.delta, 'upload_refund', t.id, ? FROM secure_drop_transfers t JOIN secure_drop_credit_ledger l ON l.id='debit:' || t.id WHERE t.id=? AND t.storage_backend='d1' AND t.status='pending' AND t.priority=0 AND l.delta<0 AND NOT EXISTS (SELECT 1 FROM secure_drop_file_chunks WHERE transfer_id=t.id) AND EXISTS (SELECT 1 FROM secure_drop_preempted_uploads WHERE transfer_id=t.id)"
       ).bind(now, row.id),
       env.DB.prepare(
         "UPDATE secure_drop_credit_accounts SET balance=MIN(granted_credits, balance + (SELECT delta FROM secure_drop_credit_ledger WHERE id='refund:preempt:' || ?)), updated_at=? WHERE user_id=(SELECT user_id FROM secure_drop_transfers WHERE id=?) AND month_key=(SELECT month_key FROM secure_drop_transfers WHERE id=?) AND changes()=1"
       ).bind(row.id, now, row.id, row.id),
-      env.DB.prepare("DELETE FROM secure_drop_file_chunks WHERE transfer_id=?").bind(row.id),
       env.DB.prepare(
-        "DELETE FROM secure_drop_transfers WHERE id=? AND storage_backend='d1' AND status='pending' AND priority=0 AND EXISTS (SELECT 1 FROM secure_drop_preempted_uploads WHERE transfer_id=?)"
-      ).bind(row.id, row.id)
+        "DELETE FROM secure_drop_transfers WHERE id=? AND storage_backend='d1' AND status='pending' AND priority=0 AND NOT EXISTS (SELECT 1 FROM secure_drop_file_chunks WHERE transfer_id=?) AND EXISTS (SELECT 1 FROM secure_drop_preempted_uploads WHERE transfer_id=?)"
+      ).bind(row.id, row.id, row.id)
     );
   }
   await env.DB.batch(statements);
