@@ -46,6 +46,8 @@ async function ensureMonthlyAccount(env, userId, month, now) {
 }
 
 async function refundCredits(env, userId, month, credits, transferId, now) {
+  // A previous month's balance is expired; never recreate rows after the monthly purge.
+  if (monthKey(now) !== month) return;
   await env.DB.batch([
     env.DB.prepare(
       "UPDATE secure_drop_credit_accounts SET balance=MIN(granted_credits, balance+?), updated_at=? WHERE user_id=? AND month_key=?"
@@ -189,10 +191,18 @@ export async function handleSecureDropApi(request, env, context) {
     if (!debit) return json({ error: "INSUFFICIENT_CREDITS" }, 402);
 
     try {
-      await env.SECURE_DROP_R2.put(objectKey, request.body, {
+      const storedObject = await env.SECURE_DROP_R2.put(objectKey, request.body, {
         httpMetadata: { contentType: "application/octet-stream" },
         customMetadata: { month: currentMonth, transferId }
       });
+      // Do not let an upload that crossed the month boundary recreate old-month data
+      // after the scheduled purge has already completed.
+      if (monthKey(Date.now()) !== currentMonth || Date.now() >= expiresAt) {
+        throw new Error("MONTH_CLOSED");
+      }
+      if (storedObject?.size != null && Number(storedObject.size) !== storedBytes) {
+        throw new Error("STORED_SIZE_MISMATCH");
+      }
       await env.DB.batch([
         env.DB.prepare(
           "INSERT INTO secure_drop_transfers (id, user_id, month_key, object_key, token_hash, original_size_bytes, stored_size_bytes, created_at, expires_at, download_count, download_limit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 3)"
@@ -201,9 +211,12 @@ export async function handleSecureDropApi(request, env, context) {
           "INSERT INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) VALUES (?, ?, ?, ?, 'upload_debit', ?, ?)"
         ).bind("debit:" + transferId, session.id, currentMonth, -credits, transferId, now)
       ]);
-    } catch {
+    } catch (error) {
       await env.SECURE_DROP_R2.delete(objectKey).catch(() => {});
       await refundCredits(env, session.id, currentMonth, credits, transferId, Date.now()).catch(() => {});
+      if (String(error?.message || error) === "MONTH_CLOSED") {
+        return json({ error: "MONTHLY_RESET_IN_PROGRESS", message: "月次リセット時刻をまたいだため、転送を中止しました。" }, 409);
+      }
       return json({ error: "UPLOAD_STORAGE_FAILED", message: "転送ファイルを保存できませんでした。クレジットは返却処理を行いました。" }, 503);
     }
 
@@ -236,6 +249,11 @@ export async function handleSecureDropApi(request, env, context) {
 
 export async function runSecureDropMaintenance(env, now = Date.now()) {
   const current = monthKey(now);
-  await purgeOldMonthObjects(env, now);
-  return { month: current };
+  try {
+    await purgeOldMonthObjects(env, now);
+    return { month: current, status: "ok" };
+  } catch {
+    // Do not log file keys, tokens, or user identifiers. The next cron tick retries.
+    return { month: current, status: "retry_pending" };
+  }
 }
