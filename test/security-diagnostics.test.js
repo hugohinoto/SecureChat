@@ -113,7 +113,11 @@ const knownColumns = {
   crypto_one_time_keys:["id","user_id","device_id","key_id","algorithm","key_json","is_fallback","created_at","claimed_at","claimed_by_user_id","claimed_by_device_id"],
   crypto_to_device_inbox:["id","recipient_user_id","recipient_device_id","sender_user_id","sender_device_id","event_type","content_json","transaction_id","created_at","expires_at"],
   conversation_crypto_modes:["conversation_id","protocol_version","enabled_by_user_id","enabled_at"],
-  conversation_crypto_approvals:["conversation_id","user_id","approved_at"]
+  conversation_crypto_approvals:["conversation_id","user_id","approved_at"],
+  secure_drop_credit_accounts:["user_id","month_key","granted_credits","balance","updated_at"],
+  secure_drop_credit_ledger:["id","user_id","month_key","delta","reason","reference_id","created_at"],
+  secure_drop_transfers:["id","user_id","month_key","object_key","token_hash","original_size_bytes","stored_size_bytes","created_at","expires_at","download_count","download_limit"],
+  secure_drop_maintenance:["id","current_month","cursor","completed_at"]
 };
 function environment(options) {
   return {
@@ -160,6 +164,7 @@ test("forward secrecy remains critical while the v2 flag is disabled", async () 
   const forward=result.checks.find(item=>item.id==="forward-secrecy");
   assert.equal(forward.status,"critical");
   assert.match(forward.detail,/機能フラグは無効/);
+  assert.match(forward.detail,/v2の新規利用・会話切り替えは停止/);
   assert.equal(result.checks.find(item=>item.id==="passkeys").status,"warning");
   const logs=result.checks.find(item=>item.id==="cloudflare-logs");
   assert.equal(logs.status,"warning");

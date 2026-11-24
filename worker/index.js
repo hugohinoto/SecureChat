@@ -3,6 +3,7 @@ import { handleAdminFeatures } from "./admin-features.js";
 import { encryptStored, migrateSensitiveRows } from "./data-crypto.js";
 import { identityKeyTransitionMessage, verifyIdentityKeyProof, verifyIdentityKeyTransition } from "./identity-keys.js";
 import { handleCryptoApi } from "./crypto-api.js";
+import { handleSecureDropApi, runSecureDropMaintenance } from "./secure-drop.js";
 
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PASSWORD_ITERATIONS = 100_000;
@@ -265,6 +266,11 @@ async function handleApi(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
+
+  const secureDropResponse = await handleSecureDropApi(request, env, {
+    url, path, method, readCookie, getSession, sameOrigin, checkRateLimit
+  });
+  if (secureDropResponse) return secureDropResponse;
 
   const featureResponse = await handleAdminFeatures(request, env, {
     url, readCookie, getSession, checkRateLimit, sameOrigin, readJson, writeAdminAudit
@@ -1226,7 +1232,8 @@ export default {
       env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now).run(),
       env.DB.prepare("DELETE FROM registration_invites WHERE expires_at <= ? OR (used_at IS NOT NULL AND used_at <= ?)").bind(now, now - 7 * 24 * 60 * 60 * 1000).run(),
       env.DB.prepare("DELETE FROM rate_limit_buckets WHERE expires_at <= ?").bind(now).run(),
-      migrateSensitiveRows(env, now)
+      migrateSensitiveRows(env, now),
+      runSecureDropMaintenance(env, now)
     ]));
   },
   async fetch(request, env) {

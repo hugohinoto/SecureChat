@@ -22,7 +22,11 @@ const EXPECTED_TABLES = {
   crypto_one_time_keys: ["id","user_id","device_id","key_id","algorithm","key_json","is_fallback","created_at","claimed_at","claimed_by_user_id","claimed_by_device_id"],
   crypto_to_device_inbox: ["id","recipient_user_id","recipient_device_id","sender_user_id","sender_device_id","event_type","content_json","transaction_id","created_at","expires_at"],
   conversation_crypto_modes: ["conversation_id","protocol_version","enabled_by_user_id","enabled_at"],
-  conversation_crypto_approvals: ["conversation_id","user_id","approved_at"]
+  conversation_crypto_approvals: ["conversation_id","user_id","approved_at"],
+  secure_drop_credit_accounts: ["user_id","month_key","granted_credits","balance","updated_at"],
+  secure_drop_credit_ledger: ["id","user_id","month_key","delta","reason","reference_id","created_at"],
+  secure_drop_transfers: ["id","user_id","month_key","object_key","token_hash","original_size_bytes","stored_size_bytes","created_at","expires_at","download_count","download_limit"],
+  secure_drop_maintenance: ["id","current_month","cursor","completed_at"]
 };
 
 const EXPECTED_INDEXES = [
@@ -35,7 +39,8 @@ const EXPECTED_INDEXES = [
   "admin_audit_logs_created_at_idx","admin_audit_logs_admin_user_idx",
   "announcements_expiry_idx","bug_reports_status_created_idx","bug_reports_reporter_idx",
   "users_created_at_admin_idx","users_last_login_idx","conversation_reads_user_idx",
-  "crypto_devices_user_active_idx","crypto_one_time_keys_claim_idx","crypto_to_device_inbox_poll_idx","conversation_crypto_approvals_user_idx"
+  "crypto_devices_user_active_idx","crypto_one_time_keys_claim_idx","crypto_to_device_inbox_poll_idx","conversation_crypto_approvals_user_idx",
+  "secure_drop_credit_ledger_month_idx","secure_drop_transfers_owner_month_idx","secure_drop_transfers_expiry_idx"
 ];
 
 const EXPECTED_MIGRATIONS = [
@@ -43,7 +48,8 @@ const EXPECTED_MIGRATIONS = [
   "0004_registration_invites.sql","0005_persistent_rate_limits.sql","0006_admin_console.sql",
   "0007_admin_password_rotation.sql","0008_admin_security_reports.sql",
   "0009_signed_identity_keys.sql","0010_unique_conversation_pairs.sql",
-  "0011_multi_device_identity_backup_and_reads.sql","0012_device_scoped_ratchet_transport.sql"
+  "0011_multi_device_identity_backup_and_reads.sql","0012_device_scoped_ratchet_transport.sql",
+  "0013_secure_drop_monthly.sql"
 ];
 
 // Cloudflare D1 system-owned objects. These are not application schema.
@@ -75,7 +81,10 @@ const EXPECTED_FOREIGN_KEYS = [
   ["conversation_crypto_modes","conversation_id","conversations","id"],
   ["conversation_crypto_modes","enabled_by_user_id","users","id"],
   ["conversation_crypto_approvals","conversation_id","conversations","id"],
-  ["conversation_crypto_approvals","user_id","users","id"]
+  ["conversation_crypto_approvals","user_id","users","id"],
+  ["secure_drop_credit_accounts","user_id","users","id"],
+  ["secure_drop_credit_ledger","user_id","users","id"],
+  ["secure_drop_transfers","user_id","users","id"]
 ];
 
 function add(checks,id,label,status,detail,extra={}) {
@@ -406,7 +415,7 @@ export async function summarizeSecurityDiagnostics(env) {
   add(checks,"forward-secrecy","前方秘匿性","critical",
     cryptoV2Configured
       ? "暗号v2の機能フラグは有効ですが、独立レビュー・2ユーザー複数端末E2E試験・復旧/再送/順序制御のリリースゲートを満たした証拠がありません。本番で前方秘匿性を保証済みとは判定しません。"
-      : "端末別Olm/Megolm v2の機能フラグは有効です。v2の新規利用・会話切り替えは可能ですが、独立レビュー・複数端末E2E試験・復旧検証の証跡が未完了です。安全性を検証済みとは判定しません。");
+      : "端末別Olm/Megolm v2の機能フラグは無効です。v2の新規利用・会話切り替えは停止しています。独立レビュー・複数端末E2E試験・復旧検証の証跡も未完了です。安全性を検証済みとは判定しません。");
   add(checks,"passkeys","管理者パスキー","warning",
     "管理者ログインはパスワード認証のみです。WebAuthnパスキーによる追加認証、予備認証器、回復手順は未実装です。");
   add(checks,"cloudflare-logs","Cloudflare Invocation Logs","warning",
