@@ -206,7 +206,7 @@ async function createPendingTransfer(env, details) {
   } = details;
   const results = await env.DB.batch([
     env.DB.prepare(
-      "UPDATE secure_drop_credit_accounts SET balance=balance-?, updated_at=? WHERE user_id=? AND month_key=? AND balance>=? AND (SELECT COALESCE(SUM(stored_size_bytes),0) FROM secure_drop_transfers WHERE storage_backend='d1' AND status IN ('pending','ready','deleting')) + ? <= ?"
+      "UPDATE secure_drop_credit_accounts SET balance=balance-?, updated_at=? WHERE user_id=? AND month_key=? AND balance>=? AND ((SELECT COALESCE(SUM(stored_size_bytes),0) FROM secure_drop_transfers WHERE storage_backend='d1' AND status IN ('pending','ready','deleting')) + (SELECT COALESCE(SUM(c.chunk_size_bytes),0) FROM secure_drop_file_chunks c WHERE NOT EXISTS (SELECT 1 FROM secure_drop_transfers t WHERE t.id=c.transfer_id AND t.storage_backend='d1')) + ?) <= ?"
     ).bind(credits, now, ownerId, month, credits, storedBytes, capacityLimit),
     env.DB.prepare(
       "INSERT INTO secure_drop_transfers (id, user_id, month_key, object_key, token_hash, original_size_bytes, stored_size_bytes, created_at, expires_at, download_count, download_limit, recipient_user_id, key_envelope_json, status, updated_at, storage_backend, priority) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 3, ?, ?, 'pending', ?, 'd1', ? WHERE changes()=1"
