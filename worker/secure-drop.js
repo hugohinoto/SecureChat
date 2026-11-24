@@ -345,6 +345,23 @@ async function processDeletionJobs(env, now) {
   for (const row of rows.results || []) {
     const absent = await verifyR2ObjectAbsent(env, row.object_key);
     if (absent) {
+      if (row.reason === "upload_rollback") {
+        const transfer = await env.DB.prepare(
+          "SELECT user_id, month_key FROM secure_drop_transfers WHERE id=? AND status='deleting'"
+        ).bind(row.transfer_id).first();
+        if (transfer && transfer.month_key === secureDropMonthKey(now)) {
+          const debit = await env.DB.prepare(
+            "SELECT -delta AS credits FROM secure_drop_credit_ledger WHERE id=? AND reason='upload_debit' AND delta<0"
+          ).bind("debit:" + row.transfer_id).first();
+          if (Number(debit?.credits || 0) > 0) {
+            try {
+              await refundCredits(env, transfer.user_id, transfer.month_key, Number(debit.credits), row.transfer_id, now);
+            } catch {
+              continue;
+            }
+          }
+        }
+      }
       await env.DB.batch([
         env.DB.prepare("DELETE FROM secure_drop_transfers WHERE id=? AND status='deleting'").bind(row.transfer_id),
         env.DB.prepare("DELETE FROM secure_drop_deletion_jobs WHERE transfer_id=?").bind(row.transfer_id)
@@ -362,22 +379,21 @@ async function processDeletionJobs(env, now) {
 async function abandonPendingTransfer(env, transfer, credits, now) {
   if (transfer.storageBackend === "d1") {
     try {
-      await env.DB.batch([
-        env.DB.prepare("DELETE FROM secure_drop_file_chunks WHERE transfer_id=?").bind(transfer.id),
-        env.DB.prepare("DELETE FROM secure_drop_transfers WHERE id=? AND status='pending' AND storage_backend='d1'").bind(transfer.id)
-      ]);
+      // Refund first. The unique ledger entry makes retries idempotent if cleanup later fails.
+      await refundCredits(env, transfer.ownerId, transfer.month, credits, transfer.id, now);
+      await env.DB.prepare("DELETE FROM secure_drop_file_chunks WHERE transfer_id=?").bind(transfer.id).run();
       const remaining = await env.DB.prepare(
         "SELECT COUNT(*) AS count FROM secure_drop_file_chunks WHERE transfer_id=?"
       ).bind(transfer.id).first();
       if (Number(remaining?.count || 0) !== 0) throw new Error("D1_CHUNK_DELETION_UNVERIFIED");
-      await refundCredits(env, transfer.ownerId, transfer.month, credits, transfer.id, now);
-      return;
-    } catch {
       await env.DB.prepare(
-        "UPDATE secure_drop_transfers SET status='deleting', updated_at=? WHERE id=? AND storage_backend='d1'"
-      ).bind(now, transfer.id).run().catch(() => {});
+        "DELETE FROM secure_drop_transfers WHERE id=? AND status='pending' AND storage_backend='d1'"
+      ).bind(transfer.id).run();
+    } catch {
+      // Keep the reservation for the stale-transfer janitor; never release its quota early.
       return;
     }
+    return;
   }
   const objectDeleted = await verifyR2ObjectAbsent(env, transfer.objectKey);
   let refundCompleted = false;
