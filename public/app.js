@@ -1377,6 +1377,9 @@ async function secureDropRequest(path, options={}) {
     throw appError("SECURE_DROP_NETWORK_ERROR","SecureDrop サーバーに接続できません。");
   }
   const data=await response.json().catch(()=>({}));
+  if(response.ok && data.deleted===false) {
+    throw appError(data.error||"DELETE_PENDING",data.message||"削除完了を確認できません。サーバー側で再試行します。");
+  }
   if(!response.ok) {
     const messages={
       UNAUTHENTICATED:"ログインし直してください。",
@@ -1392,7 +1395,9 @@ async function secureDropRequest(path, options={}) {
       TRANSFER_EXPIRED_OR_NOT_FOUND:"ファイルは期限切れか、削除されています。",
       DOWNLOAD_LIMIT_REACHED:"このファイルはダウンロード上限に達しました。",
       STORED_FILE_INTEGRITY_MISMATCH:"保存ファイルの整合性を確認できませんでした。",
-      DELETE_PENDING:"削除要求を受け付けました。削除完了を確認するまでサーバー側で再試行します。"
+      DELETE_PENDING:"削除要求を受け付けました。削除完了を確認するまでサーバー側で再試行します。",
+      UPLOAD_ID_REUSED:"以前使用した予約IDのため、新しいIDで再送信します。",
+      UPLOAD_ID_CONFLICT:"この保留データは既存の予約と一致しません。再読み込みして確認してください。"
     };
     throw appError(data.error||"SECURE_DROP_REQUEST_FAILED",messages[data.error]||data.message||"SecureDrop の処理に失敗しました。");
   }
@@ -1521,7 +1526,7 @@ async function refreshSecureDrop() {
     secureDropNormalPaused=!!account.uploadsPaused;
     el.secureDropCredits.textContent="今月の残り "+account.balance+" / "+account.granted+" クレジット · 専用容量 "+formatFileSize(account.storageUsedBytes)+" / 3 GB";
     el.secureDropSelect.disabled=secureDropBusy || !identityPrivateKey || (secureDropNormalPaused && !el.secureDropPriority?.checked);
-    el.secureDropNote.textContent="最大25 MB。端末内でAES-256-GCM暗号化・gzip圧縮後、512 KB単位でD1へ保存します。通常送信は専用容量の90%で停止し、優先送信は通常の5倍のクレジットで最大3 GBまで利用できます。送信前の暗号化データは端末内に一時保管し、失敗時は再送信できます。";
+    el.secureDropNote.textContent="元ファイル最大25 MB。端末内でAES-256-GCM暗号化・gzip圧縮後、512 KB単位でD1へ保存します。通常送信は専用容量の90%で停止し、優先送信は通常の5倍のクレジットで最大3 GBまで利用できます。暗号化データは送信前にこのブラウザーへ一時保管しますが、サイトデータの消去・端末故障時は復元できません。";
     el.secureDropList.replaceChildren();
     const files=Array.isArray(listing.files)?listing.files:[];
     const forPeer=files.filter(file => file.peerUserId===activeConversation.peerUserId);
