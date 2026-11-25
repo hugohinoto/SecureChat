@@ -1030,3 +1030,47 @@ button:disabled { cursor: not-allowed !important; }
  .auth-security-note{margin-top:7px}
  .auth-security-note p{font-size:8px;line-height:1.35}
 }
+
+
+/* Workspace-level navigation shared by chat and SecureDrop. */
+.workspace-navigation{display:grid;gap:5px;margin:10px 2px 0}
+.workspace-nav-link{display:flex;align-items:center;gap:10px;min-height:39px;padding:8px 11px;border:1px solid transparent;border-radius:9px;color:#aebdd0;text-decoration:none;font-size:11px;font-weight:700}
+.workspace-nav-link>span:first-child{width:18px;text-align:center;color:#8ed7e8;font-size:15px}
+.workspace-nav-link:hover,.workspace-nav-link.active{border-color:rgba(142,215,232,.18);color:#effcff;background:rgba(84,159,184,.12)}
+.workspace-nav-link.active{box-shadow:inset 2px 0 0 var(--sc-accent)}
+.service-workspace-body{overflow:hidden!important}
+.service-workspace-layout{display:grid;grid-template-columns:248px minmax(0,1fr);gap:14px;width:100%;height:100dvh;min-height:0;padding:14px}
+.service-workspace-sidebar{display:flex;flex-direction:column;min-width:0;min-height:0;padding:18px 13px;border:1px solid var(--sc-border);border-radius:16px;background:rgba(16,26,43,.96);overflow:auto}
+.service-workspace-brand{display:flex;align-items:center;gap:10px;padding:2px 5px 20px;color:inherit;text-decoration:none}
+.service-workspace-brand-mark{display:grid;place-items:center;width:38px;height:38px;border:1px solid rgba(142,215,232,.3);border-radius:11px;color:#d8f4fb;background:linear-gradient(145deg,#3c7894,#354b79);font-weight:850}
+.service-workspace-brand strong,.service-workspace-brand small,.service-workspace-card strong,.service-workspace-card small{display:block}
+.service-workspace-brand strong{font-size:15px;letter-spacing:-.3px}
+.service-workspace-brand small{margin-top:2px;color:#8498b5;font-size:8px;letter-spacing:1.2px}
+.service-workspace-label{padding:0 7px 8px;color:#8294ae;font-size:9px;letter-spacing:1.4px}
+.service-workspace-card{display:flex;align-items:center;gap:9px;padding:10px;border:1px solid var(--sc-border);border-radius:11px;background:rgba(255,255,255,.025)}
+.service-workspace-card-icon{display:grid;place-items:center;width:31px;height:31px;border-radius:9px;color:#d8f4fb;background:linear-gradient(145deg,#3c7894,#354b79);font-weight:800}
+.service-workspace-card strong{font-size:11px}
+.service-workspace-card small{margin-top:2px;color:#8498b5;font-size:9px}
+.service-workspace-nav{display:grid;gap:5px;margin-top:12px}
+.service-workspace-nav-link{display:flex;align-items:center;gap:10px;min-height:40px;padding:8px 11px;border:1px solid transparent;border-radius:9px;color:#aebdd0;text-decoration:none;font-size:11px;font-weight:700}
+.service-workspace-nav-link>span{width:18px;text-align:center;color:#8ed7e8;font-size:15px}
+.service-workspace-nav-link:hover,.service-workspace-nav-link.active{border-color:rgba(142,215,232,.18);color:#effcff;background:rgba(84,159,184,.12)}
+.service-workspace-nav-link.active{box-shadow:inset 2px 0 0 var(--sc-accent)}
+.service-workspace-sidebar-bottom{display:grid;gap:8px;margin-top:auto;padding-top:16px;border-top:1px solid var(--sc-border)}
+.service-workspace-user{display:flex;align-items:center;gap:8px;min-width:0;color:#aebdd0;font-size:10px;overflow-wrap:anywhere}
+.service-workspace-user>span:first-child{color:#85d9bc}
+.service-workspace-sidebar-bottom button{min-height:34px;border:1px solid var(--sc-border);border-radius:8px;color:#d8e6f7;background:rgba(255,255,255,.04);font-size:10px}
+.service-workspace-main{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.service-workspace-main .service-topbar{flex:0 0 42px;width:100%;min-height:40px;margin:0 0 8px;padding:7px 12px}
+.service-workspace-main .service-shell{width:100%;margin:0;overflow:auto;overscroll-behavior:contain;padding:0 2px 12px}
+@media(max-width:760px){
+ .service-workspace-layout{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr);gap:7px;padding:7px}
+ .service-workspace-sidebar{flex-direction:row;align-items:center;gap:8px;min-height:53px;padding:6px 8px;overflow:visible}
+ .service-workspace-brand{flex:0 0 auto;padding:0}
+ .service-workspace-brand-mark{width:32px;height:32px}
+ .service-workspace-brand small,.service-workspace-label,.service-workspace-card,.service-workspace-sidebar-bottom{display:none}
+ .service-workspace-nav{display:flex;flex:1;justify-content:flex-end;gap:5px;margin:0}
+ .service-workspace-nav-link{min-height:35px;padding:6px 9px;font-size:10px}
+ .service-workspace-main .service-topbar{margin-bottom:6px}
+ .service-workspace-main .service-shell{gap:7px}
+}

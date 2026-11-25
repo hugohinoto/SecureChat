@@ -430,11 +430,28 @@ test("D1 upload size declarations are checked against the received encrypted byt
   assert.match(app, /preemptions\/ack/);
 });
 
-test("SecureDrop downloads use a conditional atomic three-download update", async () => {
+test("SecureDrop keeps three free downloads and meters later downloads atomically", async () => {
   const source = await readFile(new URL("../worker/secure-drop.js", import.meta.url), "utf8");
-  assert.match(source, /download_count=download_count\+1[\s\S]*?status='ready'[\s\S]*?download_count<3/);
+  assert.match(source, /download_count=CASE WHEN download_count<3 THEN download_count\+1 ELSE download_count END/);
+  assert.match(source, /paid_download_count=CASE WHEN download_count>=3 THEN paid_download_count\+1 ELSE paid_download_count END/);
+  assert.match(source, /balance=balance-\?/);
+  assert.match(source, /download_count<3 OR changes\(\)=1/);
+  assert.match(source, /status='ready' AND expires_at>\?/);
+  assert.match(source, /'download_debit'/);
   assert.match(source, /recipient_user_id=\?/);
   assert.doesNotMatch(source, /downloadToken/);
+});
+
+test("SecureDrop paid-download migration preserves legacy counts and ledger entries", async () => {
+  const migration = await readFile(
+    new URL("../database/d1-migrations/0019_secure_drop_paid_downloads.sql", import.meta.url),
+    "utf8"
+  );
+  assert.match(migration, /ADD COLUMN paid_download_count INTEGER NOT NULL DEFAULT 0/);
+  assert.match(migration, /'download_debit'/);
+  assert.match(migration, /INSERT INTO secure_drop_credit_ledger[\s\S]*?FROM secure_drop_credit_ledger_v1/);
+  assert.match(migration, /DROP TABLE secure_drop_credit_ledger_v1/);
+  assert.ok(migration.indexOf("DROP TABLE secure_drop_credit_ledger_v1") < migration.indexOf("CREATE INDEX IF NOT EXISTS secure_drop_credit_ledger_month_idx"));
 });
 
 test("SecureDrop D1 migration keeps chunk data keyed by transfer and ordered index", async () => {

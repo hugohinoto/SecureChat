@@ -333,8 +333,10 @@ function renderFiles(files) {
   for (const file of files) {
     const isReceived = file.direction === "received";
     const title = isReceived ? "受信ファイル · @" + file.senderUserId : "送信ファイル · @" + file.peerUserId;
-    const detail = formatSize(file.storedSizeBytes) + " · 残り " + file.downloadsRemaining +
-      " 回 · " + formatDate(file.createdAt) + " · 期限 " + formatDate(file.expiresAt);
+    const paidDownload = isReceived && Number(file.downloadCreditsRequired || 0) > 0;
+    const detail = formatSize(file.storedSizeBytes) + " · 残り無料 " + file.downloadsRemaining +
+      " 回" + (paidDownload ? " · 次回以降 " + file.downloadCreditsRequired + " クレジット/回" : "") +
+      " · " + formatDate(file.createdAt) + " · 期限 " + formatDate(file.expiresAt);
     const { row, actions } = makeFileRow(title, detail);
     if (isReceived) {
       const download = document.createElement("button");
@@ -478,6 +480,11 @@ async function uploadSelectedFile() {
 }
 async function downloadFile(file, button) {
   if (!identity?.privateKey || !identity.publicKey) return;
+  const paidCredits = Number(file.downloadCreditsRequired || 0);
+  if (paidCredits > 0 && !confirm(
+    "無料ダウンロード3回を使い切っています。\n今回の取得で " + paidCredits +
+    " クレジットを消費します。続行しますか？"
+  )) return;
   button.disabled = true;
   try {
     const response = await fetch(file.downloadPath, { method:"GET", credentials:"same-origin", cache:"no-store" });

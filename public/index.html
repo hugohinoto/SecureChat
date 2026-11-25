@@ -38,13 +38,14 @@
         </div>
         <span class="workspace-dot" aria-hidden="true"></span>
       </div>
-
-      <div class="sidebar-section-label service-list-label">SERVICES</div>
-      <a class="service-launch-card" href="/secure-drop.html" aria-label="SecureDrop 独立ファイル転送サービスを開く">
-        <span class="service-launch-icon" aria-hidden="true">D</span>
-        <span class="service-launch-copy"><strong>SecureDrop</strong><small>独立ファイル転送サービス</small></span>
-        <span class="service-launch-arrow" aria-hidden="true">↗</span>
-      </a>
+      <nav class="workspace-navigation" aria-label="ワークスペース">
+        <a class="workspace-nav-link active" href="/" aria-current="page">
+          <span aria-hidden="true">▣</span><span>チャット</span>
+        </a>
+        <a class="workspace-nav-link" href="/secure-drop.html">
+          <span aria-hidden="true">⇧</span><span>SecureDrop</span>
+        </a>
+      </nav>
 
       <div class="sidebar-heading"><span>ユーザーを検索</span></div>
       <div class="user-search">
@@ -103,17 +104,17 @@
             <span class="connection-dot" aria-hidden="true"></span>
             <span id="connection-label">接続中</span>
           </div>
-          <div class="prototype-pill">暗号化 試作版</div>
+          <div class="prototype-pill">会話別 E2EE</div>
         </div>
       </header>
 
       <section class="security-banner" aria-label="重要なお知らせ">
         <div class="security-symbol" aria-hidden="true">!</div>
         <div class="security-copy">
-          <strong id="security-title">暗号化方式 v1 — 試作版</strong>
-          <span id="security-description">現在の方式は会話単位の鍵を使用し、メッセージ単位の鍵更新（前方秘匿性）には未対応です。機密情報は送信しないでください。</span>
+          <strong id="security-title">暗号化方式は会話ごとに異なります</strong>
+          <span id="security-description">会話を選択すると、その会話で実際に使用している暗号化方式と前方秘匿性の状態を表示します。</span>
         </div>
-        <span class="banner-tag" id="security-tag">FS 未対応</span>
+        <span class="banner-tag" id="security-tag">会話未選択</span>
       </section>
       <div class="crypto-v2-actions" aria-live="polite">
         <p id="crypto-v2-status">前方秘匿性v2は安全確認中です。</p>
@@ -173,7 +174,7 @@
             </div>
           </div>
         </div>
-        <div class="footer-caption">SecureChat <span>·</span> 試作暗号方式 v1 <span>·</span> 前方秘匿性は未対応</div>
+        <div class="footer-caption">SecureChat <span>·</span> 暗号化方式は会話ごとに異なります <span>·</span> 上部の状態表示を確認してください</div>
       </footer>
     </section>
   </main>
@@ -217,7 +218,7 @@
 
       <div class="auth-security-note">
         <span aria-hidden="true">ⓘ</span>
-        <p>チャット本文はブラウザー内で暗号化する試作方式です。現行方式にはメッセージごとの鍵更新（前方秘匿性）がありません。機密情報や重要な認証情報の送信には使用しないでください。<br><br>SecureChat運営がメールやDMでパスワードやワンタイムコードを尋ねることはありません。不審な連絡のリンクは開かず、公式サイトを直接開いて確認してください。</p>
+        <p>暗号化方式は会話ごとに異なります。旧v1の会話には前方秘匿性がありません。会話画面上部の表示を確認してください。暗号実装は未監査のため、機密情報や重要な認証情報の送信には使用しないでください。<br><br>SecureChat運営がメールやDMでパスワードやワンタイムコードを尋ねることはありません。不審な連絡のリンクは開かず、公式サイトを直接開いて確認してください。</p>
       </div>
     </div>
   </section>

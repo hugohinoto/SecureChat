@@ -209,7 +209,7 @@ async function createPendingTransfer(env, details) {
       "UPDATE secure_drop_credit_accounts SET balance=balance-?, updated_at=? WHERE user_id=? AND month_key=? AND balance>=? AND ((SELECT COALESCE(SUM(stored_size_bytes),0) FROM secure_drop_transfers WHERE storage_backend='d1' AND status IN ('pending','ready','deleting')) + (SELECT COALESCE(SUM(c.chunk_size_bytes),0) FROM secure_drop_file_chunks c WHERE NOT EXISTS (SELECT 1 FROM secure_drop_transfers t WHERE t.id=c.transfer_id AND t.storage_backend='d1')) + ?) <= ?"
     ).bind(credits, now, ownerId, month, credits, storedBytes, capacityLimit),
     env.DB.prepare(
-      "INSERT INTO secure_drop_transfers (id, user_id, month_key, object_key, token_hash, original_size_bytes, stored_size_bytes, created_at, expires_at, download_count, download_limit, recipient_user_id, key_envelope_json, status, updated_at, storage_backend, priority) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 3, ?, ?, 'pending', ?, 'd1', ? WHERE changes()=1"
+      "INSERT INTO secure_drop_transfers (id, user_id, month_key, object_key, token_hash, original_size_bytes, stored_size_bytes, created_at, expires_at, download_count, paid_download_count, download_limit, recipient_user_id, key_envelope_json, status, updated_at, storage_backend, priority) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 3, ?, ?, 'pending', ?, 'd1', ? WHERE changes()=1"
     ).bind(transferId, ownerId, month, objectKey, tokenHash, originalBytes, storedBytes, now, expiresAt, recipientId, envelopeJson, now, priority),
     env.DB.prepare(
       "INSERT INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) SELECT ?, ?, ?, ?, 'upload_debit', ?, ? WHERE EXISTS (SELECT 1 FROM secure_drop_transfers WHERE id=? AND status='pending')"
@@ -615,7 +615,7 @@ export async function handleSecureDropApi(request, env, context) {
 
   if (path === "/api/secure-drop/files" && method === "GET") {
     const rows = await env.DB.prepare(
-      "SELECT t.id, t.user_id, t.recipient_user_id, owner.user_id AS owner_user_name, recipient.user_id AS recipient_user_name, t.original_size_bytes, t.stored_size_bytes, t.created_at, t.expires_at, t.download_count, t.download_limit, t.key_envelope_json, t.status, t.priority FROM secure_drop_transfers t JOIN users owner ON owner.id=t.user_id JOIN users recipient ON recipient.id=t.recipient_user_id LEFT JOIN verified_contact_pairs contacts ON contacts.user_a_id=CASE WHEN t.user_id<t.recipient_user_id THEN t.user_id ELSE t.recipient_user_id END AND contacts.user_b_id=CASE WHEN t.user_id<t.recipient_user_id THEN t.recipient_user_id ELSE t.user_id END WHERE (t.user_id=? OR (t.recipient_user_id=? AND contacts.user_a_id IS NOT NULL)) AND t.month_key=? AND t.expires_at>? AND t.status='ready' ORDER BY t.created_at DESC LIMIT 100"
+      "SELECT t.id, t.user_id, t.recipient_user_id, owner.user_id AS owner_user_name, recipient.user_id AS recipient_user_name, t.original_size_bytes, t.stored_size_bytes, t.created_at, t.expires_at, t.download_count, t.paid_download_count, t.download_limit, t.key_envelope_json, t.status, t.priority FROM secure_drop_transfers t JOIN users owner ON owner.id=t.user_id JOIN users recipient ON recipient.id=t.recipient_user_id LEFT JOIN verified_contact_pairs contacts ON contacts.user_a_id=CASE WHEN t.user_id<t.recipient_user_id THEN t.user_id ELSE t.recipient_user_id END AND contacts.user_b_id=CASE WHEN t.user_id<t.recipient_user_id THEN t.recipient_user_id ELSE t.user_id END WHERE (t.user_id=? OR (t.recipient_user_id=? AND contacts.user_a_id IS NOT NULL)) AND t.month_key=? AND t.expires_at>? AND t.status='ready' ORDER BY t.created_at DESC LIMIT 100"
     ).bind(session.id, session.id, currentMonth, now).all();
     const preempted = await env.DB.prepare(
       "SELECT p.transfer_id, recipient.user_id AS peer_user_id, p.original_size_bytes, p.stored_size_bytes, p.created_at FROM secure_drop_preempted_uploads p JOIN users recipient ON recipient.id=p.recipient_user_id WHERE p.user_id=? AND p.month_key=? AND p.acknowledged_at IS NULL ORDER BY p.created_at ASC LIMIT 20"
@@ -633,9 +633,12 @@ export async function handleSecureDropApi(request, env, context) {
           storedSizeBytes: Number(row.stored_size_bytes),
           createdAt: Number(row.created_at),
           expiresAt: Number(row.expires_at),
-          downloadCount: Number(row.download_count),
+          downloadCount: Number(row.download_count) + Number(row.paid_download_count || 0),
           downloadLimit: DOWNLOAD_LIMIT,
           downloadsRemaining: Math.max(0, DOWNLOAD_LIMIT - Number(row.download_count)),
+          downloadCreditsRequired: received && Number(row.download_count) >= DOWNLOAD_LIMIT
+            ? secureDropCreditsForBytes(Number(row.stored_size_bytes))
+            : 0,
           priority: Number(row.priority || 0) === 1,
           ...(received ? {
             downloadPath: "/api/secure-drop/download/" + row.id,
@@ -673,9 +676,10 @@ export async function handleSecureDropApi(request, env, context) {
       "SELECT 1 AS ok FROM verified_contact_pairs WHERE user_a_id=? AND user_b_id=?"
     ).bind(contactA, contactB).first();
     if (!activeContact) return json({ error: "TRANSFER_EXPIRED_OR_NOT_FOUND" }, 404);
-    if (Number(transfer.download_count) >= DOWNLOAD_LIMIT) {
-      return json({ error: "DOWNLOAD_LIMIT_REACHED" }, 410);
-    }
+    const downloadCredits = secureDropCreditsForBytes(Number(transfer.stored_size_bytes));
+    // Ensure the recipient has a current-month account before the atomic allowance/debit step.
+    const recipientAccount = await ensureMonthlyAccount(env, session.id, currentMonth, now);
+    if (!recipientAccount) return json({ error: "CREDIT_ACCOUNT_UNAVAILABLE" }, 503);
     let payloadBody;
     let payloadSize = Number(transfer.stored_size_bytes);
     if (transfer.storage_backend === "d1") {
@@ -726,10 +730,33 @@ export async function handleSecureDropApi(request, env, context) {
       }
       payloadBody = object.body;
     }
-    const consumed = await env.DB.prepare(
-      "UPDATE secure_drop_transfers SET download_count=download_count+1, updated_at=? WHERE id=? AND month_key=? AND expires_at>? AND status='ready' AND download_count<3 AND recipient_user_id=? RETURNING download_count"
-    ).bind(now, transferId, currentMonth, now, session.id).first();
-    if (!consumed) return json({ error: "DOWNLOAD_LIMIT_REACHED" }, 410);
+    // First three downloads are free. Later downloads debit the recipient atomically
+    // with incrementing the counter; a failed debit cannot consume an allowance.
+    const consumption = await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE secure_drop_credit_accounts SET balance=balance-?, updated_at=? WHERE user_id=? AND month_key=? AND balance>=? AND EXISTS (SELECT 1 FROM secure_drop_transfers WHERE id=? AND recipient_user_id=? AND month_key=? AND status='ready' AND expires_at>? AND download_count>=3)"
+      ).bind(downloadCredits, now, session.id, currentMonth, downloadCredits, transferId, session.id, currentMonth, now),
+      env.DB.prepare(
+        "UPDATE secure_drop_transfers SET download_count=CASE WHEN download_count<3 THEN download_count+1 ELSE download_count END, paid_download_count=CASE WHEN download_count>=3 THEN paid_download_count+1 ELSE paid_download_count END, updated_at=? WHERE id=? AND month_key=? AND expires_at>? AND status='ready' AND recipient_user_id=? AND (download_count<3 OR changes()=1) RETURNING download_count, paid_download_count"
+      ).bind(now, transferId, currentMonth, now, session.id),
+      env.DB.prepare(
+        "INSERT INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) SELECT 'download:' || id || ':' || paid_download_count, recipient_user_id, month_key, ?, 'download_debit', id || ':' || paid_download_count, ? FROM secure_drop_transfers WHERE id=? AND recipient_user_id=? AND month_key=? AND paid_download_count>0 AND changes()=1"
+      ).bind(-downloadCredits, now, transferId, session.id, currentMonth)
+    ]);
+    const consumed = consumption?.[1]?.results?.[0] || null;
+    if (!consumed) {
+      const current = await env.DB.prepare(
+        "SELECT download_count FROM secure_drop_transfers WHERE id=? AND recipient_user_id=? AND month_key=? AND status='ready'"
+      ).bind(transferId, session.id, currentMonth).first();
+      const account = await env.DB.prepare(
+        "SELECT balance FROM secure_drop_credit_accounts WHERE user_id=? AND month_key=?"
+      ).bind(session.id, currentMonth).first();
+      if (Number(current?.download_count || 0) >= DOWNLOAD_LIMIT &&
+          Number(account?.balance || 0) < downloadCredits) {
+        return json({ error: "INSUFFICIENT_CREDITS", required: downloadCredits, balance: Number(account?.balance || 0) }, 402);
+      }
+      return json({ error: "TRANSFER_EXPIRED_OR_NOT_FOUND" }, 404);
+    }
     return new Response(payloadBody, {
       status: 200,
       headers: {
