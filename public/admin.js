@@ -88,7 +88,7 @@ async function loadBugReports(){
   select.value=item.status;select.addEventListener("change",async()=>{try{await api("/api/admin/bug-reports/"+item.id,{method:"PUT",body:{status:select.value}});message("報告ステータスを更新しました。","ok");await loadBugReports();}catch(e){message(e.message,"error");}});
   const replyForm=document.createElement("form");replyForm.className="bug-report-reply-form";
   const replyInput=document.createElement("textarea");replyInput.rows=3;replyInput.maxLength=4000;replyInput.required=true;replyInput.placeholder="報告者への返信を入力（最大4000文字）";
-  const send=makeButton("返信を送信",async()=>{}, "primary");send.type="submit";
+  const send=document.createElement("button");send.type="submit";send.className="primary";send.textContent="返信を送信";
   replyForm.append(replyInput,send);
   replyForm.addEventListener("submit",async event=>{
    event.preventDefault();const messageText=replyInput.value.trim();if(!messageText)return;
