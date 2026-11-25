@@ -16,7 +16,8 @@
 <main class="layout">
   <section class="intro"><div><p class="eyebrow">HELP US IMPROVE</p><h1>バグ・不具合の報告</h1><p>報告内容は暗号化して保存し、管理者と報告者本人だけが確認できます。</p></div></section>
   <div id="report-notice" class="notice" role="status">ログイン状態を確認しています…</div>
-  <section id="report-panel" class="panel" hidden>
+  <nav class="report-view-tabs" aria-label="報告メニュー"><button type="button" class="active" data-report-target="report-panel" aria-selected="true">新しい報告</button><button type="button" data-report-target="my-reports-panel" aria-selected="false">送信済みの報告</button></nav>
+  <section id="report-panel" class="panel" data-report-view hidden>
     <form id="report-form" class="announcement-form">
       <label>報告の種類
         <select id="report-category">
@@ -38,7 +39,7 @@
       <button class="primary" id="report-submit" type="submit">暗号化して送信</button>
     </form>
   </section>
-  <section id="my-reports-panel" class="panel" hidden>
+  <section id="my-reports-panel" class="panel" data-report-view hidden>
     <div class="panel-heading"><div><p class="eyebrow">MY REPORTS</p><h2>送信した報告・管理者からの返信</h2></div><button id="refresh-my-reports" class="secondary" type="button">更新</button></div>
     <div id="my-reports" class="item-list"></div>
   </section>
