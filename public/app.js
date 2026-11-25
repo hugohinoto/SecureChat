@@ -1311,7 +1311,7 @@ async function selectConversation(c) {
   el.chatTitle.textContent=c.peer_user_id;
   el.chatSubtitle.textContent="@"+c.peer_user_id+" · 1対1の個別チャット";
   el.securityTitle.textContent="暗号化チャット（試作）";
-  el.securityDescription.textContent="既存メッセージはv1で復号し、新しい会話は双方の同意後に端末別Olm/Megolm v2へ移行できます。前方秘匿性v2は両者の端末登録と指紋確認が必要です。";
+  el.securityDescription.textContent="既存メッセージはv1で復号し、双方の端末登録と相手の署名鍵指紋の確認後、端末別Olm/Megolm v2へ自動で移行します。";
   el.securityTag.textContent="E2EE";
   el.composerHint.textContent="暗号化 · メッセージは1時間後に削除";
   welcome("暗号化チャット","このブラウザーで暗号化してから送信します。");
