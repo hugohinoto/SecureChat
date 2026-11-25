@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS crypto_used_megolm_sessions (
   session_id TEXT NOT NULL,
   message_id TEXT NOT NULL UNIQUE,
   created_at INTEGER NOT NULL,
-  PRIMARY KEY (conversation_id, sender_user_id, sender_device_id, session_id)
+  PRIMARY KEY (sender_user_id, sender_device_id, session_id)
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS crypto_used_megolm_sessions_created_idx
