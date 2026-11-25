@@ -438,7 +438,12 @@ async function handleApi(request, env) {
         database: "connected",
         authentication: true,
         clientSideEncryption: true,
-        endToEndEncryption: false,
+        endToEndEncryption: env.SECURECHAT_CRYPTO_V2_ENABLED === "true",
+        forwardSecrecy: env.SECURECHAT_CRYPTO_V2_ENABLED === "true",
+        forwardSecrecyPolicy: env.SECURECHAT_CRYPTO_V2_ENABLED === "true"
+          ? "one-megolm-message-session-over-olm-double-ratchet"
+          : "disabled",
+        legacyProtocolReadOnly: env.SECURECHAT_CRYPTO_V2_ENABLED === "true",
         messagePersistence: true,
         messageRetentionSeconds: 3600,
         contactVerification: "mutual-one-time-code",
@@ -449,7 +454,9 @@ async function handleApi(request, env) {
           pepperIsString: typeof env.CONTACT_OTP_PEPPER === "string",
           pepperMeetsMinimumLength: typeof env.CONTACT_OTP_PEPPER === "string" && env.CONTACT_OTP_PEPPER.length >= 32
         },
-        mode: "Client-encrypted private-chat prototype; public-key identity verification and forward secrecy are not implemented"
+        mode: env.SECURECHAT_CRYPTO_V2_ENABLED === "true"
+          ? "E2EE enabled; new messages require forward-secrecy v2; legacy v1 is read-only"
+          : "Legacy client-encrypted private-chat mode; forward secrecy is disabled"
       });
     } catch {
       return json({ status: "unavailable", database: "unavailable" }, 503);
@@ -1182,6 +1189,12 @@ async function handleApi(request, env) {
         return json({ messages });
       }
       if (sub === "messages" && method === "POST") {
+        if (env.SECURECHAT_CRYPTO_V2_ENABLED === "true") {
+          return json({
+            error: "CRYPTO_FORWARD_SECRECY_REQUIRED",
+            message: "新しいメッセージには前方秘匿性v2が必須です。双方が端末登録と指紋確認を行い、v2へ移行してください。既存v1メッセージの閲覧は可能です。"
+          }, 426);
+        }
         const protocolMode = await env.DB.prepare(
           "SELECT protocol_version FROM conversation_crypto_modes WHERE conversation_id=?"
         ).bind(id).first();
