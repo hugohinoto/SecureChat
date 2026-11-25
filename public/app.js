@@ -5,7 +5,7 @@ const el = {
   connection: $("#connection-pill"), connectionLabel: $("#connection-label"),
   list: $("#message-list"), input: $("#message-input"), send: $("#send-button"),
   count: $("#character-count"), profile: $("#profile-name"), avatar: $("#profile-avatar"),
-  logout: $("#logout-button"), deleteAccount: $("#delete-account-button"), toast: $("#toast"), gate: $("#auth-gate"),
+  logout: $("#logout-button"), authLoading: $("#auth-loading"), deleteAccount: $("#delete-account-button"), toast: $("#toast"), gate: $("#auth-gate"),
   form: $("#auth-form"), title: $("#auth-title"), description: $("#auth-description"),
   error: $("#auth-error"), submit: $("#auth-submit"), user: $("#auth-user-id"),
   password: $("#auth-password"), passwordHint: $("#password-hint"),
@@ -1405,8 +1405,16 @@ async function bootstrap() {
   setAuthMode("login");state("connecting","認証確認中");
   try {
     const session=await checkSession();
-    if(!session.authenticated||!session.user){showAuth();return;}
+    if(!session.authenticated||!session.user){
+      el.authLoading.hidden=true;
+      showAuth();
+      return;
+    }
     await signIn(session.user);
-  } catch(e){showAuth(formatError(e,"初期化できませんでした: "));}
+    el.authLoading.hidden=true;
+  } catch(e){
+    el.authLoading.hidden=true;
+    showAuth(formatError(e,"初期化できませんでした: "));
+  }
 }
 bootstrap();
