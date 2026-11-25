@@ -529,7 +529,8 @@ async function prepareRoom(context, conversationId, peerUserId) {
     );
     for (const request of requests) await processOutgoingRequest(context, request);
   } finally {
-    sharingStrategy.free();
+    // Assigning the strategy transfers its WASM handle into EncryptionSettings.
+    // Freeing the original wrapper here double-frees the Rust-owned pointer.
     settings.free();
     room.free();
   }
