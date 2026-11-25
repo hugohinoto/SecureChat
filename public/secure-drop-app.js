@@ -580,4 +580,21 @@ async function start() {
     if (detail) detail.textContent = errorText(failure);
   }
 }
+
+const serviceTabs=document.querySelectorAll("[data-service-target]");
+function activateServiceView(target){
+  document.querySelectorAll("[data-service-view]").forEach(section=>{
+    const active=section.id===target;
+    section.hidden=!active;
+    section.classList.toggle("active-service-view",active);
+  });
+  serviceTabs.forEach(button=>{
+    const active=button.dataset.serviceTarget===target;
+    button.classList.toggle("active",active);
+    button.setAttribute("aria-selected",String(active));
+  });
+}
+serviceTabs.forEach(button=>button.addEventListener("click",()=>activateServiceView(button.dataset.serviceTarget)));
+activateServiceView("service-upload-card");
+
 start();
