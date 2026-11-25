@@ -189,6 +189,8 @@ test("real OlmMachine delivers each one-message Megolm session over Olm and decr
   const bob = { userId: "@bob:securechat.invalid", deviceId: "BOB_DEVICE_0001" };
   const aliceMachine = await OlmMachine.initialize(new UserId(alice.userId), new DeviceId(alice.deviceId));
   const bobMachine = await OlmMachine.initialize(new UserId(bob.userId), new DeviceId(bob.deviceId));
+  alice.machine = aliceMachine;
+  bob.machine = bobMachine;
   const room = new RoomId("!11111111111141118111111111111111:securechat.invalid");
   const roomSettings = new RoomSettings();
   try {
