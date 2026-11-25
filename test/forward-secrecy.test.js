@@ -40,6 +40,6 @@ test("server enforces single-use Megolm session IDs even for stale clients", asy
   assert.match(worker, /INSERT OR IGNORE INTO crypto_used_megolm_sessions/);
   assert.match(worker, /CRYPTO_MEGOLM_SESSION_REUSED/);
   assert.match(worker, /results\?\.\[1\]\?\.meta\?\.changes/);
-  assert.match(migration, /PRIMARY KEY \(conversation_id, sender_user_id, sender_device_id, session_id\)/);
+  assert.match(migration, /PRIMARY KEY \(sender_user_id, sender_device_id, session_id\)/);
   assert.match(migration, /REFERENCES conversations\(id\) ON DELETE CASCADE/);
 });
