@@ -209,7 +209,13 @@ async function revalidateVisibleAdminConsole(){
 }
 window.addEventListener("pagehide",clearSensitiveConsole);
 window.addEventListener("pageshow",event=>{
- if(event.persisted)
+ if(event.persisted)initializeAdminConsole();
+});
+window.addEventListener("focus",revalidateVisibleAdminConsole);
+document.addEventListener("visibilitychange",()=>{
+ if(document.visibilityState==="visible")revalidateVisibleAdminConsole();
+});
+
 function activateAdminView(targetId){
  const targets=["stats","security-panel","announcements-panel","users-panel","reports-panel","audit-panel","ops-panel"];
  for(const id of targets){const node=document.getElementById(id);if(!node)continue;const active=id===targetId;node.classList.toggle("active-view",active);node.hidden=!active;}
@@ -232,10 +238,4 @@ document.querySelectorAll(".tree-item,.activity-icon").forEach(link=>{
 });
 activateAdminView("stats");
 
-initializeAdminConsole();
-});
-window.addEventListener("focus",revalidateVisibleAdminConsole);
-document.addEventListener("visibilitychange",()=>{
- if(document.visibilityState==="visible")revalidateVisibleAdminConsole();
-});
 initializeAdminConsole();
