@@ -636,6 +636,9 @@ export async function handleSecureDropApi(request, env, context) {
           downloadCount: Number(row.download_count),
           downloadLimit: DOWNLOAD_LIMIT,
           downloadsRemaining: Math.max(0, DOWNLOAD_LIMIT - Number(row.download_count)),
+          downloadCreditsRequired: received && Number(row.download_count) >= DOWNLOAD_LIMIT
+            ? secureDropCreditsForBytes(Number(row.stored_size_bytes))
+            : 0,
           priority: Number(row.priority || 0) === 1,
           ...(received ? {
             downloadPath: "/api/secure-drop/download/" + row.id,
