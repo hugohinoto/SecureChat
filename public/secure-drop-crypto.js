@@ -3,8 +3,8 @@ const MAX_UPLOAD_FILE_BYTES = 25_000_000;
 const MAX_STORED_BYTES = 26_000_000;
 const ENVELOPE_ALGORITHM = "ECDH-P256-HKDF-SHA256-AES-GCM-256";
 const encoder = new TextEncoder();
-const ARCHIVE_EXTENSION = /\.(?:zip|zipx|7z|rar|tar|tgz|tbz|tbz2|txz|tzst|gz|gzip|bz2|bzip2|xz|zst|zstd|lz|lzma|lz4|br|cab|ar|cpio|jar|war|ear|apk|aab|epub|cbz|cbr|ace|alz|sit|sitx)$/i;
-const ARCHIVE_MIME = /^application\/(?:zip|x-zip-compressed|x-7z-compressed|x-rar-compressed|vnd\.rar|gzip|x-gzip|x-bzip2|x-xz|zstd|x-zstd|x-tar|x-cpio|x-archive|java-archive|vnd\.android\.package-archive|epub\+zip)$/i;
+const ARCHIVE_EXTENSION = /\.(?:zip|zipx|7z|rar|tar|tgz|tbz2|gz|gzip|bz2|bzip2|xz|zst|zstd|lz4|cab)$/i;
+const ARCHIVE_MIME = /^application\/(?:zip|x-zip-compressed|x-7z-compressed|x-rar-compressed|vnd\.rar|gzip|x-gzip|x-bzip2|x-xz|zstd|x-zstd|x-tar)$/i;
 
 function archiveNotSupported() {
   const error = new Error("ZIP・7z・RAR・gzip・tarなどの圧縮／アーカイブ形式は送信できません。");
@@ -59,15 +59,10 @@ export async function assertSecureDropFileAllowed(file) {
   const sevenZip = startsWith([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]);
   const rar = startsWith([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07]);
   const cab = startsWith([0x4d, 0x53, 0x43, 0x46]);
-  const unixCompress = startsWith([0x1f, 0x9d]) || startsWith([0x1f, 0xa0]);
-  const ar = startsWith([0x21, 0x3c, 0x61, 0x72, 0x63, 0x68, 0x3e, 0x0a]);
-  const cpio = ["070701", "070702", "070707"].some(magic =>
-    head.length >= 6 && new TextDecoder().decode(head.slice(0, 6)) === magic
-  );
   const tar = head.length >= 262 &&
     new TextDecoder().decode(head.slice(257, 262)) === "ustar";
   if (zipFound || gzip || bzip2 || xz || zstd || lz4 || sevenZip || rar ||
-      cab || unixCompress || ar || cpio || tar) {
+      cab || tar) {
     throw archiveNotSupported();
   }
 }
