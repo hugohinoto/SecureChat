@@ -28,7 +28,8 @@ test("new messages require the forward-secrecy protocol when Crypto v2 is enable
 test("health diagnostics and documentation no longer claim forward secrecy is unimplemented", async () => {
   const worker = await read("../worker/index.js");
   const readme = await read("../README.md");
-  assert.match(worker, /forwardSecrecy: env\.SECURECHAT_CRYPTO_V2_ENABLED === "true"/);
+  assert.match(worker, /forwardSecrecy: forwardSecrecyReady/);
+  assert.match(worker, /forwardSecrecyStorage: .*"migration-required"/);
   assert.doesNotMatch(worker, /public-key identity verification and forward secrecy are not implemented/);
   assert.match(readme, /Megolmセッションを1メッセージごとにローテーション/);
   assert.match(readme, /端末ストレージ全体が侵害された場合/);
