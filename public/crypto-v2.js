@@ -19,6 +19,8 @@ const MATRIX_SERVER = "securechat.invalid";
 const VAULT_DB = "securechat-crypto-v2-vault";
 const VAULT_STORE = "devices";
 const DEVICE_HEADER = "X-SecureChat-Device";
+// One Megolm session per message: session keys are delivered through the Olm Double Ratchet.
+// Never reuse a group ratchet for a second message; a Megolm-key compromise is limited to one message.
 const machines = new Map();
 const initializers = new Map();
 const roomLocks = new Map();
@@ -504,7 +506,7 @@ async function prepareRoom(context, conversationId, peerUserId) {
   try {
     roomSettings.algorithm = EncryptionAlgorithm.MegolmV1AesSha2;
     roomSettings.onlyAllowTrustedDevices = true;
-    roomSettings.sessionRotationPeriodMessages = 100;
+    roomSettings.sessionRotationPeriodMessages = 1;
     roomSettings.sessionRotationPeriodMs = 60 * 60 * 1000;
     await context.machine.setRoomSettings(room, roomSettings);
   } finally {
@@ -518,7 +520,7 @@ async function prepareRoom(context, conversationId, peerUserId) {
   try {
     settings.algorithm = EncryptionAlgorithm.MegolmV1AesSha2;
     settings.rotationPeriod = 60n * 60n * 1_000_000n;
-    settings.rotationPeriodMessages = 100n;
+    settings.rotationPeriodMessages = 1n;
     settings.sharingStrategy = sharingStrategy;
     const requests = await context.machine.shareRoomKey(
       room,
