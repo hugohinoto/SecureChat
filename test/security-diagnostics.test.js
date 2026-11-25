@@ -114,6 +114,7 @@ const knownColumns = {
   crypto_to_device_inbox:["id","recipient_user_id","recipient_device_id","sender_user_id","sender_device_id","event_type","content_json","transaction_id","created_at","expires_at"],
   conversation_crypto_modes:["conversation_id","protocol_version","enabled_by_user_id","enabled_at"],
   conversation_crypto_approvals:["conversation_id","user_id","approved_at"],
+  crypto_used_megolm_sessions:["conversation_id","sender_user_id","sender_device_id","session_id","message_id","created_at"],
   secure_drop_credit_accounts:["user_id","month_key","granted_credits","balance","updated_at"],
   secure_drop_credit_ledger:["id","user_id","month_key","delta","reason","reference_id","created_at"],
   secure_drop_transfers:["id","user_id","month_key","object_key","token_hash","original_size_bytes","stored_size_bytes","created_at","expires_at","download_count","download_limit","recipient_user_id","key_envelope_json","status","updated_at"],
@@ -213,11 +214,19 @@ test("diagnostics include the device-scoped ratchet schema from migration 0012",
   assert.equal(foreignKeys.status,"ok");
   assert.ok(securityDiagnosticSchema.migrations.includes("0011_multi_device_identity_backup_and_reads.sql"));
   assert.ok(securityDiagnosticSchema.migrations.includes("0012_device_scoped_ratchet_transport.sql"));
+  assert.ok(securityDiagnosticSchema.migrations.includes("0018_forward_secrecy_sessions.sql"));
+  assert.ok(securityDiagnosticSchema.indexes.includes("crypto_used_megolm_sessions_created_idx"));
   for(const table of [
     "conversation_reads","crypto_devices","crypto_one_time_keys","crypto_to_device_inbox",
-    "conversation_crypto_modes","conversation_crypto_approvals"
+    "conversation_crypto_modes","conversation_crypto_approvals","crypto_used_megolm_sessions"
   ]) assert.ok(securityDiagnosticSchema.tables.includes(table), "Missing table: "+table);
   assert.ok(securityDiagnosticSchema.tables.includes("encrypted_messages"));
+  assert.ok(securityDiagnosticSchema.foreignKeys.some(([table,from,to,ref]) =>
+    table==="crypto_used_megolm_sessions" && from==="conversation_id" && to==="conversations" && ref==="id"
+  ));
+  assert.ok(securityDiagnosticSchema.foreignKeys.some(([table,from,to,ref]) =>
+    table==="crypto_used_megolm_sessions" && from==="sender_user_id" && to==="users" && ref==="id"
+  ));
   assert.ok(securityDiagnosticSchema.foreignKeys.some(([table,from,to,ref]) =>
     table==="crypto_one_time_keys" && from==="device_id" && to==="crypto_devices" && ref==="device_id"
   ));
