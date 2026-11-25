@@ -407,10 +407,10 @@ function updateCryptoV2Controls() {
   if(el.cryptoV2DevicesToggle)el.cryptoV2DevicesToggle.hidden=!cryptoV2Ready;
   if(el.cryptoV2Status && cryptoV2Required && activeProtocolVersion!==2) {
     el.cryptoV2Status.textContent=activeCryptoMode.approvedByMe
-      ? "前方秘匿性を必須化しています。相手のv2承認を待っています。既存v1メッセージは閲覧できますが、新規送信はできません。"
+      ? "前方秘匿性を必須化しています。相手の本人確認完了後に自動でv2へ移行します。既存v1メッセージは閲覧できますが、新規送信はできません。"
       : activeCryptoMode.approvedByPeer
-        ? "相手はv2移行を承認済みです。指紋を照合してv2へ移行してください。既存v1メッセージは閲覧できますが、新規送信はできません。"
-        : "前方秘匿性を必須化しています。相手と双方の端末登録・指紋照合・v2承認が完了するまで新規送信できません。既存v1メッセージは閲覧できます。";
+        ? "相手の本人確認済みです。あなたも指紋を確認すると自動でv2へ移行します。既存v1メッセージは閲覧できますが、新規送信はできません。"
+        : "前方秘匿性を必須化しています。相手の署名鍵指紋を別経路で確認すると、自動でv2へ移行して鍵交換を開始します。既存v1メッセージは閲覧できます。";
   } else if(el.cryptoV2Status && activeProtocolVersion===2) {
     el.cryptoV2Status.textContent="前方秘匿性v2有効 — Olm Double Ratchetで鍵配送、Megolm鍵は1メッセージごとに更新";
   }
@@ -532,11 +532,11 @@ async function refreshCryptoConversationMode() {
       await cryptoV2Module.prepareEncryptedConversation(currentUser.userId,activeConversation.id,activeConversation.peerUserId);
       cryptoV2StatusMessage="前方秘匿性v2有効 — 信頼済み端末間でMegolm鍵を共有します。";
     } else if(mode.approvedByMe) {
-      cryptoV2StatusMessage="この端末でv2への移行を承認済みです。相手の承認を待っています。";
+      cryptoV2StatusMessage="この端末の本人確認済みです。相手の本人確認後、v2と鍵交換が自動で有効になります。";
     } else if(mode.approvedByPeer) {
-      cryptoV2StatusMessage="相手がv2移行を承認しています。あなたも承認すると有効になります。";
+      cryptoV2StatusMessage="相手の本人確認済みです。あなたも指紋を確認するとv2と鍵交換が自動で有効になります。";
     } else {
-      cryptoV2StatusMessage="v2移行は双方のアカウント承認が必要です。";
+      cryptoV2StatusMessage="相手の署名鍵指紋を別経路で確認すると、v2への移行と鍵交換が自動で始まります。";
     }
   } catch(error) {
     cryptoV2StatusMessage="前方秘匿性v2状態を確認できません: "+(error.code||"CRYPTO_STATUS_ERROR");
