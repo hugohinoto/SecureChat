@@ -533,6 +533,22 @@ export async function handleCryptoApi(request, env, session, { url, now = Date.n
   }
 
   if (path === "/api/crypto/status" && method === "GET") {
+    // Do not advertise forward secrecy as ready unless the server-side
+    // single-use Megolm session ledger is present in the active D1 database.
+    try {
+      await env.DB.prepare(
+        "SELECT 1 AS ready FROM crypto_used_megolm_sessions LIMIT 1"
+      ).first();
+    } catch {
+      return json({
+        enabled: true,
+        protocolVersion: 2,
+        forwardSecrecyRequired: true,
+        forwardSecrecyReady: false,
+        error: "CRYPTO_FORWARD_SECRECY_STORAGE_UNAVAILABLE",
+        message: "前方秘匿性に必要なD1マイグレーションが適用されていません。"
+      }, 503);
+    }
     const devices = await env.DB.prepare(
       "SELECT COUNT(*) AS count FROM crypto_devices WHERE user_id=? AND revoked_at IS NULL"
     ).bind(session.id).first();
@@ -540,6 +556,7 @@ export async function handleCryptoApi(request, env, session, { url, now = Date.n
       enabled: true,
       protocolVersion: 2,
       forwardSecrecyRequired: true,
+      forwardSecrecyReady: true,
       forwardSecrecyPolicy: "one-megolm-message-session-over-olm-double-ratchet",
       sessionRotationMessages: 1,
       deviceCount: Number(devices?.count || 0)
