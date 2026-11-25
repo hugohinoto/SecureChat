@@ -12,6 +12,8 @@ test("automatic V2 approval requires explicit peer fingerprint verification", ()
   );
   assert.match(app, /await maybeAutoApproveCryptoV2ForActiveConversation\(\);/);
   assert.match(app, /activePeerFingerprintVerified=true;[\s\S]{0,180}maybeAutoApproveCryptoV2ForActiveConversation/);
+  assert.match(app, /refreshCryptoConversationMode\(\)[\s\S]{0,120}then\(\)=>maybeAutoApproveCryptoV2ForActiveConversation\(\)/);
+  assert.match(app, /activeProtocolVersion!==2 && \+\+cryptoModeRefreshTick % 5 === 0/);
 });
 
 test("manual V2 approval control is hidden; the verified path performs approval automatically", () => {
