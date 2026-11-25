@@ -36,7 +36,9 @@ const displayedOtpCodes = new Map();
 const previousUnreadCounts = new Map();
 const originalDocumentTitle = document.title;
 let unreadCountsInitialized = false;
+let cryptoModeRefreshTick = 0;
 let activeCryptoMode = { protocolVersion: 1, approvedByMe: false, approvedByPeer: false };
+const autoV2ApprovalInFlight = new Set();
 let activePeerSigningKey = null, activePeerFingerprintVerified = false;
 
 function toast(message, duration = 3200) {
@@ -398,20 +400,18 @@ async function initializeCryptoV2IfEnabled() {
 function updateCryptoV2Controls() {
   if(el.cryptoV2Status)el.cryptoV2Status.textContent=cryptoV2StatusMessage;
   if(el.cryptoV2Approve) {
-    const visible=!!activeConversation && !!cryptoV2Ready && activeProtocolVersion!==2;
-    el.cryptoV2Approve.hidden=!visible;
-    el.cryptoV2Approve.disabled=!activePeerFingerprintVerified;
-    el.cryptoV2Approve.textContent=activeCryptoMode.approvedByMe
-      ? "v2承認済み — 相手の承認待ち"
-      : "前方秘匿性v2へ移行（双方の承認）";
+    // V2 approval is automatic only after this device explicitly verifies
+    // the peer's account-signing fingerprint through an independent channel.
+    el.cryptoV2Approve.hidden=true;
+    el.cryptoV2Approve.disabled=true;
   }
   if(el.cryptoV2DevicesToggle)el.cryptoV2DevicesToggle.hidden=!cryptoV2Ready;
   if(el.cryptoV2Status && cryptoV2Required && activeProtocolVersion!==2) {
     el.cryptoV2Status.textContent=activeCryptoMode.approvedByMe
-      ? "前方秘匿性を必須化しています。相手のv2承認を待っています。既存v1メッセージは閲覧できますが、新規送信はできません。"
+      ? "前方秘匿性を必須化しています。相手の本人確認完了後に自動でv2へ移行します。既存v1メッセージは閲覧できますが、新規送信はできません。"
       : activeCryptoMode.approvedByPeer
-        ? "相手はv2移行を承認済みです。指紋を照合してv2へ移行してください。既存v1メッセージは閲覧できますが、新規送信はできません。"
-        : "前方秘匿性を必須化しています。相手と双方の端末登録・指紋照合・v2承認が完了するまで新規送信できません。既存v1メッセージは閲覧できます。";
+        ? "相手の本人確認済みです。あなたも指紋を確認すると自動でv2へ移行します。既存v1メッセージは閲覧できますが、新規送信はできません。"
+        : "前方秘匿性を必須化しています。相手の署名鍵指紋を別経路で確認すると、自動でv2へ移行して鍵交換を開始します。既存v1メッセージは閲覧できます。";
   } else if(el.cryptoV2Status && activeProtocolVersion===2) {
     el.cryptoV2Status.textContent="前方秘匿性v2有効 — Olm Double Ratchetで鍵配送、Megolm鍵は1メッセージごとに更新";
   }
@@ -533,11 +533,11 @@ async function refreshCryptoConversationMode() {
       await cryptoV2Module.prepareEncryptedConversation(currentUser.userId,activeConversation.id,activeConversation.peerUserId);
       cryptoV2StatusMessage="前方秘匿性v2有効 — 信頼済み端末間でMegolm鍵を共有します。";
     } else if(mode.approvedByMe) {
-      cryptoV2StatusMessage="この端末でv2への移行を承認済みです。相手の承認を待っています。";
+      cryptoV2StatusMessage="この端末の本人確認済みです。相手の本人確認後、v2と鍵交換が自動で有効になります。";
     } else if(mode.approvedByPeer) {
-      cryptoV2StatusMessage="相手がv2移行を承認しています。あなたも承認すると有効になります。";
+      cryptoV2StatusMessage="相手の本人確認済みです。あなたも指紋を確認するとv2と鍵交換が自動で有効になります。";
     } else {
-      cryptoV2StatusMessage="v2移行は双方のアカウント承認が必要です。";
+      cryptoV2StatusMessage="相手の署名鍵指紋を別経路で確認すると、v2への移行と鍵交換が自動で始まります。";
     }
   } catch(error) {
     cryptoV2StatusMessage="前方秘匿性v2状態を確認できません: "+(error.code||"CRYPTO_STATUS_ERROR");
@@ -545,6 +545,38 @@ async function refreshCryptoConversationMode() {
   }
   updateCryptoV2Controls();
 }
+async function maybeAutoApproveCryptoV2ForActiveConversation() {
+  const conversation=activeConversation;
+  if(!cryptoV2Ready || !cryptoV2Module || !conversation ||
+     !cryptoV2Required || !activePeerFingerprintVerified || activeProtocolVersion===2) return;
+  const key=conversation.id;
+  if(autoV2ApprovalInFlight.has(key)) return;
+  autoV2ApprovalInFlight.add(key);
+  try {
+    const result=await cryptoV2Module.approveAndPrepareConversation(
+      currentUser.userId,conversation.id,conversation.peerUserId
+    );
+    if(!activeConversation || activeConversation.id!==conversation.id) return;
+    activeCryptoMode=result;
+    activeProtocolVersion=Number(result.protocolVersion||1);
+    if(activeProtocolVersion===2) {
+      cryptoV2StatusMessage="前方秘匿性v2が自動で有効になりました。鍵交換・メッセージ鍵の更新も自動で行われます。";
+      await loadMessages(true);
+    } else {
+      cryptoV2StatusMessage="この端末の本人確認が完了しました。相手の本人確認後、前方秘匿性v2と鍵交換が自動で有効になります。";
+    }
+  } catch(error) {
+    cryptoV2StatusMessage="前方秘匿性v2の自動鍵交換に失敗しました: "+(error.code||"CRYPTO_AUTO_EXCHANGE_FAILED");
+    showError(error,"前方秘匿性v2の自動鍵交換に失敗しました: ");
+  } finally {
+    autoV2ApprovalInFlight.delete(key);
+    if(activeConversation?.id===key) {
+      updateCryptoV2Controls();
+      updateSend();
+    }
+  }
+}
+
 async function approveCryptoV2ForActiveConversation() {
   if(!cryptoV2Ready || !activeConversation)return;
   if(!activePeerFingerprintVerified) {
@@ -782,7 +814,10 @@ async function showPeerKeyChangeVerification(peerUserId,peer,previousSigningPubl
       el.fingerprint.textContent="署名鍵の指紋を別経路で照合して承認しました。\n相手: "+fingerprint+"\nこの承認はこの端末にだけ保存されます。";
       updateCryptoV2Controls();
       activeKey=null;
-      if(activeConversation?.peerUserId===peerUserId)await loadMessages(true);
+      if(activeConversation?.peerUserId===peerUserId) {
+        await maybeAutoApproveCryptoV2ForActiveConversation();
+        await loadMessages(true);
+      }
       updateSend();
     } catch(error) {
       status.textContent=formatError(error);
@@ -805,7 +840,7 @@ function renderPeerFingerprintPanel(peerUserId,ownFingerprint,peerFingerprint,pe
   const status=document.createElement("p");
   status.textContent=verified
     ? "別経路で確認済み（このブラウザーのみ）"
-    : "未確認 — 連絡先確認とは別に、電話・対面など別経路で照合してください";
+    : "未確認 — 連絡先確認とは別に、電話・対面など別経路で照合してください。照合後、V2移行と鍵交換は自動で行われます";
   const button=document.createElement("button");
   button.type="button";
   button.className="crypto-v2-button";
@@ -820,6 +855,7 @@ function renderPeerFingerprintPanel(peerUserId,ownFingerprint,peerFingerprint,pe
         status.textContent="別経路で確認済み（このブラウザーのみ）";
         button.textContent="本人確認済み";
         updateCryptoV2Controls();
+        await maybeAutoApproveCryptoV2ForActiveConversation();
       } else button.disabled=false;
     } catch(error) {
       showError(error);
@@ -997,10 +1033,18 @@ async function signIn(user,password=null) {
   startAuthCheck();
   clearInterval(refreshTimer);
   refreshTimer=setInterval(()=>{
-    if(document.visibilityState==="visible" && document.hasFocus() && activeConversation) loadMessages(false).catch(()=>{});
+    if(document.visibilityState==="visible" && document.hasFocus() && activeConversation) {
+      if(activeProtocolVersion!==2 && ++cryptoModeRefreshTick % 5 === 0) {
+        refreshCryptoConversationMode()
+          .then(()=>maybeAutoApproveCryptoV2ForActiveConversation())
+          .then(()=>loadMessages(false))
+          .catch(()=>{});
+      } else {
+        loadMessages(false).catch(()=>{});
+      }
+    }
     if(++sidebarRefreshTick % 5 === 0) {
       refreshSidebar().catch(()=>{});
-      
     }
   },1000);
 }
@@ -1276,7 +1320,7 @@ async function selectConversation(c) {
   el.chatTitle.textContent=c.peer_user_id;
   el.chatSubtitle.textContent="@"+c.peer_user_id+" · 1対1の個別チャット";
   el.securityTitle.textContent="暗号化チャット（試作）";
-  el.securityDescription.textContent="既存メッセージはv1で復号し、新しい会話は双方の同意後に端末別Olm/Megolm v2へ移行できます。前方秘匿性v2は両者の端末登録と指紋確認が必要です。";
+  el.securityDescription.textContent="既存メッセージはv1で復号し、双方の端末登録と相手の署名鍵指紋の確認後、端末別Olm/Megolm v2へ自動で移行します。";
   el.securityTag.textContent="E2EE";
   el.composerHint.textContent="暗号化 · メッセージは1時間後に削除";
   welcome("暗号化チャット","このブラウザーで暗号化してから送信します。");
@@ -1284,6 +1328,7 @@ async function selectConversation(c) {
   try {
     await deriveKey(c.id,c.peer_user_id);
     await refreshCryptoConversationMode();
+    await maybeAutoApproveCryptoV2ForActiveConversation();
     if(activeProtocolVersion===2) {
       el.securityTitle.textContent="前方秘匿性v2 — 端末別暗号化";
       el.securityDescription.textContent="Olmで端末間の鍵を配布し、Megolmのメッセージ鍵ラチェットで暗号化します。未確認端末には鍵を共有しません。";
