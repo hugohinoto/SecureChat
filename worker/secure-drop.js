@@ -673,9 +673,10 @@ export async function handleSecureDropApi(request, env, context) {
       "SELECT 1 AS ok FROM verified_contact_pairs WHERE user_a_id=? AND user_b_id=?"
     ).bind(contactA, contactB).first();
     if (!activeContact) return json({ error: "TRANSFER_EXPIRED_OR_NOT_FOUND" }, 404);
-    if (Number(transfer.download_count) >= DOWNLOAD_LIMIT) {
-      return json({ error: "DOWNLOAD_LIMIT_REACHED" }, 410);
-    }
+    const downloadCredits = secureDropCreditsForBytes(Number(transfer.stored_size_bytes));
+    // Ensure the recipient has a current-month account before the atomic allowance/debit step.
+    const recipientAccount = await ensureMonthlyAccount(env, session.id, currentMonth, now);
+    if (!recipientAccount) return json({ error: "CREDIT_ACCOUNT_UNAVAILABLE" }, 503);
     let payloadBody;
     let payloadSize = Number(transfer.stored_size_bytes);
     if (transfer.storage_backend === "d1") {
@@ -726,10 +727,33 @@ export async function handleSecureDropApi(request, env, context) {
       }
       payloadBody = object.body;
     }
-    const consumed = await env.DB.prepare(
-      "UPDATE secure_drop_transfers SET download_count=download_count+1, updated_at=? WHERE id=? AND month_key=? AND expires_at>? AND status='ready' AND download_count<3 AND recipient_user_id=? RETURNING download_count"
-    ).bind(now, transferId, currentMonth, now, session.id).first();
-    if (!consumed) return json({ error: "DOWNLOAD_LIMIT_REACHED" }, 410);
+    // First three downloads are free. Later downloads debit the recipient atomically
+    // with incrementing the counter; a failed debit cannot consume an allowance.
+    const consumption = await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE secure_drop_credit_accounts SET balance=balance-?, updated_at=? WHERE user_id=? AND month_key=? AND balance>=? AND EXISTS (SELECT 1 FROM secure_drop_transfers WHERE id=? AND recipient_user_id=? AND month_key=? AND status='ready' AND download_count>=3)"
+      ).bind(downloadCredits, now, session.id, currentMonth, downloadCredits, transferId, session.id, currentMonth),
+      env.DB.prepare(
+        "UPDATE secure_drop_transfers SET download_count=download_count+1, updated_at=? WHERE id=? AND month_key=? AND expires_at>? AND status='ready' AND recipient_user_id=? AND (download_count<3 OR changes()=1) RETURNING download_count"
+      ).bind(now, transferId, currentMonth, now, session.id),
+      env.DB.prepare(
+        "INSERT INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) SELECT 'download:' || id || ':' || download_count, recipient_user_id, month_key, ?, 'download_debit', id || ':' || download_count, ? FROM secure_drop_transfers WHERE id=? AND recipient_user_id=? AND month_key=? AND download_count>3 AND changes()=1"
+      ).bind(-downloadCredits, now, transferId, session.id, currentMonth)
+    ]);
+    const consumed = consumption?.[1]?.results?.[0] || null;
+    if (!consumed) {
+      const current = await env.DB.prepare(
+        "SELECT download_count FROM secure_drop_transfers WHERE id=? AND recipient_user_id=? AND month_key=? AND status='ready'"
+      ).bind(transferId, session.id, currentMonth).first();
+      const account = await env.DB.prepare(
+        "SELECT balance FROM secure_drop_credit_accounts WHERE user_id=? AND month_key=?"
+      ).bind(session.id, currentMonth).first();
+      if (Number(current?.download_count || 0) >= DOWNLOAD_LIMIT &&
+          Number(account?.balance || 0) < downloadCredits) {
+        return json({ error: "INSUFFICIENT_CREDITS", required: downloadCredits, balance: Number(account?.balance || 0) }, 402);
+      }
+      return json({ error: "TRANSFER_EXPIRED_OR_NOT_FOUND" }, 404);
+    }
     return new Response(payloadBody, {
       status: 200,
       headers: {
