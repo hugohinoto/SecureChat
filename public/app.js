@@ -36,6 +36,7 @@ const displayedOtpCodes = new Map();
 const previousUnreadCounts = new Map();
 const originalDocumentTitle = document.title;
 let unreadCountsInitialized = false;
+let cryptoModeRefreshTick = 0;
 let activeCryptoMode = { protocolVersion: 1, approvedByMe: false, approvedByPeer: false };
 const autoV2ApprovalInFlight = new Set();
 let activePeerSigningKey = null, activePeerFingerprintVerified = false;
@@ -1032,10 +1033,18 @@ async function signIn(user,password=null) {
   startAuthCheck();
   clearInterval(refreshTimer);
   refreshTimer=setInterval(()=>{
-    if(document.visibilityState==="visible" && document.hasFocus() && activeConversation) loadMessages(false).catch(()=>{});
+    if(document.visibilityState==="visible" && document.hasFocus() && activeConversation) {
+      if(activeProtocolVersion!==2 && ++cryptoModeRefreshTick % 5 === 0) {
+        refreshCryptoConversationMode()
+          .then(()=>maybeAutoApproveCryptoV2ForActiveConversation())
+          .then(()=>loadMessages(false))
+          .catch(()=>{});
+      } else {
+        loadMessages(false).catch(()=>{});
+      }
+    }
     if(++sidebarRefreshTick % 5 === 0) {
       refreshSidebar().catch(()=>{});
-      
     }
   },1000);
 }
