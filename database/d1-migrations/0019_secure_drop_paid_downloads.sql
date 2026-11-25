@@ -23,5 +23,6 @@ FROM secure_drop_credit_ledger_v1;
 
 DROP TABLE secure_drop_credit_ledger_v1;
 
+
 CREATE INDEX IF NOT EXISTS secure_drop_credit_ledger_month_idx
   ON secure_drop_credit_ledger(month_key, created_at);
