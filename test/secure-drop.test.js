@@ -451,6 +451,7 @@ test("SecureDrop paid-download migration preserves legacy counts and ledger entr
   assert.match(migration, /'download_debit'/);
   assert.match(migration, /INSERT INTO secure_drop_credit_ledger[\s\S]*?FROM secure_drop_credit_ledger_v1/);
   assert.match(migration, /DROP TABLE secure_drop_credit_ledger_v1/);
+  assert.ok(migration.indexOf("DROP TABLE secure_drop_credit_ledger_v1") < migration.indexOf("CREATE INDEX IF NOT EXISTS secure_drop_credit_ledger_month_idx"));
 });
 
 test("SecureDrop D1 migration keeps chunk data keyed by transfer and ordered index", async () => {
