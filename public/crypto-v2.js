@@ -1,3 +1,4 @@
+import { createDeviceVaultRecord, unlockDeviceVaultRecord } from "./device-vault.js";
 import {
   initAsync,
   OlmMachine,
@@ -74,22 +75,11 @@ function openVault() {
 async function createDeviceVault(userId) {
   const deviceId = "SC_" + crypto.randomUUID().replace(/-/g, "").slice(0, 32);
   const storePassphrase = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
-  const wrappingKey = await crypto.subtle.generateKey(
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"]
-  );
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    wrappingKey,
-    new TextEncoder().encode(storePassphrase)
-  );
-  const candidate = { userId, deviceId, wrappingKey, iv, ciphertext, createdAt: Date.now() };
+  const candidate = await createDeviceVaultRecord(userId, deviceId, storePassphrase);
 
   // IndexedDB readwrite transactions serialize across tabs on the same origin.
-  // Use add only after the transactional read so two tabs cannot create
-  // different device IDs and overwrite each other's recovery pointer.
+  // Preserve an existing device ID and passphrase so the encrypted Olm store
+  // and its ratchet state remain addressable during the v1 -> v2 vault upgrade.
   const db = await openVault();
   const record = await new Promise((resolve, reject) => {
     const transaction = db.transaction(VAULT_STORE, "readwrite");
@@ -106,23 +96,37 @@ async function createDeviceVault(userId) {
     transaction.onabort = () => reject(transaction.error || new Error("CRYPTO_VAULT_TRANSACTION_ABORTED"));
   }).finally(() => db.close());
 
-  if (!record?.deviceId || !record.wrappingKey || !record.iv || !record.ciphertext) {
+  const unlocked = await unlockDeviceVaultRecord(record, userId);
+  if (!record?.deviceId || !unlocked.storePassphrase) {
     throw cryptoError("CRYPTO_VAULT_CORRUPT", "この端末の暗号鍵保管領域が破損しています。復旧操作なしに削除しないでください。");
   }
-  let resolvedPassphrase;
-  if (record.deviceId === deviceId) {
-    resolvedPassphrase = storePassphrase;
-  } else {
-    const passphraseBytes = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: record.iv },
-      record.wrappingKey,
-      record.ciphertext
-    );
-    resolvedPassphrase = new TextDecoder().decode(passphraseBytes);
+  if (unlocked.upgradedRecord) {
+    const upgradeDb = await openVault();
+    try {
+      await new Promise((resolve, reject) => {
+        const transaction = upgradeDb.transaction(VAULT_STORE, "readwrite");
+        const store = transaction.objectStore(VAULT_STORE);
+        const request = store.get(userId);
+        request.onsuccess = () => {
+          const current = request.result;
+          if (!current || current.deviceId !== record.deviceId) {
+            transaction.abort();
+            return;
+          }
+          store.put(unlocked.upgradedRecord);
+        };
+        request.onerror = () => transaction.abort();
+        transaction.oncomplete = resolve;
+        transaction.onerror = () => reject(transaction.error || new Error("CRYPTO_VAULT_UPGRADE_FAILED"));
+        transaction.onabort = () => reject(transaction.error || new Error("CRYPTO_VAULT_UPGRADE_ABORTED"));
+      });
+    } finally {
+      upgradeDb.close();
+    }
   }
   return {
     deviceId: record.deviceId,
-    storePassphrase: resolvedPassphrase,
+    storePassphrase: unlocked.storePassphrase,
     storeName: "securechat-olm-v2-" + userId + "-" + record.deviceId
   };
 }
