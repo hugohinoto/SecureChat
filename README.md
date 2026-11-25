@@ -19,7 +19,7 @@ Render/PostgreSQLの代わりにCloudflare内で完結する構成です。Cloud
 - **リリースバージョン: SecureChat v0.5.0**
 - **暗号プロトコル: Crypto Protocol v2（Olm / Megolm）**
 - Crypto v2 feature flag 有効化。新規送信は前方秘匿性v2を必須化（双方の端末登録・指紋照合・承認後に送信可能）。既存v1メッセージは読み取り専用で復号互換を維持
-- Crypto v2はOlm Double RatchetでMegolmセッション鍵を端末間配送し、Megolmセッションを1メッセージごとにローテーション。1つのMegolmセッション鍵が漏えいしても、そのセッション内の他メッセージを復号できない構成
+- Crypto v2はOlm Double RatchetでMegolmセッション鍵を端末間配送し、Megolmセッションを1メッセージごとにローテーション。サーバー側でもセッションIDの再利用を永続台帳で拒否する。1つのMegolmセッション鍵が漏えいしても、そのセッション内の他メッセージを復号できない構成
 - SecureDrop（ブラウザー内AES-256-GCM暗号化、受信者アカウント公開鍵へのECDH-P256/HKDF鍵ラップ、送信者署名、gzip圧縮、R2には暗号文のみ保存）
 - SecureDropはログイン・相互OTP連絡先・受信者本人の認証を必須化。ダウンロード上限3回はD1の条件付き更新で原子的に管理
 - SecureDrop月100クレジット。暗号化後の実測保存容量を10進MB単位で切り上げ（1MB=1クレジット）、翌月への繰越なし
