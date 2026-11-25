@@ -209,3 +209,148 @@ test("keys-query adapter returns the full Matrix response envelope", () => {
   assert.ok(source.includes("master_keys: {}, self_signing_keys: {}, user_signing_keys: {}"));
   assert.ok(source.includes("device_authorizations: deviceAuthorizations"));
 });
+
+
+class ForwardSecrecyTestStatement {
+  constructor(db, sql) { this.db = db; this.sql = sql; this.values = []; }
+  bind(...values) { this.values = values; return this; }
+  async first() {
+    if (this.sql.includes("SELECT device_id, device_keys_json FROM crypto_devices")) {
+      return {
+        device_id: this.values[1],
+        device_keys_json: JSON.stringify({
+          keys: { ["curve25519:" + this.values[1]]: "A".repeat(43) }
+        })
+      };
+    }
+    if (this.sql.includes("SELECT 1 AS ok FROM verified_contact_pairs")) return { ok: 1 };
+    if (this.sql.includes("SELECT protocol_version FROM conversation_crypto_modes")) return { protocol_version: 2 };
+    if (this.sql.includes("SELECT 1 AS ready FROM crypto_used_megolm_sessions")) {
+      if (!this.db.ledgerAvailable) throw new Error("no such table: crypto_used_megolm_sessions");
+      return { ready: 1 };
+    }
+    if (this.sql.includes("SELECT COUNT(*) AS count FROM crypto_devices")) return { count: 1 };
+    return null;
+  }
+  async all() {
+    if (this.sql.includes("SELECT peer.user_id AS peer_id")) return { results: [{ peer_id: "peer-internal" }] };
+    return { results: [] };
+  }
+  async run() {
+    return { meta: { changes: 1 } };
+  }
+}
+
+class ForwardSecrecyTestDB {
+  constructor({ ledgerAvailable = true } = {}) {
+    this.ledgerAvailable = ledgerAvailable;
+    this.sessions = new Map();
+    this.messages = [];
+  }
+  prepare(sql) { return new ForwardSecrecyTestStatement(this, sql); }
+  async batch(statements) {
+    const [ledger, message] = statements;
+    const [conversationId, senderId, deviceId, sessionId, messageId] = ledger.values;
+    const key = senderId + ":" + deviceId + ":" + sessionId;
+    const inserted = !this.sessions.has(key);
+    if (inserted) this.sessions.set(key, { conversationId, messageId });
+    const [messageIdFromInsert, , , , , , , , , , sessionIdFromInsert, ledgerMessageId] = message.values;
+    const ledgerEntry = this.sessions.get(key);
+    const messageInserted = inserted && ledgerEntry?.messageId === ledgerMessageId &&
+      sessionIdFromInsert === sessionId && messageIdFromInsert === messageId;
+    if (messageInserted) this.messages.push(message.values);
+    return [
+      { meta: { changes: inserted ? 1 : 0 } },
+      { meta: { changes: messageInserted ? 1 : 0 } }
+    ];
+  }
+}
+
+const fsConversationA = "11111111-1111-4111-8111-111111111111";
+const fsConversationB = "22222222-2222-4222-8222-222222222222";
+const fsDeviceId = "SC_1234567890abcdef1234567890123456";
+const fsRequest = (conversationId, sessionId) => new Request(
+  "https://securechat.invalid/api/crypto/conversations/" + conversationId + "/messages",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-SecureChat-Device": fsDeviceId
+    },
+    body: JSON.stringify({
+      encrypted_event: {
+        algorithm: "m.megolm.v1.aes-sha2",
+        ciphertext: "A".repeat(96),
+        session_id: sessionId,
+        sender_key: "A".repeat(43),
+        device_id: fsDeviceId
+      }
+    })
+  }
+);
+const fsSession = { id: "alice-internal", user_id: "alice_01" };
+const fsEnv = db => ({ DB: db, SECURECHAT_CRYPTO_V2_ENABLED: "true" });
+
+test("server rejects a reused Megolm session ID and accepts the next one-time session", async () => {
+  const db = new ForwardSecrecyTestDB();
+  const send = (conversationId, sessionId) => handleCryptoApi(
+    fsRequest(conversationId, sessionId),
+    fsEnv(db),
+    fsSession,
+    { url: new URL("https://securechat.invalid/api/crypto/conversations/" + conversationId + "/messages"), now: 5000 }
+  );
+  const first = await send(fsConversationA, "megolm-session-0001");
+  assert.equal(first.status, 201);
+  const replay = await send(fsConversationA, "megolm-session-0001");
+  assert.equal(replay.status, 409);
+  assert.equal((await replay.json()).error, "CRYPTO_MEGOLM_SESSION_REUSED");
+  const next = await send(fsConversationA, "megolm-session-0002");
+  assert.equal(next.status, 201);
+  assert.equal(db.sessions.size, 2);
+  assert.equal(db.messages.length, 2);
+});
+
+test("Megolm session IDs cannot be reused across conversations by the same device", async () => {
+  const db = new ForwardSecrecyTestDB();
+  const send = (conversationId, sessionId) => handleCryptoApi(
+    fsRequest(conversationId, sessionId),
+    fsEnv(db),
+    fsSession,
+    { url: new URL("https://securechat.invalid/api/crypto/conversations/" + conversationId + "/messages"), now: 5000 }
+  );
+  assert.equal((await send(fsConversationA, "global-session-0001")).status, 201);
+  const replay = await send(fsConversationB, "global-session-0001");
+  assert.equal(replay.status, 409);
+  assert.equal((await replay.json()).error, "CRYPTO_MEGOLM_SESSION_REUSED");
+  assert.equal(db.messages.length, 1);
+});
+
+test("crypto status refuses to claim forward secrecy when the D1 session ledger is missing", async () => {
+  const db = new ForwardSecrecyTestDB({ ledgerAvailable: false });
+  const response = await handleCryptoApi(
+    new Request("https://securechat.invalid/api/crypto/status"),
+    fsEnv(db),
+    fsSession,
+    { url: new URL("https://securechat.invalid/api/crypto/status"), now: 5000 }
+  );
+  assert.equal(response.status, 503);
+  const result = await response.json();
+  assert.equal(result.forwardSecrecyRequired, true);
+  assert.equal(result.forwardSecrecyReady, false);
+  assert.equal(result.error, "CRYPTO_FORWARD_SECRECY_STORAGE_UNAVAILABLE");
+});
+
+test("crypto status reports forward secrecy ready only after the ledger can be queried", async () => {
+  const db = new ForwardSecrecyTestDB();
+  const response = await handleCryptoApi(
+    new Request("https://securechat.invalid/api/crypto/status"),
+    fsEnv(db),
+    fsSession,
+    { url: new URL("https://securechat.invalid/api/crypto/status"), now: 5000 }
+  );
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.forwardSecrecyRequired, true);
+  assert.equal(result.forwardSecrecyReady, true);
+  assert.equal(result.sessionRotationMessages, 1);
+});

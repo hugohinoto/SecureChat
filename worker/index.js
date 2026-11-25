@@ -433,17 +433,30 @@ async function handleApi(request, env) {
   if (path === "/api/health" && method === "GET") {
     try {
       await env.DB.prepare("SELECT 1").first();
+      const cryptoV2Enabled = env.SECURECHAT_CRYPTO_V2_ENABLED === "true";
+      let forwardSecrecyStorageReady = false;
+      if (cryptoV2Enabled) {
+        try {
+          await env.DB.prepare("SELECT 1 AS ready FROM crypto_used_megolm_sessions LIMIT 1").first();
+          forwardSecrecyStorageReady = true;
+        } catch {
+          // Keep general health available, but never report forward secrecy as ready.
+        }
+      }
+      const forwardSecrecyReady = cryptoV2Enabled && forwardSecrecyStorageReady;
       return json({
         status: "ok",
         database: "connected",
         authentication: true,
         clientSideEncryption: true,
-        endToEndEncryption: env.SECURECHAT_CRYPTO_V2_ENABLED === "true",
-        forwardSecrecy: env.SECURECHAT_CRYPTO_V2_ENABLED === "true",
-        forwardSecrecyPolicy: env.SECURECHAT_CRYPTO_V2_ENABLED === "true"
+        endToEndEncryption: cryptoV2Enabled,
+        forwardSecrecyRequired: cryptoV2Enabled,
+        forwardSecrecy: forwardSecrecyReady,
+        forwardSecrecyStorage: !cryptoV2Enabled ? "disabled" : forwardSecrecyStorageReady ? "ready" : "migration-required",
+        forwardSecrecyPolicy: forwardSecrecyReady
           ? "one-megolm-message-session-over-olm-double-ratchet"
-          : "disabled",
-        legacyProtocolReadOnly: env.SECURECHAT_CRYPTO_V2_ENABLED === "true",
+          : "not-ready",
+        legacyProtocolReadOnly: cryptoV2Enabled,
         messagePersistence: true,
         messageRetentionSeconds: 3600,
         contactVerification: "mutual-one-time-code",
@@ -454,9 +467,11 @@ async function handleApi(request, env) {
           pepperIsString: typeof env.CONTACT_OTP_PEPPER === "string",
           pepperMeetsMinimumLength: typeof env.CONTACT_OTP_PEPPER === "string" && env.CONTACT_OTP_PEPPER.length >= 32
         },
-        mode: env.SECURECHAT_CRYPTO_V2_ENABLED === "true"
+        mode: forwardSecrecyReady
           ? "E2EE enabled; new messages require forward-secrecy v2; legacy v1 is read-only"
-          : "Legacy client-encrypted private-chat mode; forward secrecy is disabled"
+          : cryptoV2Enabled
+            ? "Crypto v2 required but forward-secrecy storage is not ready; new messages are blocked"
+            : "Legacy client-encrypted private-chat mode; forward secrecy is disabled"
       });
     } catch {
       return json({ status: "unavailable", database: "unavailable" }, 503);

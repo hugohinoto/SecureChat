@@ -23,6 +23,7 @@ const EXPECTED_TABLES = {
   crypto_to_device_inbox: ["id","recipient_user_id","recipient_device_id","sender_user_id","sender_device_id","event_type","content_json","transaction_id","created_at","expires_at"],
   conversation_crypto_modes: ["conversation_id","protocol_version","enabled_by_user_id","enabled_at"],
   conversation_crypto_approvals: ["conversation_id","user_id","approved_at"],
+  crypto_used_megolm_sessions: ["conversation_id","sender_user_id","sender_device_id","session_id","message_id","created_at"],
   secure_drop_credit_accounts: ["user_id","month_key","granted_credits","balance","updated_at"],
   secure_drop_credit_ledger: ["id","user_id","month_key","delta","reason","reference_id","created_at"],
   secure_drop_transfers: ["id","user_id","month_key","object_key","token_hash","original_size_bytes","stored_size_bytes","created_at","expires_at","download_count","download_limit","recipient_user_id","key_envelope_json","status","updated_at"],
@@ -40,6 +41,7 @@ const EXPECTED_INDEXES = [
   "announcements_expiry_idx","bug_reports_status_created_idx","bug_reports_reporter_idx",
   "users_created_at_admin_idx","users_last_login_idx","conversation_reads_user_idx",
   "crypto_devices_user_active_idx","crypto_one_time_keys_claim_idx","crypto_to_device_inbox_poll_idx","conversation_crypto_approvals_user_idx",
+  "crypto_used_megolm_sessions_created_idx",
   "secure_drop_credit_ledger_month_idx","secure_drop_transfers_owner_month_idx","secure_drop_transfers_expiry_idx","secure_drop_transfers_recipient_month_idx","secure_drop_transfers_status_updated_idx"
 ];
 
@@ -49,7 +51,9 @@ const EXPECTED_MIGRATIONS = [
   "0007_admin_password_rotation.sql","0008_admin_security_reports.sql",
   "0009_signed_identity_keys.sql","0010_unique_conversation_pairs.sql",
   "0011_multi_device_identity_backup_and_reads.sql","0012_device_scoped_ratchet_transport.sql",
-  "0013_secure_drop_monthly.sql","0014_secure_drop_recipient_binding.sql"
+  "0013_secure_drop_monthly.sql","0014_secure_drop_recipient_binding.sql",
+  "0015_secure_drop_d1_chunk_storage.sql","0016_secure_drop_recipient_binding.sql",
+  "0017_bug_report_replies.sql","0018_forward_secrecy_sessions.sql"
 ];
 
 // Cloudflare D1 system-owned objects. These are not application schema.
@@ -82,6 +86,8 @@ const EXPECTED_FOREIGN_KEYS = [
   ["conversation_crypto_modes","enabled_by_user_id","users","id"],
   ["conversation_crypto_approvals","conversation_id","conversations","id"],
   ["conversation_crypto_approvals","user_id","users","id"],
+  ["crypto_used_megolm_sessions","conversation_id","conversations","id"],
+  ["crypto_used_megolm_sessions","sender_user_id","users","id"],
   ["secure_drop_credit_accounts","user_id","users","id"],
   ["secure_drop_credit_ledger","user_id","users","id"],
   ["secure_drop_transfers","user_id","users","id"],
