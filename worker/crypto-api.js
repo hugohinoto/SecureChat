@@ -521,7 +521,14 @@ export async function handleCryptoApi(request, env, session, { url, now = Date.n
     const devices = await env.DB.prepare(
       "SELECT COUNT(*) AS count FROM crypto_devices WHERE user_id=? AND revoked_at IS NULL"
     ).bind(session.id).first();
-    return json({ enabled: true, protocolVersion: 2, deviceCount: Number(devices?.count || 0) });
+    return json({
+      enabled: true,
+      protocolVersion: 2,
+      forwardSecrecyRequired: true,
+      forwardSecrecyPolicy: "one-megolm-message-session-over-olm-double-ratchet",
+      sessionRotationMessages: 1,
+      deviceCount: Number(devices?.count || 0)
+    });
   }
   if (path === "/api/crypto/devices" && method === "GET") {
     const rows = await env.DB.prepare(
