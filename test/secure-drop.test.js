@@ -46,12 +46,14 @@ function keyEnvelopeFixture(fingerprint = "a".repeat(64)) {
 }
 
 test("SecureDrop rejects archive extensions and compressed container signatures before encryption", async () => {
-  for (const name of ["backup.zip", "backup.7z", "logs.tar.gz", "bundle.rar", "book.epub", "app.apk"]) {
+  for (const name of ["backup.zip", "backup.7z", "logs.tar.gz", "bundle.rar"]) {
     assert.throws(() => assertSecureDropFileNameAllowed(name), error =>
       error.code === "SECURE_DROP_ARCHIVE_NOT_SUPPORTED"
     );
   }
-  assert.doesNotThrow(() => assertSecureDropFileNameAllowed("photo.png"));
+  for (const name of ["photo.png", "scene.blend", "project.hfx", "world.mcworld", "book.epub", "app.apk", "unknown.custom"]) {
+    assert.doesNotThrow(() => assertSecureDropFileNameAllowed(name));
+  }
 
   const disguisedZip = new Blob([Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00])]);
   Object.defineProperty(disguisedZip, "name", { value: "ordinary-document.bin" });
@@ -76,6 +78,16 @@ test("SecureDrop rejects archive extensions and compressed container signatures 
   const ordinary = new Blob(["ordinary plain text content"]);
   Object.defineProperty(ordinary, "name", { value: "notes.txt" });
   await assert.doesNotReject(() => assertSecureDropFileAllowed(ordinary));
+
+  for (const [name, bytes] of [
+    ["scene.blend", [0x42, 0x4c, 0x45, 0x4e, 0x44, 0x00, 0x01]],
+    ["project.hfx", [0x48, 0x46, 0x58, 0x00, 0xff, 0x10]],
+    ["unknown.custom", [0x00, 0x11, 0x22, 0x33, 0x44, 0x55]]
+  ]) {
+    const custom = new Blob([Uint8Array.from(bytes)], { type: "application/octet-stream" });
+    Object.defineProperty(custom, "name", { value: name });
+    await assert.doesNotReject(() => assertSecureDropFileAllowed(custom), name);
+  }
 });
 
 test("SecureDrop month accounting changes at midnight Japan time", () => {
