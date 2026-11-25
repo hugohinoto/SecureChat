@@ -132,3 +132,11 @@ body:not(.admin-app) #my-reports{min-height:0;overflow:auto;overscroll-behavior:
  body:not(.admin-app) .intro{display:none}
  body:not(.admin-app) #report-form>label textarea{height:58px;min-height:58px}
 }
+
+
+.report-view-tabs{display:flex;flex:0 0 auto;gap:6px;padding:4px;border:1px solid #29394e;border-radius:6px;background:#131e2d}
+.report-view-tabs button{flex:1;min-height:34px;border:1px solid transparent;border-radius:4px;color:#9fb1c8;background:transparent;font-size:10px;font-weight:700}
+.report-view-tabs button.active{border-color:#35566b;color:#e4f8ff;background:#1a3549}
+body:not(.admin-app) #report-panel{flex:1 1 auto}
+body:not(.admin-app) #my-reports-panel{flex:1 1 auto}
+@media(max-width:650px){.report-view-tabs button{min-height:32px}}
