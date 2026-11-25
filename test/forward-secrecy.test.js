@@ -19,6 +19,7 @@ test("new messages require the forward-secrecy protocol when Crypto v2 is enable
   assert.match(route, /SECURECHAT_CRYPTO_V2_ENABLED === "true"/);
   assert.match(route, /CRYPTO_FORWARD_SECRECY_REQUIRED/);
   assert.match(api, /forwardSecrecyRequired: true/);
+  assert.match(api, /forwardSecrecyReady: true/);
   assert.match(api, /sessionRotationMessages: 1/);
   assert.match(app, /cryptoV2Required && activeProtocolVersion!==2/);
   assert.match(app, /双方の端末登録・指紋照合・v2承認/);
