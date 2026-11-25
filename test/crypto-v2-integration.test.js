@@ -141,10 +141,9 @@ class CryptoTransport {
 }
 
 async function preparePair(transport, alice, bob) {
-  const aliceUser = new UserId(alice.userId);
-  const bobUser = new UserId(bob.userId);
   for (const machine of [alice.machine, bob.machine]) {
-    const query = machine.queryKeysForUsers([aliceUser, bobUser]);
+    const queryUsers = [new UserId(alice.userId), new UserId(bob.userId)];
+    const query = machine.queryKeysForUsers(queryUsers);
     await transport.handle(machine, query);
     await transport.flush(machine);
     for (const [userId, deviceId] of [
@@ -157,7 +156,8 @@ async function preparePair(transport, alice, bob) {
         finally { device.free(); }
       }
     }
-    const missing = await machine.getMissingSessions([aliceUser, bobUser]);
+    const missingUsers = [new UserId(alice.userId), new UserId(bob.userId)];
+    const missing = await machine.getMissingSessions(missingUsers);
     if (missing) await transport.handle(machine, missing);
     await transport.flush(machine);
   }
