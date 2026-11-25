@@ -386,6 +386,7 @@ async function initializeCryptoV2IfEnabled() {
     cryptoV2Module=null;
     cryptoV2Ready=false;
     if(error.code==="CRYPTO_V2_DISABLED") {
+      cryptoV2Required=false;
       cryptoV2StatusMessage="前方秘匿性v2は現在無効です（安全確認中）。";
     } else {
       cryptoV2StatusMessage="v2端末の初期化に失敗しました: "+(error.code||"CRYPTO_INIT_ERROR");
