@@ -35,10 +35,11 @@
       受信者の署名付き公開鍵と、この端末で別経路照合済みの指紋を確認してから送受信します。
     </section>
 
-    <nav class="service-view-tabs" id="service-view-tabs" aria-label="SecureDropの画面">
+    <nav class="service-view-tabs" id="service-view-tabs" aria-label="SecureDropの画面" hidden>
       <button type="button" class="active" data-service-target="service-upload-card" aria-selected="true">ファイル送信</button>
       <button type="button" data-service-target="service-usage-card" aria-selected="false">利用状況</button>
       <button type="button" data-service-target="service-files-card" aria-selected="false">ファイル一覧</button>
+      <button type="button" data-service-target="service-pending-card" aria-selected="false" hidden>再送信待ち</button>
     </nav>
 
     <section class="service-auth-card" id="service-auth" hidden>
