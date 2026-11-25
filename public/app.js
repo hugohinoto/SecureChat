@@ -27,7 +27,7 @@ const el = {
 const MAX_MESSAGE_LENGTH = 2000;
 const DB_NAME = "securechat-local-keys";
 const STORE = "identity";
-let currentUser = null, authMode = "login", toastTimer = null, authTimer = null;
+let currentUser = null, authMode = "login", toastTimer = null, authTimer = null, cryptoV2Required = true;
 let identityPrivateKey = null, identityPublicKey = null, identitySigningPublicKey = null;
 let activeConversation = null, activeKey = null, activeProtocolVersion = 1, cryptoV2Module = null, cryptoV2Ready = false, cryptoV2StatusMessage = "", busy = false, refreshTimer = null, mobileView = "list";
 const openingConversationPeers = new Set();
@@ -144,7 +144,9 @@ function setMobileView(view) {
 function updateSend() {
   el.count.textContent = Array.from(el.input.value).length + " / " + MAX_MESSAGE_LENGTH;
   el.input.disabled = !currentUser || !activeConversation || busy || (activeProtocolVersion===2 && !cryptoV2Ready);
-  el.send.disabled = !currentUser || !activeConversation || busy || (activeProtocolVersion===2 && !cryptoV2Ready) || !el.input.value.trim();
+  el.send.disabled = !currentUser || !activeConversation || busy ||
+    (activeProtocolVersion===2 && !cryptoV2Ready) ||
+    (cryptoV2Required && activeProtocolVersion!==2) || !el.input.value.trim();
 }
 function time(value) {
   const date = new Date(value);
@@ -357,6 +359,7 @@ async function initializeCryptoV2IfEnabled() {
   activeProtocolVersion=1;
   try {
     const status=await api("/api/crypto/status");
+    cryptoV2Required = status.forwardSecrecyRequired === true;
     if(!status.enabled) {
       cryptoV2StatusMessage="前方秘匿性v2はサーバー側で無効です。";
       updateCryptoV2Controls();
@@ -402,8 +405,14 @@ function updateCryptoV2Controls() {
       : "前方秘匿性v2へ移行（双方の承認）";
   }
   if(el.cryptoV2DevicesToggle)el.cryptoV2DevicesToggle.hidden=!cryptoV2Ready;
-  if(el.cryptoV2Status && activeProtocolVersion===2) {
-    el.cryptoV2Status.textContent="前方秘匿性v2有効 — 端末別Olm + Megolmメッセージ鍵ラチェット";
+  if(el.cryptoV2Status && cryptoV2Required && activeProtocolVersion!==2) {
+    el.cryptoV2Status.textContent=activeCryptoMode.approvedByMe
+      ? "前方秘匿性を必須化しています。相手のv2承認を待っています。既存v1メッセージは閲覧できますが、新規送信はできません。"
+      : activeCryptoMode.approvedByPeer
+        ? "相手はv2移行を承認済みです。指紋を照合してv2へ移行してください。既存v1メッセージは閲覧できますが、新規送信はできません。"
+        : "前方秘匿性を必須化しています。相手と双方の端末登録・指紋照合・v2承認が完了するまで新規送信できません。既存v1メッセージは閲覧できます。";
+  } else if(el.cryptoV2Status && activeProtocolVersion===2) {
+    el.cryptoV2Status.textContent="前方秘匿性v2有効 — Olm Double Ratchetで鍵配送、Megolm鍵は1メッセージごとに更新";
   }
 }
 function formatCryptoDeviceTime(value) {
