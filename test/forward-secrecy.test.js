@@ -33,3 +33,13 @@ test("health diagnostics and documentation no longer claim forward secrecy is un
   assert.match(readme, /端末ストレージ全体が侵害された場合/);
   assert.doesNotMatch(readme, /公開鍵の本人確認、署名済みPreKey Bundleの検証、前方秘匿性/);
 });
+
+test("server enforces single-use Megolm session IDs even for stale clients", async () => {
+  const worker = await read("../worker/crypto-api.js");
+  const migration = await read("../database/d1-migrations/0018_forward_secrecy_sessions.sql");
+  assert.match(worker, /INSERT OR IGNORE INTO crypto_used_megolm_sessions/);
+  assert.match(worker, /CRYPTO_MEGOLM_SESSION_REUSED/);
+  assert.match(worker, /results\?\.\[1\]\?\.meta\?\.changes/);
+  assert.match(migration, /PRIMARY KEY \(conversation_id, sender_user_id, sender_device_id, session_id\)/);
+  assert.match(migration, /REFERENCES conversations\(id\) ON DELETE CASCADE/);
+});
