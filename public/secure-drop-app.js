@@ -552,6 +552,7 @@ async function start() {
       return;
     }
     ui.content.hidden = false;
+    document.querySelector("#service-view-tabs").hidden = false;
     await loadContacts();
     await refresh();
     ui.recipient.addEventListener("change", updateSendButton);
@@ -595,6 +596,9 @@ function activateServiceView(target){
   });
 }
 serviceTabs.forEach(button=>button.addEventListener("click",()=>activateServiceView(button.dataset.serviceTarget)));
+const pendingTab=document.querySelector('[data-service-target="service-pending-card"]');
+const pendingCard=document.querySelector("#service-pending-card");
+if(pendingTab&&pendingCard){const syncPendingTab=()=>{pendingTab.hidden=pendingCard.hidden;if(pendingCard.hidden&&pendingTab.classList.contains("active"))activateServiceView("service-files-card");};new MutationObserver(syncPendingTab).observe(pendingCard,{attributes:true,attributeFilter:["hidden"]});syncPendingTab();}
 activateServiceView("service-upload-card");
 
 start();
