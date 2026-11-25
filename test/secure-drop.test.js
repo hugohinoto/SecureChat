@@ -79,6 +79,14 @@ test("SecureDrop rejects archive extensions and compressed container signatures 
   Object.defineProperty(ordinary, "name", { value: "notes.txt" });
   await assert.doesNotReject(() => assertSecureDropFileAllowed(ordinary));
 
+  // .mcworld is the sole exception: ZIP bytes and ZIP MIME are accepted only
+  // when the original filename ends in .mcworld.
+  const minecraftWorld = new Blob([Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00])], {
+    type: "application/zip"
+  });
+  Object.defineProperty(minecraftWorld, "name", { value: "world.mcworld" });
+  await assert.doesNotReject(() => assertSecureDropFileAllowed(minecraftWorld));
+
   for (const [name, bytes] of [
     ["scene.blend", [0x42, 0x4c, 0x45, 0x4e, 0x44, 0x00, 0x01]],
     ["project.hfx", [0x48, 0x46, 0x58, 0x00, 0xff, 0x10]],

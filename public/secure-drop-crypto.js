@@ -31,7 +31,10 @@ function containsSignature(bytes, signature) {
 export async function assertSecureDropFileAllowed(file) {
   if (!(file instanceof Blob)) throw new TypeError("SECURE_DROP_FILE_REQUIRED");
   assertSecureDropFileNameAllowed(file.name);
-  if (typeof file.type === "string" && ARCHIVE_MIME.test(file.type.split(";")[0].trim())) {
+  // .mcworld is a ZIP-based Minecraft world package; allow this extension only.
+  const isMcworld = typeof file.name === "string" && /\.mcworld$/i.test(file.name.trim());
+  if (!isMcworld && typeof file.type === "string" &&
+      ARCHIVE_MIME.test(file.type.split(";")[0].trim())) {
     throw archiveNotSupported();
   }
 
@@ -61,8 +64,8 @@ export async function assertSecureDropFileAllowed(file) {
   const cab = startsWith([0x4d, 0x53, 0x43, 0x46]);
   const tar = head.length >= 262 &&
     new TextDecoder().decode(head.slice(257, 262)) === "ustar";
-  if (zipFound || gzip || bzip2 || xz || zstd || lz4 || sevenZip || rar ||
-      cab || tar) {
+  if (!isMcworld && (zipFound || gzip || bzip2 || xz || zstd || lz4 ||
+      sevenZip || rar || cab || tar)) {
     throw archiveNotSupported();
   }
 }
