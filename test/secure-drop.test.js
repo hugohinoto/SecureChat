@@ -148,10 +148,8 @@ test("server verifies sender ECDSA signatures over the envelope and ciphertext d
     ciphertextSha256: envelope.ciphertextSha256
   };
   const message = new TextEncoder().encode(
-    "SecureChat SecureDrop sender signature v1
-" +
-    envelope.senderUserId + "
-" + JSON.stringify(fields)
+    "SecureChat SecureDrop sender signature v1\n" +
+    envelope.senderUserId + "\n" + JSON.stringify(fields)
   );
   envelope.senderSignature = base64(new Uint8Array(await crypto.subtle.sign(
     { name: "ECDSA", hash: "SHA-256" }, signer.privateKey, message
