@@ -503,9 +503,24 @@ async function sendRoomMessage(request, env, session, conversationId, now) {
   const encoded = JSON.stringify(body.encrypted_event);
   if (encoded.length < 80 || encoded.length > 12000) return json({ error: "CRYPTO_ENVELOPE_SIZE_INVALID" }, 400);
   const id = crypto.randomUUID(), expiresAt = now + 60 * 60 * 1000;
-  await env.DB.prepare(
-    "INSERT INTO encrypted_messages (id, conversation_id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at, protocol_version, sender_device_id) VALUES (?, ?, ?, ?, '', 'MATRIX-MEGOLM-V1', ?, ?, 2, ?)"
-  ).bind(id, conversationId, session.id, encoded, now, expiresAt, deviceId).run();
+  // Enforce one-time use of each Megolm session ID server-side. This prevents
+  // stale clients from silently continuing to send multiple messages under a
+  // 100-message session even if their local SDK settings are outdated.
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO crypto_used_megolm_sessions (conversation_id, sender_user_id, sender_device_id, session_id, message_id, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(conversationId, session.id, deviceId, body.encrypted_event.session_id, id, now),
+    env.DB.prepare(
+      "INSERT INTO encrypted_messages (id, conversation_id, sender_user_id, ciphertext, nonce, algorithm, created_at, expires_at, protocol_version, sender_device_id) SELECT ?, ?, ?, ?, '', 'MATRIX-MEGOLM-V1', ?, ?, 2, ? WHERE EXISTS (SELECT 1 FROM crypto_used_megolm_sessions WHERE conversation_id=? AND sender_user_id=? AND sender_device_id=? AND session_id=? AND message_id=?)"
+    ).bind(id, conversationId, session.id, encoded, now, expiresAt, deviceId,
+      conversationId, session.id, deviceId, body.encrypted_event.session_id, id)
+  ]);
+  if (Number(results?.[1]?.meta?.changes || 0) !== 1) {
+    return json({
+      error: "CRYPTO_MEGOLM_SESSION_REUSED",
+      message: "この暗号セッション鍵はすでに使用されています。暗号化状態を同期して再送信してください。"
+    }, 409);
+  }
   return json({ id, createdAt: now, expiresAt, protocolVersion: 2 }, 201);
 }
 
@@ -521,7 +536,14 @@ export async function handleCryptoApi(request, env, session, { url, now = Date.n
     const devices = await env.DB.prepare(
       "SELECT COUNT(*) AS count FROM crypto_devices WHERE user_id=? AND revoked_at IS NULL"
     ).bind(session.id).first();
-    return json({ enabled: true, protocolVersion: 2, deviceCount: Number(devices?.count || 0) });
+    return json({
+      enabled: true,
+      protocolVersion: 2,
+      forwardSecrecyRequired: true,
+      forwardSecrecyPolicy: "one-megolm-message-session-over-olm-double-ratchet",
+      sessionRotationMessages: 1,
+      deviceCount: Number(devices?.count || 0)
+    });
   }
   if (path === "/api/crypto/devices" && method === "GET") {
     const rows = await env.DB.prepare(
