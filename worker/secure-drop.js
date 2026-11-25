@@ -209,7 +209,7 @@ async function createPendingTransfer(env, details) {
       "UPDATE secure_drop_credit_accounts SET balance=balance-?, updated_at=? WHERE user_id=? AND month_key=? AND balance>=? AND ((SELECT COALESCE(SUM(stored_size_bytes),0) FROM secure_drop_transfers WHERE storage_backend='d1' AND status IN ('pending','ready','deleting')) + (SELECT COALESCE(SUM(c.chunk_size_bytes),0) FROM secure_drop_file_chunks c WHERE NOT EXISTS (SELECT 1 FROM secure_drop_transfers t WHERE t.id=c.transfer_id AND t.storage_backend='d1')) + ?) <= ?"
     ).bind(credits, now, ownerId, month, credits, storedBytes, capacityLimit),
     env.DB.prepare(
-      "INSERT INTO secure_drop_transfers (id, user_id, month_key, object_key, token_hash, original_size_bytes, stored_size_bytes, created_at, expires_at, download_count, download_limit, recipient_user_id, key_envelope_json, status, updated_at, storage_backend, priority) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 3, ?, ?, 'pending', ?, 'd1', ? WHERE changes()=1"
+      "INSERT INTO secure_drop_transfers (id, user_id, month_key, object_key, token_hash, original_size_bytes, stored_size_bytes, created_at, expires_at, download_count, paid_download_count, download_limit, recipient_user_id, key_envelope_json, status, updated_at, storage_backend, priority) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 3, ?, ?, 'pending', ?, 'd1', ? WHERE changes()=1"
     ).bind(transferId, ownerId, month, objectKey, tokenHash, originalBytes, storedBytes, now, expiresAt, recipientId, envelopeJson, now, priority),
     env.DB.prepare(
       "INSERT INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) SELECT ?, ?, ?, ?, 'upload_debit', ?, ? WHERE EXISTS (SELECT 1 FROM secure_drop_transfers WHERE id=? AND status='pending')"
@@ -633,7 +633,7 @@ export async function handleSecureDropApi(request, env, context) {
           storedSizeBytes: Number(row.stored_size_bytes),
           createdAt: Number(row.created_at),
           expiresAt: Number(row.expires_at),
-          downloadCount: Number(row.download_count),
+          downloadCount: Number(row.download_count) + Number(row.paid_download_count || 0),
           downloadLimit: DOWNLOAD_LIMIT,
           downloadsRemaining: Math.max(0, DOWNLOAD_LIMIT - Number(row.download_count)),
           downloadCreditsRequired: received && Number(row.download_count) >= DOWNLOAD_LIMIT
@@ -737,10 +737,10 @@ export async function handleSecureDropApi(request, env, context) {
         "UPDATE secure_drop_credit_accounts SET balance=balance-?, updated_at=? WHERE user_id=? AND month_key=? AND balance>=? AND EXISTS (SELECT 1 FROM secure_drop_transfers WHERE id=? AND recipient_user_id=? AND month_key=? AND status='ready' AND download_count>=3)"
       ).bind(downloadCredits, now, session.id, currentMonth, downloadCredits, transferId, session.id, currentMonth),
       env.DB.prepare(
-        "UPDATE secure_drop_transfers SET download_count=download_count+1, updated_at=? WHERE id=? AND month_key=? AND expires_at>? AND status='ready' AND recipient_user_id=? AND (download_count<3 OR changes()=1) RETURNING download_count"
+        "UPDATE secure_drop_transfers SET download_count=CASE WHEN download_count<3 THEN download_count+1 ELSE download_count END, paid_download_count=CASE WHEN download_count>=3 THEN paid_download_count+1 ELSE paid_download_count END, updated_at=? WHERE id=? AND month_key=? AND expires_at>? AND status='ready' AND recipient_user_id=? AND (download_count<3 OR changes()=1) RETURNING download_count, paid_download_count"
       ).bind(now, transferId, currentMonth, now, session.id),
       env.DB.prepare(
-        "INSERT INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) SELECT 'download:' || id || ':' || download_count, recipient_user_id, month_key, ?, 'download_debit', id || ':' || download_count, ? FROM secure_drop_transfers WHERE id=? AND recipient_user_id=? AND month_key=? AND download_count>3 AND changes()=1"
+        "INSERT INTO secure_drop_credit_ledger (id, user_id, month_key, delta, reason, reference_id, created_at) SELECT 'download:' || id || ':' || paid_download_count, recipient_user_id, month_key, ?, 'download_debit', id || ':' || paid_download_count, ? FROM secure_drop_transfers WHERE id=? AND recipient_user_id=? AND month_key=? AND paid_download_count>0 AND changes()=1"
       ).bind(-downloadCredits, now, transferId, session.id, currentMonth)
     ]);
     const consumed = consumption?.[1]?.results?.[0] || null;
