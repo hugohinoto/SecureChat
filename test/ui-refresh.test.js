@@ -79,8 +79,8 @@ test("Chat and SecureDrop share the same workspace sidebar structure and navigat
     assert.ok(hasClass(html, token), `Chat sidebar missing class ${token}`);
     assert.ok(hasClass(secureDropHtml, token), `SecureDrop sidebar missing class ${token}`);
   }
-  assert.match(refreshCss, /\\.service-workspace-layout\\{\\s*grid-template-columns:minmax\\(270px,318px\\)/);
-  assert.match(refreshCss, /@media\\(max-width:680px\\)/);
+  assert.match(refreshCss, /\.service-workspace-layout\{\s*grid-template-columns:minmax\(270px,318px\)/);
+  assert.match(refreshCss, /@media\(max-width:680px\)/);
   assert.match(secureDropHtml, /id="service-user"/);
   assert.match(secureDropHtml, /id="service-logout"/);
 });
