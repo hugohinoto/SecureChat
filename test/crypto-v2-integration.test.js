@@ -175,7 +175,6 @@ async function shareOneMessageSession(machine, transport, room, alice, bob) {
     const requests = await machine.shareRoomKey(room, users, settings);
     for (const request of requests) await transport.handle(machine, request);
   } finally {
-    sharing.free();
     settings.free();
   }
   await transport.flush(machine);
