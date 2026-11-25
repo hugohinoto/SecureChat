@@ -436,6 +436,7 @@ test("SecureDrop keeps three free downloads and meters later downloads atomicall
   assert.match(source, /paid_download_count=CASE WHEN download_count>=3 THEN paid_download_count\+1 ELSE paid_download_count END/);
   assert.match(source, /balance=balance-\?/);
   assert.match(source, /download_count<3 OR changes\(\)=1/);
+  assert.match(source, /status='ready' AND expires_at>\?/);
   assert.match(source, /'download_debit'/);
   assert.match(source, /recipient_user_id=\?/);
   assert.doesNotMatch(source, /downloadToken/);
