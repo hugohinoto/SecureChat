@@ -153,6 +153,14 @@ export async function handleAdminFeatures(request, env, deps) {
         return json({ sent: true, id, createdAt: now }, 201);
       }
       const reportMatch = path.match(/^\/api\/admin\/bug-reports\/([a-f0-9-]+)$/i);
+      if (reportMatch && method === "DELETE") {
+        const existing = await env.DB.prepare("SELECT id FROM bug_reports WHERE id=?").bind(reportMatch[1]).first();
+        if (!existing) return json({ error: "BUG_REPORT_NOT_FOUND" }, 404);
+        const result = await env.DB.prepare("DELETE FROM bug_reports WHERE id=?").bind(reportMatch[1]).run();
+        if (!result.meta?.changes) return json({ error: "BUG_REPORT_NOT_FOUND" }, 404);
+        await deps.writeAdminAudit(env, admin, "bug-report.delete", reportMatch[1], { repliesCascadeDeleted: true });
+        return json({ deleted: true });
+      }
       if (reportMatch && method === "PUT") {
         let body; try { body = await deps.readJson(request); } catch { return json({ error: "INVALID_JSON" }, 400); }
         if (!["open", "triaged", "resolved"].includes(body?.status)) return json({ error: "INVALID_STATUS" }, 400);
