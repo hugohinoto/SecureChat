@@ -44,3 +44,15 @@ test("reporter page renders replies and admin console provides a reply composer"
   assert.match(admin, /replyInput\.maxLength=4000/);
   assert.match(admin, /text\.textContent=reply\.message/);
 });
+
+test("only admins can delete bug reports; deletion cascades replies and is audited", async () => {
+  const worker = await read("../worker/admin-features.js");
+  const admin = await read("../public/admin.js");
+  assert.match(worker, /const reportsRoute = .*bug-reports/);
+  assert.match(worker, /if \(reportMatch && method === "DELETE"\)/);
+  assert.match(worker, /DELETE FROM bug_reports WHERE id=\?/);
+  assert.match(worker, /writeAdminAudit\(env, admin, "bug-report\.delete"/);
+  assert.match(admin, /method:"DELETE"/);
+  assert.match(admin, /window\.confirm/);
+  assert.match(admin, /報告を削除/);
+});
