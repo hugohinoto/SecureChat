@@ -152,7 +152,7 @@ export async function handleAdminFeatures(request, env, deps) {
         await deps.writeAdminAudit(env, admin, "bug-report.reply", report.id, { replyId: id, encrypted: true });
         return json({ sent: true, id, createdAt: now }, 201);
       }
-      const reportMatch = path.match(/^\\/api\\/admin\\/bug-reports\\/([a-f0-9-]+)$/i);
+      const reportMatch = path.match(/^\/api\/admin\/bug-reports\/([a-f0-9-]+)$/i);
       if (reportMatch && method === "DELETE") {
         const existing = await env.DB.prepare("SELECT id FROM bug_reports WHERE id=?").bind(reportMatch[1]).first();
         if (!existing) return json({ error: "BUG_REPORT_NOT_FOUND" }, 404);
