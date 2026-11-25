@@ -70,3 +70,16 @@ test("v2 conversations cannot silently fall back to v1 in a tab without device o
   assert.ok(app.includes("このタブでは端末鍵を開けていないため送信・復号できません"));
   assert.ok(app.includes("await closeCryptoV2Session()"));
 });
+
+
+test("Chat and SecureDrop share the same workspace sidebar structure and navigation styles", () => {
+  const secureDropHtml = readFileSync(new URL("../public/secure-drop.html", import.meta.url), "utf8");
+  for (const token of ['class="brand"', 'class="brand-mark"', 'class="sidebar-section-label"', 'class="workspace-card"', 'class="workspace-navigation"', 'class="workspace-nav-link active"', 'class="profile-card"']) {
+    assert.ok(html.includes(token), `Chat sidebar missing ${token}`);
+    assert.ok(secureDropHtml.includes(token), `SecureDrop sidebar missing ${token}`);
+  }
+  assert.match(refreshCss, /\.service-workspace-layout\{\s*grid-template-columns:minmax\(270px,318px\)/);
+  assert.match(refreshCss, /@media\(max-width:680px\)/);
+  assert.match(secureDropHtml, /id="service-user"/);
+  assert.match(secureDropHtml, /id="service-logout"/);
+});
