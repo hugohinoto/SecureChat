@@ -215,4 +215,27 @@ window.addEventListener("focus",revalidateVisibleAdminConsole);
 document.addEventListener("visibilitychange",()=>{
  if(document.visibilityState==="visible")revalidateVisibleAdminConsole();
 });
+
+function activateAdminView(targetId){
+ const targets=["stats","security-panel","announcements-panel","users-panel","reports-panel","audit-panel","ops-panel"];
+ for(const id of targets){const node=document.getElementById(id);if(!node)continue;const active=id===targetId;node.classList.toggle("active-view",active);node.hidden=!active;}
+ document.querySelectorAll(".tree-item,.activity-icon").forEach(link=>{
+  const active=link.getAttribute("href")==="#"+targetId;
+  link.classList.toggle("active",active);
+  if(active)link.setAttribute("aria-current","page");else link.removeAttribute("aria-current");
+ });
+ const label=document.querySelector('.tree-item[href="#'+targetId+'"]')?.textContent?.trim().replace(/⌘1/g,"").trim()||"概要";
+ const tab=document.querySelector(".editor-tab");
+ if(tab)tab.innerHTML='<span class="tab-file-icon">▦</span> '+label+' <span class="tab-x">×</span>';
+}
+document.querySelectorAll(".tree-item,.activity-icon").forEach(link=>{
+ link.addEventListener("click",event=>{
+  const targetId=link.getAttribute("href")?.slice(1);
+  if(!targetId)return;
+  event.preventDefault();
+  activateAdminView(targetId);
+ });
+});
+activateAdminView("stats");
+
 initializeAdminConsole();

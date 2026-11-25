@@ -35,6 +35,13 @@
       受信者の署名付き公開鍵と、この端末で別経路照合済みの指紋を確認してから送受信します。
     </section>
 
+    <nav class="service-view-tabs" id="service-view-tabs" aria-label="SecureDropの画面" hidden>
+      <button type="button" class="active" data-service-target="service-upload-card" aria-selected="true">ファイル送信</button>
+      <button type="button" data-service-target="service-usage-card" aria-selected="false">利用状況</button>
+      <button type="button" data-service-target="service-files-card" aria-selected="false">ファイル一覧</button>
+      <button type="button" data-service-target="service-pending-card" aria-selected="false" hidden>再送信待ち</button>
+    </nav>
+
     <section class="service-auth-card" id="service-auth" hidden>
       <h2>ログインが必要です</h2>
       <p>SecureChat Labでログインしてから、このサービスを開いてください。</p>
@@ -49,7 +56,7 @@
 
     <section id="service-content" hidden>
       <div class="service-grid">
-        <section class="service-card service-upload-card">
+        <section class="service-card service-upload-card" id="service-upload-card" data-service-view>
           <div class="service-card-heading">
             <div>
               <p class="service-eyebrow">SEND A FILE</p>
@@ -76,7 +83,7 @@
           <p class="service-help" id="service-upload-status" aria-live="polite">送信先を選択してください。</p>
         </section>
 
-        <section class="service-card service-usage-card">
+        <section class="service-card service-usage-card" id="service-usage-card" data-service-view hidden>
           <div class="service-card-heading">
             <div>
               <p class="service-eyebrow">ACCOUNT & STORAGE</p>
@@ -96,7 +103,7 @@
         </section>
       </div>
 
-      <section class="service-card service-files-card">
+      <section class="service-card service-files-card" id="service-files-card" data-service-view hidden>
         <div class="service-card-heading service-files-heading">
           <div>
             <p class="service-eyebrow">TRANSFER HISTORY</p>
@@ -110,7 +117,7 @@
         </div>
       </section>
 
-      <section class="service-card service-pending-card" id="service-pending-card" hidden>
+      <section class="service-card service-pending-card" id="service-pending-card" data-service-view hidden>
         <div class="service-card-heading">
           <div>
             <p class="service-eyebrow">ON THIS DEVICE</p>

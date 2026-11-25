@@ -1005,3 +1005,28 @@ button:disabled { cursor: not-allowed !important; }
 .service-launch-copy strong { font-size:12px; }
 .service-launch-copy small { color:#91a5be; font-size:10px; }
 .service-launch-arrow { margin-left:auto; color:#9ac9d9; font-size:15px; }
+
+
+/* Authentication overlays fit compact viewports; only the conversation timeline scrolls. */
+.auth-card{overflow:hidden;max-height:calc(100dvh - 24px);padding:clamp(13px,2.5vh,25px)}
+.auth-brand-mark{width:36px;height:36px;margin-bottom:8px}
+.auth-brand-mark svg{width:23px;height:23px}
+.auth-card h2{margin:6px 0;font-size:19px}
+.auth-description{margin:0 0 10px;font-size:11px;line-height:1.45}
+.auth-tabs{margin-bottom:10px}
+.auth-tab{min-height:34px}
+.auth-label{margin:8px 0 4px}
+.auth-input{min-height:39px;padding:8px 10px}
+.auth-field-hint{margin-top:3px;font-size:9px;line-height:1.35}
+.auth-submit{min-height:40px;margin-top:9px}
+.auth-security-note{margin-top:10px;padding:8px;gap:6px}
+.auth-security-note p{margin:0;font-size:9px;line-height:1.45}
+@media(max-height:680px){
+ .auth-card{padding:11px 16px}
+ .auth-brand-mark{display:none}
+ .auth-description{margin-bottom:7px}
+ .auth-tabs{margin-bottom:7px}
+ .auth-label{margin-top:6px}
+ .auth-security-note{margin-top:7px}
+ .auth-security-note p{font-size:8px;line-height:1.35}
+}

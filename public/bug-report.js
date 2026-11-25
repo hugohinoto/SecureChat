@@ -7,6 +7,15 @@ async function api(path,options={}){
  if(!response.ok){const message=data.error==="UNAUTHENTICATED"?"ログインが必要です。SecureChatにログインしてから報告してください。":data.error==="DATA_ENCRYPTION_NOT_CONFIGURED"?"保存データ暗号鍵が未設定のため、報告を安全に保存できません。管理者へ連絡してください。":data.error==="RATE_LIMITED"?"送信回数の上限です。15分ほど待ってから再試行してください。":data.error||"送信できませんでした。";throw new Error(message);}
  return data;
 }
+
+const reportTabs=document.querySelectorAll("[data-report-target]");
+function activateReportView(target){
+ document.querySelectorAll("[data-report-view]").forEach(panel=>{panel.hidden=panel.id!==target;});
+ reportTabs.forEach(button=>{const active=button.dataset.reportTarget===target;button.classList.toggle("active",active);button.setAttribute("aria-selected",String(active));});
+}
+reportTabs.forEach(button=>button.addEventListener("click",()=>activateReportView(button.dataset.reportTarget)));
+activateReportView("report-panel");
+
 (async()=>{
  try{
   const me=await api("/api/auth/me");

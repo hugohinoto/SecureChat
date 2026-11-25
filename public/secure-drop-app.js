@@ -552,6 +552,7 @@ async function start() {
       return;
     }
     ui.content.hidden = false;
+    document.querySelector("#service-view-tabs").hidden = false;
     await loadContacts();
     await refresh();
     ui.recipient.addEventListener("change", updateSendButton);
@@ -580,4 +581,24 @@ async function start() {
     if (detail) detail.textContent = errorText(failure);
   }
 }
+
+const serviceTabs=document.querySelectorAll("[data-service-target]");
+function activateServiceView(target){
+  document.querySelectorAll("[data-service-view]").forEach(section=>{
+    const active=section.id===target;
+    section.hidden=!active;
+    section.classList.toggle("active-service-view",active);
+  });
+  serviceTabs.forEach(button=>{
+    const active=button.dataset.serviceTarget===target;
+    button.classList.toggle("active",active);
+    button.setAttribute("aria-selected",String(active));
+  });
+}
+serviceTabs.forEach(button=>button.addEventListener("click",()=>activateServiceView(button.dataset.serviceTarget)));
+const pendingTab=document.querySelector('[data-service-target="service-pending-card"]');
+const pendingCard=document.querySelector("#service-pending-card");
+if(pendingTab&&pendingCard){const syncPendingTab=()=>{pendingTab.hidden=pendingCard.hidden;if(pendingCard.hidden&&pendingTab.classList.contains("active"))activateServiceView("service-files-card");};new MutationObserver(syncPendingTab).observe(pendingCard,{attributes:true,attributeFilter:["hidden"]});syncPendingTab();}
+activateServiceView("service-upload-card");
+
 start();
