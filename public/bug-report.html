@@ -27,9 +27,13 @@
       </label>
       <label>タイトル<input id="report-title" maxlength="100" required placeholder="例：メッセージ送信後に表示が更新されない"></label>
       <label>詳しい内容<textarea id="report-description" rows="5" maxlength="5000" required placeholder="発生した問題や状況を入力してください"></textarea></label>
-      <label>再現手順（任意）<textarea id="report-steps" rows="3" maxlength="2500" placeholder="1. …&#10;2. …"></textarea></label>
-      <label>期待した動作（任意）<textarea id="report-expected" rows="2" maxlength="1500"></textarea></label>
-      <label>実際の動作（任意）<textarea id="report-actual" rows="2" maxlength="1500"></textarea></label>
+      <details class="report-advanced"><summary>任意の追加情報を入力</summary>
+        <div class="report-advanced-grid">
+          <label>再現手順（任意）<textarea id="report-steps" rows="2" maxlength="2500" placeholder="1. …&#10;2. …"></textarea></label>
+          <label>期待した動作（任意）<textarea id="report-expected" rows="2" maxlength="1500"></textarea></label>
+          <label>実際の動作（任意）<textarea id="report-actual" rows="2" maxlength="1500"></textarea></label>
+        </div>
+      </details>
       <p class="muted">パスワード、招待コード、ワンタイムコード、秘密鍵、会話本文などの機密情報は入力しないでください。送信は1 IPあたり15分に3回までです。</p>
       <button class="primary" id="report-submit" type="submit">暗号化して送信</button>
     </form>
