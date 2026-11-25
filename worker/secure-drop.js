@@ -734,7 +734,7 @@ export async function handleSecureDropApi(request, env, context) {
     // with incrementing the counter; a failed debit cannot consume an allowance.
     const consumption = await env.DB.batch([
       env.DB.prepare(
-        "UPDATE secure_drop_credit_accounts SET balance=balance-?, updated_at=? WHERE user_id=? AND month_key=? AND balance>=? AND EXISTS (SELECT 1 FROM secure_drop_transfers WHERE id=? AND recipient_user_id=? AND month_key=? AND status='ready' AND download_count>=3)"
+        "UPDATE secure_drop_credit_accounts SET balance=balance-?, updated_at=? WHERE user_id=? AND month_key=? AND balance>=? AND EXISTS (SELECT 1 FROM secure_drop_transfers WHERE id=? AND recipient_user_id=? AND month_key=? AND status='ready' AND expires_at>? AND download_count>=3)"
       ).bind(downloadCredits, now, session.id, currentMonth, downloadCredits, transferId, session.id, currentMonth),
       env.DB.prepare(
         "UPDATE secure_drop_transfers SET download_count=CASE WHEN download_count<3 THEN download_count+1 ELSE download_count END, paid_download_count=CASE WHEN download_count>=3 THEN paid_download_count+1 ELSE paid_download_count END, updated_at=? WHERE id=? AND month_key=? AND expires_at>? AND status='ready' AND recipient_user_id=? AND (download_count<3 OR changes()=1) RETURNING download_count, paid_download_count"
