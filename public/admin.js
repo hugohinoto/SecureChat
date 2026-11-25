@@ -96,7 +96,13 @@ async function loadBugReports(){
    try{await api("/api/admin/bug-reports/"+item.id+"/replies",{method:"POST",body:{message:messageText}});message("返信を暗号化して送信しました。","ok");await loadBugReports();}
    catch(error){message(error.message,"error");send.disabled=false;}
   });
-  actions.append(select);copy.append(replyForm);card.append(copy,actions);root.append(card);
+  const remove=makeButton("報告を削除",async()=>{
+   if(!window.confirm("この不具合報告と返信履歴を完全に削除します。この操作は取り消せません。よろしいですか？"))return;
+   remove.disabled=true;
+   try{await api("/api/admin/bug-reports/"+item.id,{method:"DELETE"});message("不具合報告と返信履歴を削除しました。","ok");await loadBugReports();}
+   catch(error){message(error.message,"error");remove.disabled=false;}
+  },"danger");
+  actions.append(select,remove);copy.append(replyForm);card.append(copy,actions);root.append(card);
  }
  if(!d.reports.length){const p=document.createElement("p");p.className="muted";p.textContent="バグ報告はまだありません。";root.append(p);}
 }
