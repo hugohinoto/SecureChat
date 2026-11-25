@@ -29,9 +29,12 @@ test("refreshed UI includes keyboard focus, reduced-motion, and mobile navigatio
   assert.match(refreshCss, /body\.mobile-list/);
 });
 
-test("UI clearly states that the current messaging prototype has no forward secrecy", () => {
-  assert.match(html, /メッセージ単位の鍵更新（前方秘匿性）には未対応/);
-  assert.match(html, /機密情報は送信しないでください/);
+test("UI reports forward secrecy per conversation and retains the v1 caution", () => {
+  const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(html, /暗号化方式は会話ごとに異なります/);
+  assert.match(html, /暗号実装は未監査のため/);
+  assert.match(app, /現行v1は会話単位の長期鍵を使用し、前方秘匿性はありません/);
+  assert.match(app, /前方秘匿性v2 — 端末別暗号化/);
 });
 
 test("device-scoped crypto vault uses a single IndexedDB readwrite transaction", () => {
