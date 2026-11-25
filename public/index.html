@@ -180,7 +180,15 @@
   </main>
 
 
-  <section class="auth-gate" id="auth-gate" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+  <section class="auth-loading" id="auth-loading" role="status" aria-live="polite">
+    <div class="auth-loading-card">
+      <span class="auth-loading-mark" aria-hidden="true">S</span>
+      <strong>SecureChat</strong>
+      <span>ログイン状態を確認しています…</span>
+    </div>
+  </section>
+
+  <section class="auth-gate" id="auth-gate" role="dialog" aria-modal="true" aria-labelledby="auth-title" hidden>
     <div class="auth-card glass-panel">
       <div class="auth-brand-mark" aria-hidden="true">
         <svg viewBox="0 0 32 32" fill="none">

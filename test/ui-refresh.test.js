@@ -70,3 +70,13 @@ test("v2 conversations cannot silently fall back to v1 in a tab without device o
   assert.ok(app.includes("このタブでは端末鍵を開けていないため送信・復号できません"));
   assert.ok(app.includes("await closeCryptoV2Session()"));
 });
+
+
+test("chat login form stays hidden while the existing session and chat state initialize", () => {
+  assert.match(html, /id="auth-loading"[^>]*role="status"/);
+  assert.match(html, /id="auth-gate"[^>]*hidden>/);
+  assert.match(app, /authLoading: \$\("#auth-loading"\)/);
+  assert.match(app, /el\.authLoading\.hidden=true;\s*showAuth\(\);/);
+  assert.match(app, /await signIn\(session\.user\);\s*el\.authLoading\.hidden=true;/);
+  assert.match(refreshCss, /\.auth-loading\[hidden\] \{ display: none; \}/);
+});

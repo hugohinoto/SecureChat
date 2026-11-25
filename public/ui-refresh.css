@@ -1074,3 +1074,36 @@ button:disabled { cursor: not-allowed !important; }
  .service-workspace-main .service-topbar{margin-bottom:6px}
  .service-workspace-main .service-shell{gap:7px}
 }
+
+
+/* Keep the login form hidden until the existing session has been checked. */
+.auth-loading {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #080f1d;
+}
+.auth-loading[hidden] { display: none; }
+.auth-loading-card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  color: #dce9f8;
+  font-size: 12px;
+}
+.auth-loading-card strong { font-size: 17px; letter-spacing: .3px; }
+.auth-loading-card > span:last-child { color: #91a4bd; font-size: 11px; }
+.auth-loading-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid rgba(142,215,232,.35);
+  border-radius: 13px;
+  color: #bdeef7;
+  background: rgba(69,151,177,.15);
+  font-weight: 800;
+}
