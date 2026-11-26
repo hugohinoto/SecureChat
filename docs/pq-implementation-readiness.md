@@ -27,7 +27,7 @@ The main repository and desktop repository currently use separate package manife
 
 ### Signal libsignal candidate
 
-The official `signalapp/libsignal` repository contains Rust implementations of PQXDH and Signal's post-quantum ratchet work. The upstream repository currently declares **AGPL-3.0-only**. SecureChat's project license is Apache-2.0.
+The official `signalapp/libsignal` repository contains Rust implementations of PQXDH and Signal's post-quantum ratchet work. The upstream repository currently declares **AGPL-3.0**. SecureChat's project license is Apache-2.0.
 
 This is a material distribution and licensing decision, not a routine dependency update. Before adopting libsignal, obtain a documented license review covering the intended distribution model, whether the integration creates a combined/derivative work, and whether the project can accept the resulting obligations. Do not change SecureChat's top-level license implicitly.
 
@@ -62,7 +62,7 @@ A post-quantum or hybrid device-authentication migration requires a separately r
 
 - [x] Inspect both current package manifests and crypto-v2 entry points.
 - [x] Confirm both clients currently depend on Matrix Rust/WASM crypto.
-- [x] Record the official libsignal candidate and its AGPL-3.0-only license.
+- [x] Record the official libsignal candidate and its AGPL-3.0 license.
 - [ ] Complete license review.
 - [ ] Verify supported browser/WASM and Electron integration for a pinned release.
 - [ ] Compare viable alternatives against protocol coverage, maintenance, audit, licensing, and interoperability.
@@ -94,7 +94,7 @@ Only after Phase 0 passes:
 - No unreviewed third-party WASM wrapper.
 - No private-key or ratchet-state storage on the server.
 - No change to the Apache-2.0 project license without an explicit project decision.
-- No runtime behavior change, database migration, merge, or deployment as part of this readiness review.
+- This documentation-only review does not change runtime behavior, add a database migration, or deploy the application. It may be merged independently of the future cryptographic implementation.
 
 ## Release claim
 
