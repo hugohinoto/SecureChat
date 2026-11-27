@@ -250,7 +250,7 @@ async function api(path, options={}) {
       IDENTITY_BACKUP_INVALID:"暗号化バックアップの形式を確認できません。ページを強制再読み込みして再度ログインしてください。サイトデータは削除しないでください。",
       IDENTITY_BACKUP_PASSWORD_REQUIRED:"暗号鍵を同期するため、パスワードを入力して再ログインしてください。",
       IDENTITY_BACKUP_PASSWORD_MISMATCH:"暗号鍵バックアップを復号できません。パスワードを確認してください。",
-      IDENTITY_BACKUP_SETUP_REQUIRED:"このアカウントの暗号鍵は別端末にあります。先に元の端末で再ログインして同期バックアップを作成してください。"
+      IDENTITY_BACKUP_SETUP_REQUIRED:"この端末には復元用バックアップがありません。暗号鍵が残っている元の端末で、サイトデータを消さずにパスワードを使って再ログインしてください。元の端末で暗号化バックアップを作成してから、この端末でもう一度ログインしてください。元の端末を使えない場合、この端末だけで秘密鍵を復元することはできません。"
     };
     const code=typeof data.error==="string"&&/^[A-Z][A-Z0-9_]{1,63}$/.test(data.error)
       ? data.error : "HTTP_"+response.status;
@@ -566,10 +566,10 @@ function updateCryptoV2Controls() {
   if(cryptoV2InitializationError) return;
   if(el.cryptoV2Status && cryptoV2Required && activeProtocolVersion!==2) {
     el.cryptoV2Status.textContent=translateText(activeCryptoMode.approvedByMe
-      ? "前方秘匿性を必須化しています。相互OTP確認済み連絡先の初回鍵を確認後、自動でv2へ移行します。既存v1メッセージは閲覧できますが、新規送信はできません。"
+      ? "この会話はv2への移行待ちです。既存v1メッセージは閲覧できますが、移行が完了するまで新規送信はできません。"
       : activeCryptoMode.approvedByPeer
-        ? "相手側の確認済みです。相互OTP確認済み連絡先の初回鍵を確認後、自動でv2へ移行します。既存v1メッセージは閲覧できますが、新規送信はできません。"
-        : "前方秘匿性を必須化しています。相互OTP確認済み連絡先の初回鍵を自動で信頼し、v2への移行と鍵交換を開始します。既存v1メッセージは閲覧できます。");
+        ? "相手側の端末確認が完了しています。v2への移行処理を待っています。既存v1メッセージは閲覧できますが、新規送信はできません。"
+        : "この会話はv2への移行待ちです。双方の端末登録と鍵交換が完了するまで新規送信はできません。");
   } else if(el.cryptoV2Status && activeProtocolVersion===2) {
     el.cryptoV2Status.textContent=translateText("前方秘匿性v2有効 — Olm Double Ratchetで鍵配送、Megolm鍵は1メッセージごとに更新");
   }
@@ -691,11 +691,11 @@ async function refreshCryptoConversationMode() {
       await cryptoV2Module.prepareEncryptedConversation(currentUser.userId,activeConversation.id,activeConversation.peerUserId);
       cryptoV2StatusMessage="前方秘匿性v2有効 — 信頼済み端末間でMegolm鍵を共有します。";
     } else if(mode.approvedByMe) {
-      cryptoV2StatusMessage="この端末の確認済みです。相互OTP確認済み連絡先の初回鍵を自動で信頼後、v2と鍵交換が有効になります。";
+      cryptoV2StatusMessage="この端末の確認が完了しています。相手側の端末登録と鍵交換を待っています。";
     } else if(mode.approvedByPeer) {
-      cryptoV2StatusMessage="相手側の確認済みです。相互OTP確認済み連絡先の初回鍵を自動で信頼後、v2と鍵交換が有効になります。";
+      cryptoV2StatusMessage="相手側の端末確認が完了しています。この端末の鍵交換を待っています。";
     } else {
-      cryptoV2StatusMessage="相互OTP確認済み連絡先の初回鍵を自動で信頼し、v2への移行と鍵交換を開始します。";
+      cryptoV2StatusMessage="双方の端末登録と鍵交換を準備しています。";
     }
   } catch(error) {
     cryptoV2StatusMessage="前方秘匿性v2状態を確認できません: "+(error.code||"CRYPTO_STATUS_ERROR");
@@ -1496,8 +1496,8 @@ async function selectConversation(c) {
   lastMessageCreatedAt=0;lastMessageId="";messageLoadBusy=false;
   el.chatTitle.textContent=c.peer_user_id;
   el.chatSubtitle.textContent="@"+c.peer_user_id+" · 1対1の個別チャット";
-  el.securityTitle.textContent="暗号化チャット（試作）";
-  el.securityDescription.textContent="既存メッセージはv1で復号し、双方の端末登録と相互OTP確認済み連絡先の初回鍵確認後、端末別Olm/Megolm v2へ自動で移行します。";
+  el.securityTitle.textContent="暗号化チャット";
+  el.securityDescription.textContent="この会話の暗号化方式を確認しています。旧v1の履歴は復号互換を維持し、v2への移行が完了するまで新規送信を制限します。";
   el.securityTag.textContent="E2EE";
   el.composerHint.textContent="暗号化 · メッセージは1時間後に削除";
   welcome("暗号化チャット","このブラウザーで暗号化してから送信します。");
@@ -1517,9 +1517,9 @@ async function selectConversation(c) {
       el.securityDescription.textContent="Olmで端末間の鍵を配布し、Megolmのメッセージ鍵ラチェットで暗号化します。未確認端末には鍵を共有しません。";
       el.securityTag.textContent="RATCHET v2";
     } else {
-      el.securityTitle.textContent="暗号化方式 v1 — 試作版";
-      el.securityDescription.textContent="現行v1は会話単位の長期鍵を使用し、前方秘匿性はありません。相互OTP確認済み連絡先の初回鍵は自動で信頼され、双方の端末登録後にv2へ移行します。鍵変更時は別経路での指紋照合が必要です。";
-      el.securityTag.textContent="v1 / FSなし";
+      el.securityTitle.textContent="旧方式 v1 — 履歴の復号専用";
+      el.securityDescription.textContent="v1は会話単位の長期鍵を使用し、前方秘匿性はありません。既存メッセージの閲覧互換性を保つため残しています。v2への移行が完了するまで、この会話から新規送信はできません。";
+      el.securityTag.textContent="旧方式 / 送信停止";
     }
     await loadMessages(true);
     
