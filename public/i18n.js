@@ -1990,12 +1990,10 @@ export function translateText(value, locale = getLocale()) {
   // Exact Japanese source aliases should be translated before attempting to
   // normalize an already-localized DOM value. This avoids matching short Japanese
   // words inside longer Japanese phrases during reverse-fragment processing.
-  const directLocaleAliases = {
-    ...(TEXT_ALIASES[locale] || {}),
-    ...(LOCALIZED_DYNAMIC_ALIASES[locale] || {})
-  };
-  if (locale !== "ja" && Object.hasOwn(directLocaleAliases, value)) {
-    return directLocaleAliases[value];
+  const directLocaleAlias = TEXT_ALIASES[locale]?.[value]
+    ?? LOCALIZED_DYNAMIC_ALIASES[locale]?.[value];
+  if (locale !== "ja" && typeof directLocaleAlias === "string") {
+    return directLocaleAlias;
   }
 
   // DOM text may already have been translated during an earlier locale change.
