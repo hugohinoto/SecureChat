@@ -244,8 +244,8 @@ async function api(path, options={}) {
     const known={
       USER_NOT_FOUND:"そのユーザーIDは見つかりません。",
       RECIPIENT_KEY_MISSING:"相手がまだ公開鍵を登録していません。相手に一度ログインしてもらってください。",
-      MUTUAL_OTP_REQUIRED:"双方のワンタイムコード確認が完了していません。",
-      CONTACT_PERMISSION_REQUIRED:"OTPによる連絡先確認が解除されたため、このチャットは利用できません。",
+      CONTACT_APPROVAL_REQUIRED:"相手の連絡先招待を承認してください。",
+      CONTACT_PERMISSION_REQUIRED:"連絡先確認が解除されたため、このチャットは利用できません。",
       CONTACT_NOT_FOUND:"このユーザーは連絡先にありません。",
       OTP_INVALID:"コードが正しくありません。",
       OTP_NOT_CONFIGURED:"サーバー側のOTP秘密鍵が未設定です。Cloudflare WorkerのSecretにCONTACT_OTP_PEPPERを登録してください。",
@@ -316,8 +316,8 @@ function deviceAuthorizationMessage(userId,deviceId,curve25519Key,ed25519Key) {
 }
 async function verifiedAccountRoot(userId) {
   if(userId===currentUser.userId)return {identitySigningPublicKey};
-  if(!await isOtpVerifiedContact(userId)) {
-    throw appError("MUTUAL_OTP_REQUIRED","相互OTP確認済みの連絡先ではありません。");
+  if(!await isVerifiedContact(userId)) {
+    throw appError("CONTACT_APPROVAL_REQUIRED","連絡先として承認されていません。");
   }
   const peer=await api("/api/keys/"+encodeURIComponent(userId));
   if(!peer.identitySigningPublicKey || !peer.identityKeySignature) {
@@ -335,7 +335,7 @@ async function verifiedAccountRoot(userId) {
   }
   return peer;
 }
-async function isOtpVerifiedContact(peerUserId) {
+async function isVerifiedContact(peerUserId) {
   const result=await api("/api/contacts");
   return Array.isArray(result.contacts) &&
     result.contacts.some(contact=>contact?.userId===peerUserId);
@@ -389,7 +389,7 @@ async function confirmPeerFingerprint(peerUserId,peer) {
   return true;
 }
 async function isPeerIdentityTrustedForAutomaticCrypto(peerUserId) {
-  // The coordinator only invokes this callback for mutual OTP contacts.
+  // The coordinator only invokes this callback for authenticated, explicitly approved contacts.
   const peer = await api("/api/keys/" + encodeURIComponent(peerUserId));
   if (!peer.identitySigningPublicKey || !peer.identityKeySignature) {
     throw appError("IDENTITY_KEY_LEGACY_FORMAT", "相手の署名付きアカウント鍵がありません。");
@@ -416,7 +416,7 @@ async function isPeerIdentityTrustedForAutomaticCrypto(peerUserId) {
     peerPins[peerUserId] = peer.identitySigningPublicKey;
     changed = true;
   }
-  // Web already uses first-use TOFU for mutual OTP contacts in deriveKey().
+  // Web uses first-use TOFU only for authenticated, explicitly approved contacts.
   // Keep the same local pinning policy here; never overwrite an existing pin.
   if (verifiedPeerPins[peerUserId] !== peer.identitySigningPublicKey) {
     verifiedPeerPins[peerUserId] = peer.identitySigningPublicKey;
@@ -466,7 +466,7 @@ async function runAutomaticCryptoMaintenance({ force = false } = {}) {
       } else {
         cryptoV2StatusMessage = active.mode.approvedByMe
           ? "この端末のV2移行準備は完了しました。相手側の準備を自動で待機しています。"
-          : "相互OTP確認済みの連絡先を確認し、V2鍵交換を自動で準備しています。";
+          : "承認済み連絡先を確認し、V2鍵交換を自動で準備しています。";
       }
       updateCryptoV2Controls();
       updateSend();
@@ -919,8 +919,8 @@ async function deriveKey(conversationId,peerUserId) {
     identityProofMessage(peerUserId,peer.identityPublicKey)
   );
   if(!proofValid)throw appError("IDENTITY_KEY_SIGNATURE_INVALID","相手の公開鍵署名を検証できません。安全のため接続を中止しました。");
-  if(!await isOtpVerifiedContact(peerUserId)) {
-    throw appError("MUTUAL_OTP_REQUIRED","相互OTP確認済みの連絡先ではありません。");
+  if(!await isVerifiedContact(peerUserId)) {
+    throw appError("CONTACT_APPROVAL_REQUIRED","連絡先として承認されていません。");
   }
   const ownRecord=await storedIdentity(currentUser.userId);
   const peerPins={...(ownRecord?.peerPins||{})};
