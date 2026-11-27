@@ -1,0 +1,9 @@
+import { initI18n } from "./i18n.js";
+initI18n();
+const $=s=>document.querySelector(s);
+async function api(path,options={}){const response=await fetch(path,{credentials:"same-origin",cache:"no-store",...options,headers:{Accept:"application/json",...(options.headers||{})}});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||data.message||"リクエストに失敗しました");return data;}
+async function loadAccount(){try{const data=await api("/api/auth/me");const user=data.user||data;const id=user.userId||user.user_id||user.id||"";$("#settings-user-id").textContent=id?"@"+id:"ログイン済み";$("#settings-session").textContent="有効";}catch(error){$("#settings-user-id").textContent="未ログイン";$("#settings-session").textContent="ログインが必要です";$("#settings-logout").disabled=true;}}
+function refreshNotifications(){const button=$("#settings-notifications"),status=$("#settings-notification-status");if(!("Notification"in window)){button.hidden=true;status.textContent="このブラウザーは通知に対応していません。";return;}if(Notification.permission==="granted"){button.textContent="通知は有効です";button.disabled=true;status.textContent="新着メッセージの通知を受け取れます。";}else if(Notification.permission==="denied"){button.textContent="ブラウザー設定で許可してください";button.disabled=true;status.textContent="通知がブラウザー側でブロックされています。";}else{button.textContent="通知を有効にする";button.disabled=false;status.textContent="通知の許可を求めます。";}}
+$("#settings-notifications").addEventListener("click",async()=>{try{await Notification.requestPermission();}catch{}refreshNotifications();});
+$("#settings-logout").addEventListener("click",async event=>{const button=event.currentTarget;button.disabled=true;try{await api("/api/auth/logout",{method:"POST"});location.href="/";}catch(error){$("#settings-session").textContent=error.message;button.disabled=false;}});
+loadAccount();refreshNotifications();
