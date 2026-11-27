@@ -81,6 +81,19 @@ test("Dynamic crypto, admin, and SecureDrop messages switch ja → en → ja", a
     assert.equal(document.documentElement.lang, "ja");
     assert.equal(i18n.getLocale(), "ja");
     assert.equal(i18n.translateText(samples[0][1]), samples[0][0]);
+
+    // Korean must not inherit the English fallback, and switching from an
+    // already translated DOM value must restore the original source first.
+    i18n.setLocale("ko");
+    assert.equal(i18n.translateText("チャット"), "채팅");
+    assert.equal(i18n.translateText("Chat"), "채팅");
+    assert.equal(i18n.translateText("채팅", "ja"), "チャット");
+    assert.equal(i18n.translateText("未ログイン"), "未ログイン");
+    assert.equal(i18n.translateText("채팅", "en"), "Chat");
+    i18n.setLocale("en");
+    assert.equal(i18n.translateText("채팅"), "Chat");
+    i18n.setLocale("ja");
+    assert.equal(i18n.translateText("Chat"), "チャット");
   } finally {
     for (const [key, descriptor] of Object.entries(previous)) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
