@@ -47,9 +47,11 @@
           <span aria-hidden="true">⇧</span><span>SecureDrop</span>
         </a>
       </nav>
-      <div class="sidebar-device-registration">
-        <button class="device-register-all-button" id="device-register-all-button" type="button" data-i18n="crypto.registerAllDevices">この端末を登録して全チャットを同期</button>
-        <p class="sidebar-device-registration-hint">端末登録はこのブラウザーで1回。信頼済みの連絡先すべてで鍵交換を実行します。</p>
+      <div class="sidebar-device-registration" aria-label="端末管理">
+        <div class="sidebar-device-status" id="sidebar-device-status" role="status" aria-live="polite" data-state="checking"><span class="sidebar-device-status-dot" aria-hidden="true"></span><span id="sidebar-device-status-label">端末登録状態を確認しています…</span></div>
+        <button class="device-register-all-button" id="device-register-all-button" type="button" data-i18n="crypto.registerAllDevices">全チャットを今すぐ同期</button>
+        <button class="device-manage-sidebar-button" id="device-manage-sidebar-button" type="button" disabled>登録端末を管理</button>
+        <p class="sidebar-device-registration-hint">端末登録・失効・言語変更はチャット画面からいつでも操作できます。</p>
       </div>
 
       <div class="sidebar-heading"><span>ユーザーを検索</span></div>
@@ -208,6 +210,11 @@
         </svg>
       </div>
       <div class="auth-eyebrow">PRIVATE MESSAGING</div>
+      <label class="auth-language-control"><span data-i18n="language">言語</span>
+        <select data-language-selector aria-label="言語">
+          <option value="ja">日本語</option><option value="en">English</option><option value="zh">简体中文</option><option value="ko">한국어</option><option value="es">Español</option>
+        </select>
+      </label>
       <h2 id="auth-title">SecureChatへようこそ</h2>
       <p class="auth-description" id="auth-description">アカウントにログインしてください。</p>
 

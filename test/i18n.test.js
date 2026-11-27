@@ -2,12 +2,21 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Japanese is the default and English is an available persisted locale", async () => {
+test("Browser locale is detected when no explicit language preference is saved", async () => {
   const source = await readFile(new URL("../public/i18n.js", import.meta.url), "utf8");
   assert.match(source, /I18N_STORAGE_KEY\s*=\s*"securechat-language"/);
   assert.match(source, /SUPPORTED_LOCALES\s*=\s*\["ja", "en", "zh", "ko", "es"\]/);
-  assert.match(source, /return "ja";/);
+  assert.match(source, /detectBrowserLocale/);
+  assert.match(source, /browserNavigator\?\.languages/);
   assert.match(source, /localStorage\.setItem\(I18N_STORAGE_KEY, next\)/);
+});
+
+test("Browser locale detection maps supported language tags and falls back to English", async () => {
+  const i18n = await import("../public/i18n.js?browser-locale-test");
+  assert.equal(i18n.detectBrowserLocale({ languages:["ja-JP","en-US"], language:"en-US" }), "ja");
+  assert.equal(i18n.detectBrowserLocale({ languages:["zh-Hant-TW"], language:"en-US" }), "zh");
+  assert.equal(i18n.detectBrowserLocale({ languages:["es-MX"], language:"es-MX" }), "es");
+  assert.equal(i18n.detectBrowserLocale({ languages:["fr-FR"], language:"fr-FR" }), "en");
 });
 
 test("All four UI surfaces include a language selector and set document language", async () => {
@@ -44,7 +53,8 @@ test("Dynamic crypto, admin, and SecureDrop messages switch ja → en → ja", a
     localStorage: Object.getOwnPropertyDescriptor(globalThis, "localStorage"),
     document: Object.getOwnPropertyDescriptor(globalThis, "document"),
     NodeFilter: Object.getOwnPropertyDescriptor(globalThis, "NodeFilter"),
-    CustomEvent: Object.getOwnPropertyDescriptor(globalThis, "CustomEvent")
+    CustomEvent: Object.getOwnPropertyDescriptor(globalThis, "CustomEvent"),
+    navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator")
   };
   globalThis.localStorage = {
     getItem: key => saved.get(key) ?? null,
@@ -58,6 +68,7 @@ test("Dynamic crypto, admin, and SecureDrop messages switch ja → en → ja", a
   };
   globalThis.NodeFilter = { SHOW_TEXT:4 };
   globalThis.CustomEvent = class { constructor(type, options) { this.type=type;this.detail=options.detail; } };
+  Object.defineProperty(globalThis, "navigator", { configurable:true, writable:true, value:{ languages:["ja-JP"], language:"ja-JP" } });
   try {
     const i18n = await import("../public/i18n.js?dynamic-locale-test");
     const samples = [
