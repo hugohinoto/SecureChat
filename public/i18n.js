@@ -2008,7 +2008,7 @@ export function translateText(value, locale = getLocale()) {
     // Also reverse translated fragments in composed messages that include
     // dynamic values such as server details, timestamps, or counts.
     const reverseLocaleParts = [...reverseLocaleAliases.entries()]
-      .filter(([localized]) => localized.length >= 2)
+      .filter(([, japanese]) => japanese.length >= 5 || /^\\s/.test(japanese) || /\\s$/.test(japanese))
       .sort((a, b) => b[0].length - a[0].length);
     for (const [localized, japanese] of reverseLocaleParts) {
       source = source.split(localized).join(japanese);
@@ -2054,7 +2054,7 @@ export function translateText(value, locale = getLocale()) {
   // Apply locale-specific fragments to composed dynamic messages (for example,
   // a translated label followed by a changing timestamp or count).
   const localizedParts = Object.entries(localeAliases)
-    .filter(([japanese]) => japanese.length >= 2)
+    .filter(([japanese]) => japanese.length >= 5 || /^\\s/.test(japanese) || /\\s$/.test(japanese))
     .sort((a, b) => b[0].length - a[0].length);
   let localized = source;
   for (const [japanese, translated] of localizedParts) {
