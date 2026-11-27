@@ -178,3 +178,10 @@ test("sidebar DOM is not rebuilt on tab focus or visibility changes", () => {
   const visibilityEnd=app.indexOf('async function bootstrap()',visibilityStart);
   assert.doesNotMatch(app.slice(visibilityStart,visibilityEnd),/refreshSidebar\(\)/);
 });
+
+
+test("message polling and crypto inbox synchronization are throttled", () => {
+  assert.match(app, /CRYPTO_INBOX_SYNC_INTERVAL_MS = 15000/);
+  assert.match(app, /fullSync \|\| Date\.now\(\)-lastCryptoInboxSyncAt >= CRYPTO_INBOX_SYNC_INTERVAL_MS/);
+  assert.match(app, /\+\+messagePollTick % 3 === 0/);
+});
