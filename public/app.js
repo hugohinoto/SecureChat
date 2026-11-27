@@ -1363,14 +1363,14 @@ async function searchUsers() {
   try {
     const data=await api("/api/users/search?q="+encodeURIComponent(q));
     if(!data.users.length){el.results.textContent="ユーザーが見つかりませんでした。";return;}
-    for(const user of data.users)el.results.append(userAction(user.userId,"招待コード発行",async()=>{
+    for(const user of data.users)el.results.append(userAction(user.userId,"連絡先招待を送信",async()=>{
       try {
-        const invite=await api("/api/contact-invitations",{method:"POST",body:{userId:user.userId}});
+        await api("/api/contact-invitations",{method:"POST",body:{userId:user.userId}});
         el.results.replaceChildren();
         const row=document.createElement("div");row.className="user-result";
-        const label=document.createElement("span");label.textContent="@"+user.userId+" への招待コード";
-        row.append(label);el.results.append(row);showOtpCode(el.results,invite.code,invite.expiresAt);
-        toast("招待コードを発行しました。相手に安全な方法で共有してください。");
+        const label=document.createElement("span");label.textContent="@"+user.userId+" へ連絡先招待を送信しました。相手の承認を待っています。";
+        row.append(label);el.results.append(row);
+        toast("招待を送信しました。相手が承認すると暗号鍵交換が自動で始まります。");
         await refreshSidebar();
       } catch(e){showError(e);}
     }));
