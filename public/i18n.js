@@ -148,7 +148,7 @@ export const translations = {
     "bug.reportStatus.resolved": "已解决",
     "bug.loginRequired": "请先登录 SecureChat 再提交报告。",
     "bug.submitOk": "报告已加密并提交。感谢您的协助。",
-    "admin.required": "此账户没有管理员权限。"
+    "admin.required": "此账户没有管理员权限。",
     "secureDrop.metaDescription": "SecureDrop — 独立的加密文件传输服务",
     "chat.menu": "聊天菜单",
     "notifications.check": "无法确认通知权限。请检查浏览器设置。",
@@ -201,7 +201,7 @@ export const translations = {
     "bug.reportStatus.resolved": "해결됨",
     "bug.loginRequired": "신고하려면 먼저 SecureChat에 로그인하세요.",
     "bug.submitOk": "신고가 암호화되어 전송되었습니다. 협조해 주셔서 감사합니다.",
-    "admin.required": "이 계정에는 관리자 권한이 없습니다."
+    "admin.required": "이 계정에는 관리자 권한이 없습니다.",
     "secureDrop.metaDescription": "SecureDrop — 독립형 암호화 파일 전송 서비스",
     "chat.menu": "채팅 메뉴",
     "notifications.check": "알림 권한을 확인할 수 없습니다. 브라우저 설정을 확인하세요.",
@@ -254,7 +254,7 @@ export const translations = {
     "bug.reportStatus.resolved": "Resuelto",
     "bug.loginRequired": "Inicia sesión en SecureChat antes de enviar un informe.",
     "bug.submitOk": "El informe se cifró y se envió. Gracias por tu colaboración.",
-    "admin.required": "Esta cuenta no tiene permisos de administrador."
+    "admin.required": "Esta cuenta no tiene permisos de administrador.",
     "secureDrop.metaDescription": "SecureDrop — transferencia independiente de archivos cifrados",
     "chat.menu": "Menú del chat",
     "notifications.check": "No se pudo confirmar el permiso de notificaciones. Revisa la configuración del navegador.",
