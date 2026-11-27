@@ -65,9 +65,10 @@ export async function handleAdminFeatures(request, env, deps) {
   const noticeRoute = path === "/api/admin/announcements" || /^\/api\/admin\/announcements\/[a-f0-9-]+$/i.test(path);
   const usersRoute = path === "/api/admin/users" && method === "GET";
   const securityRoute = path === "/api/admin/security-check" && method === "GET";
+  const securityScanRoute = path === "/api/admin/security-scan" && ["GET", "POST"].includes(method);
   const reportsRoute = path === "/api/admin/bug-reports" || /^\/api\/admin\/bug-reports\/[a-f0-9-]+(?:\/replies)?$/i.test(path);
   const auditRoute = path === "/api/admin/audit-logs" && method === "GET";
-  if (noticeRoute || usersRoute || securityRoute || reportsRoute || auditRoute) {
+  if (noticeRoute || usersRoute || securityRoute || securityScanRoute || reportsRoute || auditRoute) {
     const admin = await adminAuth(request, env, deps); if (admin instanceof Response) return admin;
     try {
       if (usersRoute) {
@@ -123,6 +124,103 @@ export async function handleAdminFeatures(request, env, deps) {
         // Let each database check report its own failure; even when D1 is down,
         // secret checks and external scanner status must still be returned.
         return json(await checkSecurity(env));
+      }
+      if (securityScanRoute) {
+        const token = env.SECURITY_SCAN_GITHUB_TOKEN;
+        if (typeof token !== "string" || token.length < 20) {
+          return json({
+            error: "SECURITY_SCAN_NOT_CONFIGURED",
+            message: "SECURITY_SCAN_GITHUB_TOKEN が未設定です。GitHub fine-grained token に Actions: write 権限を付与してWorker Secretへ設定してください。"
+          }, 503);
+        }
+        const headers = {
+          Accept: "application/vnd.github+json",
+          Authorization: "Bearer " + token,
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "SecureChat-Admin-Security-Scan"
+        };
+        if (method === "POST") {
+          const requestedAt = Date.now();
+          const response = await fetch(
+            "https://api.github.com/repos/hugohinoto/SecureChat/actions/workflows/security-scan.yml/dispatches",
+            {
+              method: "POST",
+              headers: { ...headers, "Content-Type": "application/json" },
+              body: JSON.stringify({ ref: "main" }),
+              signal: AbortSignal.timeout(10000)
+            }
+          );
+          if (response.status !== 204) {
+            const detail = await response.text().catch(() => "");
+            return json({
+              error: "SECURITY_SCAN_DISPATCH_FAILED",
+              message: "GitHub Actionsを開始できませんでした (HTTP " + response.status + ")。トークンのActions: write権限とworkflow_dispatch設定を確認してください。",
+              diagnostic: detail.slice(0, 500)
+            }, 502);
+          }
+          return json({
+            accepted: true,
+            requestedAt,
+            workflowUrl: "https://github.com/hugohinoto/SecureChat/actions/workflows/security-scan.yml",
+            mode: "passive-dast"
+          }, 202);
+        }
+        const sinceRaw = url.searchParams.get("since") || "";
+        if (!/^\d{13}$/.test(sinceRaw)) return json({ error: "INVALID_SCAN_REQUEST_TIME" }, 400);
+        const since = Number(sinceRaw);
+        const runsResponse = await fetch(
+          "https://api.github.com/repos/hugohinoto/SecureChat/actions/workflows/security-scan.yml/runs?branch=main&event=workflow_dispatch&per_page=10",
+          { headers, signal: AbortSignal.timeout(8000) }
+        );
+        if (!runsResponse.ok) throw new Error("GitHub Actions runs API HTTP " + runsResponse.status);
+        const runsPayload = await runsResponse.json();
+        const run = (runsPayload.workflow_runs || []).find(item =>
+          item.event === "workflow_dispatch" && Date.parse(item.created_at || "") >= since - 15000
+        );
+        if (!run) return json({ found: false, status: "queued", workflowUrl: "https://github.com/hugohinoto/SecureChat/actions/workflows/security-scan.yml" });
+        const jobsResponse = await fetch(run.jobs_url, { headers, signal: AbortSignal.timeout(8000) });
+        if (!jobsResponse.ok) throw new Error("GitHub Actions jobs API HTTP " + jobsResponse.status);
+        const jobsPayload = await jobsResponse.json();
+        const jobs = (jobsPayload.jobs || []).map(job => ({
+          name: String(job.name || "job").slice(0, 100),
+          status: job.status,
+          conclusion: job.conclusion,
+          startedAt: job.started_at,
+          completedAt: job.completed_at,
+          url: job.html_url,
+          steps: (job.steps || []).map(step => ({
+            name: String(step.name || "step").slice(0, 120),
+            status: step.status,
+            conclusion: step.conclusion,
+            number: step.number
+          }))
+        }));
+        let artifacts = [];
+        const artifactsResponse = await fetch(
+          "https://api.github.com/repos/hugohinoto/SecureChat/actions/runs/" + Number(run.id) + "/artifacts?per_page=20",
+          { headers, signal: AbortSignal.timeout(8000) }
+        );
+        if (artifactsResponse.ok) {
+          const artifactPayload = await artifactsResponse.json();
+          artifacts = (artifactPayload.artifacts || []).map(item => ({
+            name: String(item.name || "report").slice(0, 120),
+            expired: Boolean(item.expired),
+            sizeInBytes: Number(item.size_in_bytes || 0)
+          }));
+        }
+        return json({
+          found: true,
+          run: {
+            id: Number(run.id),
+            status: run.status,
+            conclusion: run.conclusion,
+            createdAt: run.created_at,
+            updatedAt: run.updated_at,
+            url: run.html_url,
+            jobs,
+            artifacts
+          }
+        });
       }
       if (path === "/api/admin/bug-reports" && method === "GET") {
         const rows = await env.DB.prepare("SELECT b.id,b.encrypted_payload,b.status,b.created_at,b.updated_at,b.resolved_at,u.user_id AS reporter FROM bug_reports b LEFT JOIN users u ON u.id=b.reporter_user_id ORDER BY b.created_at DESC LIMIT 100").all();
