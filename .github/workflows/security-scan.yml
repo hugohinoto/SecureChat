@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: security-scan-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   semgrep:
@@ -70,12 +70,13 @@ jobs:
           /tmp/securechat-worker-queries.sql
 
   zap:
-    name: zap
+    name: zap · OWASP ZAP passive DAST
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Run OWASP ZAP passive baseline scan
+      - name: Run OWASP ZAP passive DAST baseline scan
         uses: zaproxy/action-baseline@v0.15.0
         with:
           target: https://securechat.hugohinoto.workers.dev/
