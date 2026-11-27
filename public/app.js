@@ -409,11 +409,8 @@ async function isPeerIdentityTrustedForAutomaticCrypto(peerUserId) {
   if (activeConversation?.peerUserId === peerUserId) {
     activePeerSigningKey = peer.identitySigningPublicKey;
     activePeerIdentityTrusted = true;
-    const [ownFingerprint, peerFingerprint] = await Promise.all([
-      publicKeyFingerprint(identitySigningPublicKey),
-      publicKeyFingerprint(peer.identitySigningPublicKey)
-    ]);
-    renderPeerFingerprintPanel(peerUserId, ownFingerprint, peerFingerprint, peer);
+    // Routine fingerprints and trust labels are intentionally hidden from the chat view.
+    // Key-change verification still appears when a pinned key changes.
   }
   return true;
 }
@@ -1081,11 +1078,9 @@ async function deriveKey(conversationId,peerUserId) {
   if(pinsChanged)await saveIdentity(currentUser.userId,{...ownRecord,peerPins,verifiedPeerPins});
   activePeerSigningKey=peer.identitySigningPublicKey;
   activePeerIdentityTrusted=verifiedPeerPins[peerUserId]===peer.identitySigningPublicKey;
-  const [ownFingerprint,peerFingerprint]=await Promise.all([
-    publicKeyFingerprint(identitySigningPublicKey),
-    publicKeyFingerprint(peer.identitySigningPublicKey)
-  ]);
-  renderPeerFingerprintPanel(peerUserId,ownFingerprint,peerFingerprint,peer);
+  // Normal trust status and local fingerprints are intentionally not shown in chat UI.
+  // Key-change verification remains available through showPeerKeyChangeVerification().
+  el.fingerprint.hidden=true;
   const pub=await crypto.subtle.importKey("raw",fromB64(peer.identityPublicKey),{name:"ECDH",namedCurve:"P-256"},false,[]);
   const bits=await crypto.subtle.deriveBits({name:"ECDH",public:pub},identityPrivateKey,256);
   const material=await crypto.subtle.importKey("raw",bits,"HKDF",false,["deriveKey"]);
