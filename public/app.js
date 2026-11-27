@@ -37,7 +37,6 @@ let identityPrivateKey = null, identityPublicKey = null, identitySigningPublicKe
 let activeConversation = null, activeKey = null, activeProtocolVersion = 1, cryptoV2Module = null, cryptoV2Ready = false, cryptoV2StatusMessage = "", busy = false, refreshTimer = null, mobileView = "list";
 const openingConversationPeers = new Set();
 let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", connectionCheckTick = 0;
-const displayedOtpCodes = new Map();
 const previousUnreadCounts = new Map();
 let originalDocumentTitle = document.title;
 let unreadCountsInitialized = false;
@@ -1270,16 +1269,6 @@ function userAction(userId,label,fn) {
   const button=document.createElement("button");button.type="button";button.textContent=label;button.addEventListener("click",fn);
   row.append(name,button);return row;
 }
-function showOtpCode(container,code,expiresAt,key="",detailText="5分以内に相手へ共有してください。") {
-  if(key)displayedOtpCodes.set(key,{code,expiresAt});
-  container.querySelectorAll(".otp-code-panel").forEach(panel=>panel.remove());
-  const panel=document.createElement("div");panel.className="otp-code-panel";
-  const value=document.createElement("strong");value.className="otp-code";value.textContent=code;
-  const detail=document.createElement("span");detail.textContent=detailText;
-  const copy=document.createElement("button");copy.type="button";copy.textContent="コードをコピー";
-  copy.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(code);toast("コードをコピーしました。");}catch{showError(appError("CLIPBOARD_COPY_FAILED","コピーできませんでした。コードを手動で共有してください。"));}});
-  panel.append(value,detail,copy);container.append(panel);
-}
 async function searchUsers() {
   const q=el.search.value.trim().toLowerCase();el.results.replaceChildren();
   if(!/^[a-z0-9_]{1,32}$/.test(q)){el.results.textContent=formatError(appError("USER_SEARCH_QUERY_INVALID","1文字以上のユーザーIDを入力してください。"));return;}
@@ -1298,14 +1287,6 @@ async function searchUsers() {
       } catch(e){showError(e);}
     }));
   } catch(e){el.results.textContent=formatError(e);}
-}
-function otpInputRow(parent,placeholder,buttonText,handler,fieldKey) {
-  const row=document.createElement("div");row.className="otp-input-row";
-  const input=document.createElement("input");input.type="text";input.inputMode="numeric";input.autocomplete="one-time-code";input.maxLength=8;input.placeholder=placeholder;input.dataset.invitationField=fieldKey;
-  input.addEventListener("input",()=>{input.value=input.value.replace(/\D/g,"").slice(0,8);});
-  const button=document.createElement("button");button.type="button";button.textContent=buttonText;
-  button.addEventListener("click",async()=>{button.disabled=true;try{await handler(input.value);}catch(e){showError(e);}finally{button.disabled=false;}});
-  row.append(input,button);parent.append(row);
 }
 function renderInvitations(invitations) {
   el.invitations.replaceChildren();
@@ -1547,7 +1528,7 @@ async function sendMessage() {
           ? "この端末のv2準備は完了しています。相手側でSecureChatを開き、端末登録と連絡先の本人確認を完了してください。"
           : activeCryptoMode.approvedByPeer
             ? "相手側の準備は完了しています。この端末の端末登録と連絡先の本人確認を完了してください。"
-            : "v2移行には双方の端末登録と、相互OTP確認済み連絡先の本人確認が必要です。セキュリティ欄の指紋確認を完了してください。";
+            : "v2移行には双方の端末登録と、承認済み連絡先の署名鍵確認が必要です。鍵変更の警告がある場合は別経路で指紋を照合してください。";
         cryptoV2StatusMessage=message;
         updateCryptoV2Controls();
         throw appError("CRYPTO_V2_NOT_READY",message);
