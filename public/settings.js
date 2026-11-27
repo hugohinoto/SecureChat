@@ -38,7 +38,8 @@ function formatTime(value) {
 function readCurrentDeviceId(userId) {
   return new Promise((resolve,reject)=>{
     const request=indexedDB.open("securechat-crypto-v2-vault",1);
-    request.onerror=()=>reject(request.error);
+    request.onupgradeneeded=()=>{request.transaction.abort();};
+    request.onerror=()=>{if(request.error?.name==="AbortError")resolve("");else reject(request.error);};
     request.onsuccess=()=>{
       const db=request.result;
       if(!db.objectStoreNames.contains("devices")){db.close();resolve("");return;}
