@@ -170,3 +170,18 @@ test("Localized UI aliases cover security and dynamic error messages in zh, ko, 
     }
   }
 });
+
+
+test("Every dynamic alias has a translation in Simplified Chinese, Korean, and Spanish", async () => {
+  const { DYNAMIC_ALIASES, TEXT_ALIASES, LOCALIZED_DYNAMIC_ALIASES } =
+    await import("../public/i18n.js?complete-dynamic-alias-coverage");
+  const sourceKeys = Object.keys(DYNAMIC_ALIASES);
+  assert.ok(sourceKeys.length > 0);
+  for (const locale of ["zh", "ko", "es"]) {
+    const covered = { ...TEXT_ALIASES[locale], ...LOCALIZED_DYNAMIC_ALIASES[locale] };
+    const missing = sourceKeys.filter(key => typeof covered[key] !== "string" || !covered[key].length);
+    assert.deepEqual(missing, [], `${locale} is missing dynamic aliases`);
+    const untranslated = sourceKeys.filter(key => covered[key] === key);
+    assert.deepEqual(untranslated, [], `${locale} contains untranslated dynamic aliases`);
+  }
+});
