@@ -533,6 +533,16 @@ async function initializeCryptoV2IfEnabled() {
   }
   updateCryptoV2Controls();
 }
+async function retryCryptoDeviceInitialization() {
+  if(!currentUser || !identityPrivateKey || cryptoV2Ready || !navigator.onLine)return false;
+  await initializeCryptoV2IfEnabled();
+  if(!cryptoV2Ready)return false;
+  if(el.identitySetupPanel)el.identitySetupPanel.hidden=true;
+  if(el.identityRetryPassword)el.identityRetryPassword.value="";
+  await runAutomaticCryptoMaintenance({force:true});
+  updateSend();
+  return true;
+}
 async function openSidebarDeviceManagement() {
   if(!cryptoV2Ready) {
     toast("端末管理を開くには、この端末の暗号鍵登録を完了してください。");
@@ -1684,6 +1694,7 @@ el.deviceManageSidebar?.addEventListener("click",openSidebarDeviceManagement);
 el.identityRetryButton?.addEventListener("click",retryIdentitySetup);
 window.addEventListener("focus",()=>{
   if(!currentUser)return;
+  retryCryptoDeviceInitialization().catch(error=>console.warn("SecureChat device registration retry failed:",error?.code||"CRYPTO_INIT_ERROR"));
   if(activeConversation && navigator.onLine)loadMessages(false).catch(()=>{});
 });
 document.addEventListener("visibilitychange",()=>{
@@ -1736,6 +1747,9 @@ window.addEventListener("online", async () => {
   const connected = await refreshConnectionStatus();
   if (!connected) return;
   refreshSidebar().catch(() => {});
+  try { await retryCryptoDeviceInitialization(); } catch(error) {
+    console.warn("SecureChat device registration retry failed:",error?.code||"CRYPTO_INIT_ERROR");
+  }
   if (activeConversation) loadMessages(true).catch(() => {});
   runAutomaticCryptoMaintenance().catch(() => {});
 });
