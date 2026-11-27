@@ -1460,3 +1460,13 @@ body {
 .device-manage-sidebar-button:disabled { opacity:.45; cursor:not-allowed; }
 .auth-language-control { display:flex; align-items:center; justify-content:center; gap:9px; margin:12px 0 15px; color:#9ba9c7; font-size:11px; }
 .auth-language-control select { min-height:30px; padding:4px 9px; border:1px solid rgba(156,191,255,.2); border-radius:8px; color:#edf2ff; background:rgba(7,13,27,.58); font:inherit; }
+
+.identity-setup-panel{margin:12px 0;padding:12px;border:1px solid rgba(235,170,105,.38);border-radius:12px;background:rgba(160,93,39,.12);color:var(--text)}
+.identity-setup-panel[hidden]{display:none}
+.identity-setup-panel strong{display:block;color:#ffd5a3;font-size:12px}
+.identity-setup-panel p{margin:8px 0;color:var(--muted);font-size:11px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.identity-setup-panel label{display:block;margin:8px 0 5px;font-size:10px;color:var(--muted)}
+.identity-setup-panel input{width:100%;min-width:0;padding:9px;border:1px solid var(--line);border-radius:8px;background:rgba(0,0,0,.2);color:var(--text)}
+.identity-setup-panel button{width:100%;margin-top:8px;padding:9px;border:1px solid rgba(235,170,105,.4);border-radius:8px;background:rgba(160,93,39,.2);color:var(--text);font-size:11px;cursor:pointer}
+.identity-setup-panel button:disabled{opacity:.55;cursor:wait}
+@media(min-width:681px){.sidebar{position:sticky;top:21px;height:calc(100vh - 42px);max-height:calc(100vh - 42px)!important;overflow-y:auto!important;align-self:start}}
