@@ -185,3 +185,17 @@ test("Every dynamic alias has a translation in Simplified Chinese, Korean, and S
     assert.deepEqual(untranslated, [], `${locale} contains untranslated dynamic aliases`);
   }
 });
+
+
+test("Every static text alias is defined for Simplified Chinese, Korean, and Spanish", async () => {
+  const { TEXT_ALIASES } = await import("../public/i18n.js?static-alias-coverage");
+  const sourceKeys = Object.keys(TEXT_ALIASES.en);
+  assert.ok(sourceKeys.length > 0);
+  for (const locale of ["zh", "ko", "es"]) {
+    const missing = sourceKeys.filter(key =>
+      typeof TEXT_ALIASES[locale]?.[key] !== "string" ||
+      !TEXT_ALIASES[locale][key].length
+    );
+    assert.deepEqual(missing, [], `${locale} is missing static text aliases`);
+  }
+});
