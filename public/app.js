@@ -28,6 +28,8 @@ const el = {
   cryptoV2Status: $("#crypto-v2-status"),
   cryptoV2Devices: $("#crypto-v2-devices"), cryptoV2DeviceList: $("#crypto-v2-device-list"),
   deviceManageSidebar: $("#device-manage-sidebar-button"),
+  identitySetupPanel: $("#identity-setup-panel"), identitySetupMessage: $("#identity-setup-message"),
+  identityRetryPassword: $("#identity-retry-password"), identityRetryButton: $("#identity-retry-button"),
 };
 const MAX_MESSAGE_LENGTH = 2000;
 const DB_NAME = "securechat-local-keys";
@@ -169,9 +171,9 @@ function setMobileView(view) {
 }
 function updateSend() {
   el.count.textContent = Array.from(el.input.value).length + " / " + MAX_MESSAGE_LENGTH;
-  el.input.disabled = !currentUser || !activeConversation || busy || (activeProtocolVersion===2 && !cryptoV2Ready);
+  el.input.disabled = !currentUser || !identityPrivateKey || !activeConversation || busy || (activeProtocolVersion===2 && !cryptoV2Ready);
   el.send.disabled = !navigator.onLine || el.connection.dataset.state !== "connected" || !currentUser || !activeConversation || busy ||
-    (activeProtocolVersion===2 && !cryptoV2Ready) ||
+    !identityPrivateKey || (activeProtocolVersion===2 && !cryptoV2Ready) ||
     (cryptoV2Required && activeProtocolVersion!==2) || !el.input.value.trim();
 }
 function time(value) {
@@ -530,6 +532,16 @@ async function initializeCryptoV2IfEnabled() {
     }
   }
   updateCryptoV2Controls();
+}
+async function retryCryptoDeviceInitialization() {
+  if(!currentUser || !identityPrivateKey || cryptoV2Ready || !navigator.onLine)return false;
+  await initializeCryptoV2IfEnabled();
+  if(!cryptoV2Ready)return false;
+  if(el.identitySetupPanel)el.identitySetupPanel.hidden=true;
+  if(el.identityRetryPassword)el.identityRetryPassword.value="";
+  await runAutomaticCryptoMaintenance({force:true});
+  updateSend();
+  return true;
 }
 async function openSidebarDeviceManagement() {
   if(!cryptoV2Ready) {
@@ -1141,19 +1153,33 @@ async function signIn(user,password=null) {
   }
   el.passwordChangeGate.hidden=true;
   await loadPublicAnnouncements();
+  let identitySetupFailure=null;
   try {
     await ensureIdentity(password);
-    await initializeCryptoV2IfEnabled();
-    await refreshSidebar();
-  } catch (error) {
-    await closeCryptoV2Session();
-    
-    currentUser=null;
+  } catch(error) {
+    // Authentication succeeded. Keep the account session available so a
+    // second device can reach the app and see a precise recovery path. Never
+    // replace or reset an unavailable legacy identity to make login appear
+    // successful.
+    identitySetupFailure=error;
     identityPrivateKey=null;
     identityPublicKey=null;
     identitySigningPublicKey=null;
-    throw error;
+    cryptoV2Ready=false;
+    cryptoV2Module=null;
+    cryptoV2InitializationError={
+      code:typeof error?.code==="string"?error.code:"IDENTITY_SETUP_FAILED",
+      message:typeof error?.message==="string"&&error.message?error.message:"この端末の暗号鍵を復元できませんでした。"
+    };
+    cryptoV2StatusMessage="ログイン済み・端末鍵未準備: "+cryptoV2InitializationError.code;
   }
+  if(!identitySetupFailure) {
+    await initializeCryptoV2IfEnabled();
+    if(cryptoV2InitializationError) {
+      identitySetupFailure=appError(cryptoV2InitializationError.code,cryptoV2InitializationError.message);
+    }
+  }
+  await refreshSidebar();
   el.profile.textContent=user.userId;
   el.avatar.textContent=Array.from(user.userId)[0]||"U";
   el.gate.hidden=true;
@@ -1161,14 +1187,23 @@ async function signIn(user,password=null) {
   await refreshConnectionStatus();
   startAuthCheck();
   clearInterval(refreshTimer);
-  // Device keys are uploaded during initializeCryptoV2IfEnabled(). Start a
-  // full account-wide sync immediately after login, even when V2 is optional.
-  // This is safe to retry: it reuses the existing local device vault and never
-  // rotates the account identity or overwrites an existing device key.
-  void runAutomaticCryptoMaintenance({force:true}).catch(error => {
-    console.warn("SecureChat automatic device registration/sync failed:", error?.code || "CRYPTO_MAINTENANCE_ERROR");
-    showError(error,"端末の自動登録・同期に失敗しました: ");
-  });
+  // Only run account-wide device sync after the identity and local device
+  // vault are confirmed ready. A failed crypto setup must not look like a
+  // successful registration, and must remain retryable from the sidebar.
+  if(!identitySetupFailure && cryptoV2Ready) {
+    void runAutomaticCryptoMaintenance({force:true}).catch(error => {
+      console.warn("SecureChat automatic device registration/sync failed:", error?.code || "CRYPTO_MAINTENANCE_ERROR");
+      showError(error,"端末の自動登録・同期に失敗しました: ");
+    });
+  }
+  if(identitySetupFailure) {
+    if(el.identitySetupPanel)el.identitySetupPanel.hidden=false;
+    if(el.identitySetupMessage)el.identitySetupMessage.textContent=formatError(identitySetupFailure);
+    toast("ログインは成功しましたが、この端末の暗号鍵を準備できません。サイドバーの案内を確認してください。",9000);
+  } else if(el.identitySetupPanel) {
+    el.identitySetupPanel.hidden=true;
+    if(el.identityRetryPassword)el.identityRetryPassword.value="";
+  }
   refreshTimer=setInterval(()=>{
     const foreground=document.visibilityState==="visible" && document.hasFocus();
     if(foreground && ++cryptoMaintenanceTick % 60 === 0) {
@@ -1198,6 +1233,43 @@ function startAuthCheck() {
     try { const s=await checkSession(); if(!s.authenticated){await closeCryptoV2Session();currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;showAuth(formatError(appError("SESSION_EXPIRED","セッションの有効期限が切れました。再ログインしてください。")));} }
     catch {showError(appError("AUTH_RECHECK_FAILED","認証サーバーに接続できません。"));}
   },300000);
+}
+async function retryIdentitySetup() {
+  if(!currentUser || !el.identityRetryPassword || !el.identityRetryButton)return;
+  const password=el.identityRetryPassword.value;
+  if(!password) {
+    showError(appError("IDENTITY_BACKUP_PASSWORD_REQUIRED","バックアップを復元するため、アカウントパスワードを入力してください。"));
+    return;
+  }
+  el.identityRetryButton.disabled=true;
+  try {
+    await ensureIdentity(password);
+    await initializeCryptoV2IfEnabled();
+    if(cryptoV2InitializationError) {
+      throw appError(cryptoV2InitializationError.code,cryptoV2InitializationError.message);
+    }
+    if(!identityPrivateKey)throw appError("CRYPTO_IDENTITY_REQUIRED","アカウント秘密鍵を復元できませんでした。");
+    el.identitySetupPanel.hidden=true;
+    el.identitySetupMessage.textContent="";
+    el.identityRetryPassword.value="";
+    await runAutomaticCryptoMaintenance({force:true});
+    updateSend();
+    toast("この端末の鍵を復元し、端末登録と同期を開始しました。");
+  } catch(error) {
+    cryptoV2InitializationError={
+      code:typeof error?.code==="string"?error.code:"IDENTITY_SETUP_FAILED",
+      message:typeof error?.message==="string"?error.message:"端末鍵を復元できませんでした。"
+    };
+    cryptoV2StatusMessage="ログイン済み・端末鍵未準備: "+cryptoV2InitializationError.code;
+    if(el.identitySetupMessage)el.identitySetupMessage.textContent=formatError(error);
+    el.identitySetupPanel.hidden=false;
+    showError(error);
+  } finally {
+    el.identityRetryPassword.value="";
+    el.identityRetryButton.disabled=false;
+    updateCryptoV2Controls();
+    updateSend();
+  }
 }
 async function submitAdminPasswordChange(event) {
   event.preventDefault();
@@ -1619,8 +1691,10 @@ el.input.addEventListener("input",()=>{el.input.style.height="auto";el.input.sty
 el.input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendMessage();}});
 el.send.addEventListener("click",sendMessage);
 el.deviceManageSidebar?.addEventListener("click",openSidebarDeviceManagement);
+el.identityRetryButton?.addEventListener("click",retryIdentitySetup);
 window.addEventListener("focus",()=>{
   if(!currentUser)return;
+  retryCryptoDeviceInitialization().catch(error=>console.warn("SecureChat device registration retry failed:",error?.code||"CRYPTO_INIT_ERROR"));
   if(activeConversation && navigator.onLine)loadMessages(false).catch(()=>{});
 });
 document.addEventListener("visibilitychange",()=>{
@@ -1673,6 +1747,9 @@ window.addEventListener("online", async () => {
   const connected = await refreshConnectionStatus();
   if (!connected) return;
   refreshSidebar().catch(() => {});
+  try { await retryCryptoDeviceInitialization(); } catch(error) {
+    console.warn("SecureChat device registration retry failed:",error?.code||"CRYPTO_INIT_ERROR");
+  }
   if (activeConversation) loadMessages(true).catch(() => {});
   runAutomaticCryptoMaintenance().catch(() => {});
 });

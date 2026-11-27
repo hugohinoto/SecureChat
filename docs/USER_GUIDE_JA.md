@@ -1,6 +1,6 @@
 # SecureChat 利用説明書
 
-> 対象: SecureChat v0.5.0 / Crypto Protocol v2  
+> 対象: SecureChat v0.6.0 / Crypto Protocol v2  
 > この説明書は一般ユーザー向けです。画面や利用条件は今後の更新で変わる場合があります。
 
 ## 1. SecureChatでできること
