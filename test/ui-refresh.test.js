@@ -121,8 +121,8 @@ test("sidebar is not rebuilt when switching conversations or browser tabs", () =
   const selectEnd = app.indexOf("async function loadMessages", selectStart);
   assert.ok(selectStart >= 0 && selectEnd > selectStart);
   assert.doesNotMatch(app.slice(selectStart, selectEnd), /refreshSidebar\(\)/);
-  assert.match(app, /button\.dataset\.conversationId=String\(c\.id\)/);
-  assert.match(app, /button\.classList\.toggle\("active", button\.dataset\.conversationId === String\(c\.id\)\)/);
+  assert.match(app, /b\\.dataset\\.conversationId=String\\(c\\.id\\)/);
+  assert.match(app, /button\\.classList\\.toggle\\("active", button\\.dataset\\.conversationId === String\\(c\\.id\\)\\)/);
   const focusStart = app.indexOf('window.addEventListener("focus",()=>');
   const focusEnd = app.indexOf('document.addEventListener("visibilitychange",()=>', focusStart);
   assert.ok(focusStart >= 0 && focusEnd > focusStart);
