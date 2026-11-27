@@ -1370,7 +1370,7 @@ export const DYNAMIC_ALIASES = {
   "Olmで端末間の鍵を配布し、Megolmのメッセージ鍵ラチェットで暗号化します。未確認端末には鍵を共有しません。": "Olm distributes keys between devices and Megolm's message-key ratchet encrypts messages. Keys are not shared with unverified devices.",
   "v1 / FSなし": "v1 / No FS",
   "E2EE": "E2EE",
-  "RATCHET v2": "RATCHET v2",
+  "RATCHET v2": "Mecanismo Ratchet v2",
   "既存メッセージはv1で復号し、双方の端末登録と相互OTP確認済み連絡先の初回鍵確認後、端末別Olm/Megolm v2へ自動で移行します。": "Existing messages are decrypted with v1 and automatically migrate to per-device Olm/Megolm v2 after both devices are registered and the initial key of the mutually OTP-verified contact is confirmed.",
   "現行v1は会話単位の長期鍵を使用し、前方秘匿性はありません。相互OTP確認済み連絡先の初回鍵は自動で信頼され、双方の端末登録後にv2へ移行します。鍵変更時は別経路での指紋照合が必要です。": "Current v1 uses a long-term key per conversation and has no forward secrecy. Initial keys of mutually OTP-verified contacts are trusted automatically; v2 migration begins after both devices are registered. Key changes require fingerprint verification through a separate channel.",
   "ブラウザー通知は有効です": "Browser notifications are enabled",
