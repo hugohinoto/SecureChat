@@ -88,7 +88,7 @@ test("Dynamic crypto, admin, and SecureDrop messages switch ja → en → ja", a
     assert.equal(i18n.translateText("チャット"), "채팅");
     assert.equal(i18n.translateText("Chat"), "채팅");
     assert.equal(i18n.translateText("채팅", "ja"), "チャット");
-    assert.equal(i18n.translateText("未ログイン"), "未ログイン");
+    assert.equal(i18n.translateText("未ログイン"), "로그아웃 상태");
     assert.equal(i18n.translateText("채팅", "en"), "Chat");
     i18n.setLocale("en");
     assert.equal(i18n.translateText("채팅"), "Chat");
@@ -117,5 +117,57 @@ test("All keyed UI strings are present in every supported locale", async () => {
   for (const locale of SUPPORTED_LOCALES) {
     assert.deepEqual(Object.keys(translations[locale]).sort(), expected,
       `Locale ${locale} must define every keyed UI translation`);
+  }
+});
+
+
+test("Localized UI aliases cover security and dynamic error messages in zh, ko, and es", async () => {
+  const saved = new Map();
+  const previous = {
+    localStorage: Object.getOwnPropertyDescriptor(globalThis, "localStorage"),
+    document: Object.getOwnPropertyDescriptor(globalThis, "document"),
+    NodeFilter: Object.getOwnPropertyDescriptor(globalThis, "NodeFilter"),
+    CustomEvent: Object.getOwnPropertyDescriptor(globalThis, "CustomEvent")
+  };
+  globalThis.localStorage = {
+    getItem: key => saved.get(key) ?? null,
+    setItem: (key, value) => saved.set(key, value)
+  };
+  globalThis.document = {
+    documentElement: { lang:"ja" },
+    querySelectorAll: () => [],
+    createTreeWalker: () => ({ nextNode: () => false }),
+    dispatchEvent: () => true
+  };
+  globalThis.NodeFilter = { SHOW_TEXT:4 };
+  globalThis.CustomEvent = class { constructor(type, options) { this.type=type;this.detail=options.detail; } };
+  try {
+    const i18n = await import("../public/i18n.js?localized-alias-coverage");
+    const samples = [
+      ["未ログイン", "zh", "未登录"],
+      ["未ログイン", "ko", "로그아웃 상태"],
+      ["未ログイン", "es", "No has iniciado sesión"],
+      ["サーバーに接続できません。通信状態を確認してください。", "zh", "无法连接服务器。请检查网络连接。"],
+      ["サーバーに接続できません。通信状態を確認してください。", "ko", "서버에 연결할 수 없습니다. 네트워크 연결을 확인하세요."],
+      ["サーバーに接続できません。通信状態を確認してください。", "es", "No se puede conectar con el servidor. Comprueba tu conexión."],
+      ["端末一覧を取得できません: ", "zh", "无法获取设备列表："],
+      ["端末一覧を取得できません: ", "ko", "기기 목록을 가져올 수 없습니다: "],
+      ["端末一覧を取得できません: ", "es", "No se pudo obtener la lista de dispositivos: "]
+    ];
+    for (const [source, locale, expected] of samples) {
+      const translated = i18n.translateText(source, locale);
+      assert.equal(translated, expected, `${locale}: ${source}`);
+      assert.equal(i18n.translateText(translated, "ja"), source,
+        `Reverse translation must restore Japanese source for ${locale}`);
+    }
+    assert.equal(
+      i18n.translateText("端末一覧を取得できません: timeout", "es"),
+      "No se pudo obtener la lista de dispositivos: timeout"
+    );
+  } finally {
+    for (const [key, descriptor] of Object.entries(previous)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
   }
 });
