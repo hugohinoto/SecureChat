@@ -1455,58 +1455,7 @@ body {
 }
 .secure-drop-list { max-height: 180px; }
 
-.sidebar-device-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 9px;
-  padding: 9px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(255,255,255,.035);
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-}
-.sidebar-device-status-dot {
-  flex: 0 0 8px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #e2b45b;
-}
-.sidebar-device-status[data-state="registered"] { color: #a8e8cb; }
-.sidebar-device-status[data-state="registered"] .sidebar-device-status-dot { background: #56d69a; }
-.sidebar-device-status[data-state="error"] { color: #ffb1b1; }
-.sidebar-device-status[data-state="error"] .sidebar-device-status-dot { background: #f07878; }
-.device-manage-sidebar-button {
-  width: 100%;
-  margin-top: 7px;
-  padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(255,255,255,.055);
-  color: var(--text);
-  cursor: pointer;
-  font-size: 12px;
-}
-.device-manage-sidebar-button:disabled { opacity: .45; cursor: not-allowed; }
-
-.auth-language-control {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  margin: 12px 0 15px;
-  color: #9ba9c7;
-  font-size: 11px;
-}
-.auth-language-control select {
-  min-height: 30px;
-  padding: 4px 9px;
-  border: 1px solid rgba(156,191,255,.2);
-  border-radius: 8px;
-  color: #edf2ff;
-  background: rgba(7,13,27,.58);
-  font: inherit;
-}
+.device-manage-sidebar-button { width:100%; margin-top:8px; padding:9px 12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.055); color:var(--text); cursor:pointer; font-size:12px; }
+.device-manage-sidebar-button:disabled { opacity:.45; cursor:not-allowed; }
+.auth-language-control { display:flex; align-items:center; justify-content:center; gap:9px; margin:12px 0 15px; color:#9ba9c7; font-size:11px; }
+.auth-language-control select { min-height:30px; padding:4px 9px; border:1px solid rgba(156,191,255,.2); border-radius:8px; color:#edf2ff; background:rgba(7,13,27,.58); font:inherit; }
