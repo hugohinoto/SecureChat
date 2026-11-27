@@ -88,7 +88,7 @@ test("Dynamic crypto, admin, and SecureDrop messages switch ja → en → ja", a
     assert.equal(i18n.translateText("チャット"), "채팅");
     assert.equal(i18n.translateText("Chat"), "채팅");
     assert.equal(i18n.translateText("채팅", "ja"), "チャット");
-    assert.equal(i18n.translateText("未ログイン"), "未ログイン");
+    assert.equal(i18n.translateText("未ログイン"), "로그아웃 상태");
     assert.equal(i18n.translateText("채팅", "en"), "Chat");
     i18n.setLocale("en");
     assert.equal(i18n.translateText("채팅"), "Chat");
@@ -117,5 +117,85 @@ test("All keyed UI strings are present in every supported locale", async () => {
   for (const locale of SUPPORTED_LOCALES) {
     assert.deepEqual(Object.keys(translations[locale]).sort(), expected,
       `Locale ${locale} must define every keyed UI translation`);
+  }
+});
+
+
+test("Localized UI aliases cover security and dynamic error messages in zh, ko, and es", async () => {
+  const saved = new Map();
+  const previous = {
+    localStorage: Object.getOwnPropertyDescriptor(globalThis, "localStorage"),
+    document: Object.getOwnPropertyDescriptor(globalThis, "document"),
+    NodeFilter: Object.getOwnPropertyDescriptor(globalThis, "NodeFilter"),
+    CustomEvent: Object.getOwnPropertyDescriptor(globalThis, "CustomEvent")
+  };
+  globalThis.localStorage = {
+    getItem: key => saved.get(key) ?? null,
+    setItem: (key, value) => saved.set(key, value)
+  };
+  globalThis.document = {
+    documentElement: { lang:"ja" },
+    querySelectorAll: () => [],
+    createTreeWalker: () => ({ nextNode: () => false }),
+    dispatchEvent: () => true
+  };
+  globalThis.NodeFilter = { SHOW_TEXT:4 };
+  globalThis.CustomEvent = class { constructor(type, options) { this.type=type;this.detail=options.detail; } };
+  try {
+    const i18n = await import("../public/i18n.js?localized-alias-coverage");
+    const samples = [
+      ["サーバーに接続できません。通信状態を確認してください。", "zh", "无法连接服务器。请检查网络连接。"],
+      ["サーバーに接続できません。通信状態を確認してください。", "ko", "서버에 연결할 수 없습니다. 네트워크 연결을 확인하세요."],
+      ["サーバーに接続できません。通信状態を確認してください。", "es", "No se puede conectar con el servidor. Comprueba tu conexión."],
+      ["端末一覧を取得できません: ", "zh", "无法获取设备列表："],
+      ["端末一覧を取得できません: ", "ko", "기기 목록을 가져올 수 없습니다: "],
+      ["端末一覧を取得できません: ", "es", "No se pudo obtener la lista de dispositivos: "]
+    ];
+    for (const [source, locale, expected] of samples) {
+      const translated = i18n.translateText(source, locale);
+      assert.equal(translated, expected, `${locale}: ${source}`);
+      assert.equal(i18n.translateText(translated, "ja"), source,
+        `Reverse translation must restore Japanese source for ${locale}`);
+    }
+    assert.equal(
+      i18n.translateText("端末一覧を取得できません: timeout", "es"),
+      "No se pudo obtener la lista de dispositivos: timeout"
+    );
+    const composed = i18n.translateText("端末一覧を取得できません: timeout", "es");
+    assert.equal(i18n.translateText(composed, "ja"), "端末一覧を取得できません: timeout");
+  } finally {
+    for (const [key, descriptor] of Object.entries(previous)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  }
+});
+
+
+test("Every dynamic alias has a translation in Simplified Chinese, Korean, and Spanish", async () => {
+  const { DYNAMIC_ALIASES, TEXT_ALIASES, LOCALIZED_DYNAMIC_ALIASES } =
+    await import("../public/i18n.js?complete-dynamic-alias-coverage");
+  const sourceKeys = Object.keys(DYNAMIC_ALIASES);
+  assert.ok(sourceKeys.length > 0);
+  for (const locale of ["zh", "ko", "es"]) {
+    const covered = { ...TEXT_ALIASES[locale], ...LOCALIZED_DYNAMIC_ALIASES[locale] };
+    const missing = sourceKeys.filter(key => typeof covered[key] !== "string" || !covered[key].length);
+    assert.deepEqual(missing, [], `${locale} is missing dynamic aliases`);
+    const untranslated = sourceKeys.filter(key => covered[key] === key);
+    assert.deepEqual(untranslated, [], `${locale} contains untranslated dynamic aliases`);
+  }
+});
+
+
+test("Every static text alias is defined for Simplified Chinese, Korean, and Spanish", async () => {
+  const { TEXT_ALIASES } = await import("../public/i18n.js?static-alias-coverage");
+  const sourceKeys = Object.keys(TEXT_ALIASES.en);
+  assert.ok(sourceKeys.length > 0);
+  for (const locale of ["zh", "ko", "es"]) {
+    const missing = sourceKeys.filter(key =>
+      typeof TEXT_ALIASES[locale]?.[key] !== "string" ||
+      !TEXT_ALIASES[locale][key].length
+    );
+    assert.deepEqual(missing, [], `${locale} is missing static text aliases`);
   }
 });
