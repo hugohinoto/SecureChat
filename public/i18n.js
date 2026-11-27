@@ -254,7 +254,11 @@ export function setLocale(locale) {
 
 export function t(key, variables = {}) {
   const locale = getLocale();
-  let value = translations[locale]?.[key] ?? translations.en?.[key] ?? translations.ja?.[key] ?? key;
+  // English is the only locale that falls back to English. In partially translated
+  // locales, keep the original Japanese instead of silently mixing in English.
+  let value = translations[locale]?.[key]
+    ?? (locale === "en" ? translations.en?.[key] : translations.ja?.[key])
+    ?? key;
   for (const [name, replacement] of Object.entries(variables)) {
     value = value.replaceAll(`{${name}}`, String(replacement));
   }
@@ -950,30 +954,46 @@ const ENGLISH_TEXT_PARTS = [...REVERSE_TEXT_ALIASES.entries()]
 
 export function translateText(value, locale = getLocale()) {
   if (typeof value !== "string") return value;
-  if (typeof value === "string") {
-    for (const [key, japanese] of Object.entries(translations.ja)) {
-      if (value === japanese || value === translations.en[key]) {
-        return translations[locale]?.[key] ?? value;
-      }
-    }
-  }
-  if (locale === "ja") {
-    if (REVERSE_TEXT_ALIASES.has(value)) return REVERSE_TEXT_ALIASES.get(value);
-    let restored = value;
+
+  // DOM text may already have been translated during an earlier locale change.
+  // Normalize known English aliases back to their Japanese source before applying
+  // the newly selected locale, so switching languages is reversible.
+  let source = value;
+  if (REVERSE_TEXT_ALIASES.has(source)) {
+    source = REVERSE_TEXT_ALIASES.get(source);
+  } else {
     for (const [english, japanese] of ENGLISH_TEXT_PARTS) {
-      restored = restored.split(english).join(japanese);
+      source = source.split(english).join(japanese);
     }
-    return restored;
   }
+
+  if (locale === "ja") return source;
+
   const localeAliases = TEXT_ALIASES[locale] || {};
-  if (Object.hasOwn(localeAliases, value)) return localeAliases[value];
-  if (Object.hasOwn(ALL_TEXT_ALIASES, value)) return ALL_TEXT_ALIASES[value];
-  let translated = value;
-  const localizedParts = Object.entries(localeAliases).filter(([japanese]) => japanese.length >= 2).sort((a,b)=>b[0].length-a[0].length);
-  for (const [japanese, replacement] of localizedParts) translated = translated.split(japanese).join(replacement);
-  if (translated !== value) return translated;
-  for (const [japanese, english] of JAPANESE_TEXT_PARTS) translated = translated.split(japanese).join(english);
-  return translated;
+  if (Object.hasOwn(localeAliases, source)) return localeAliases[source];
+
+  // Translate known Japanese source strings through the locale's keyed dictionary.
+  for (const [key, japanese] of Object.entries(translations.ja)) {
+    if (source === japanese) {
+      return translations[locale]?.[key]
+        ?? (locale === "en" ? translations.en?.[key] : japanese)
+        ?? japanese;
+    }
+  }
+
+  if (locale === "en") {
+    if (Object.hasOwn(TEXT_ALIASES.en, source)) return TEXT_ALIASES.en[source];
+    let translated = source;
+    for (const [japanese, english] of JAPANESE_TEXT_PARTS) {
+      translated = translated.split(japanese).join(english);
+    }
+    return translated;
+  }
+
+  // Partial zh/ko/es dictionaries must not silently fall back to English.
+  // Keep untranslated text in its original language rather than producing a
+  // Korean/Japanese/English mixture that gets progressively corrupted.
+  return source;
 }
 
 function applyTextAliases(root) {
