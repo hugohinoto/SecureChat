@@ -50,6 +50,13 @@
       <div class="sidebar-device-registration" aria-label="端末管理">
         <button class="device-manage-sidebar-button" id="device-manage-sidebar-button" type="button" disabled>端末管理</button>
       </div>
+      <section class="identity-setup-panel" id="identity-setup-panel" aria-live="polite" hidden>
+        <strong>この端末の暗号鍵を準備できません</strong>
+        <p id="identity-setup-message"></p>
+        <label for="identity-retry-password">アカウントパスワード（バックアップ復元用）</label>
+        <input id="identity-retry-password" type="password" autocomplete="current-password" maxlength="128">
+        <button id="identity-retry-button" type="button">鍵の復元・端末登録を再試行</button>
+      </section>
 
       <div class="sidebar-heading"><span>ユーザーを検索</span></div>
       <div class="user-search">
