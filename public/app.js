@@ -170,7 +170,7 @@ function setMobileView(view) {
 function updateSend() {
   el.count.textContent = Array.from(el.input.value).length + " / " + MAX_MESSAGE_LENGTH;
   el.input.disabled = !currentUser || !activeConversation || busy || (activeProtocolVersion===2 && !cryptoV2Ready);
-  el.send.disabled = !navigator.onLine || !currentUser || !activeConversation || busy ||
+  el.send.disabled = !navigator.onLine || el.connection.dataset.state !== "connected" || !currentUser || !activeConversation || busy ||
     (activeProtocolVersion===2 && !cryptoV2Ready) ||
     (cryptoV2Required && activeProtocolVersion!==2) || !el.input.value.trim();
 }
