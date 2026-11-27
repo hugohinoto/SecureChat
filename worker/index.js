@@ -815,6 +815,7 @@ async function handleApi(request, env) {
 
     const invitationAccept = path.match(new RegExp("^/api/contact-invitations/([a-f0-9-]+)/accept$", "i"));
     if (invitationAccept && method === "POST") {
+      if (!await checkRateLimit(env, request, "contact-approve", 20)) return json({ error: "RATE_LIMITED" }, 429);
       // Recipient consent is explicit and tied to their authenticated account session.
       // No OTP is displayed or typed; the server still requires the invited account.
       const inv = await env.DB.prepare("SELECT * FROM contact_invitations WHERE id=? AND invitee_user_id=?").bind(invitationAccept[1], me).first();
