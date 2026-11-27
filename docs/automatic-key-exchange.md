@@ -5,7 +5,7 @@ SecureChat now runs key-exchange maintenance without requiring the user to open 
 ## Automatic workflow
 
 - At sign-in, the client initializes its local Olm device and publishes signed device keys and signed one-time prekeys.
-- In the foreground, the client synchronizes its encrypted to-device inbox and one-time-key counts every 30 seconds, and again when the window regains focus.
+- In the foreground, the client synchronizes its encrypted to-device inbox and one-time-key counts every 60 seconds, and again when the window regains focus.
 - For existing conversations with mutual OTP-verified contacts, the client checks the peer account-signing key under the platform's existing trust policy, queries active peer devices, claims signed one-time keys, and establishes missing Olm sessions.
 - Each participant's client automatically records its own V2 migration approval after its local identity-trust gate passes. When both participants have approved, the server reports V2 enabled and both clients continue session maintenance.
 - On message send, the existing Olm/Megolm path distributes the new message's room key to trusted active devices. Megolm remains one session per message; Olm handles the device-to-device key transport and ratchet.
