@@ -27,7 +27,6 @@ const el = {
   unreadTotal: $("#unread-total"), notificationButton: $("#notification-enable-button"),
   cryptoV2Status: $("#crypto-v2-status"),
   cryptoV2Devices: $("#crypto-v2-devices"), cryptoV2DeviceList: $("#crypto-v2-device-list"),
-  deviceManageSidebar: $("#device-manage-sidebar-button"),
   identitySetupPanel: $("#identity-setup-panel"), identitySetupMessage: $("#identity-setup-message"),
   identityRetryPassword: $("#identity-retry-password"), identityRetryButton: $("#identity-retry-button"),
 };
@@ -543,20 +542,8 @@ async function retryCryptoDeviceInitialization() {
   updateSend();
   return true;
 }
-async function openSidebarDeviceManagement() {
-  if(!cryptoV2Ready) {
-    toast("端末管理を開くには、この端末の暗号鍵登録を完了してください。");
-    return;
-  }
-  if(el.cryptoV2Devices) {
-    el.cryptoV2Devices.hidden=false;
-    await refreshCryptoDeviceList();
-    el.cryptoV2Devices.scrollIntoView({behavior:"smooth",block:"nearest"});
-  }
-}
 function updateCryptoV2Controls() {
   if(el.cryptoV2Status)el.cryptoV2Status.textContent=translateText(cryptoV2StatusMessage);
-  if(el.deviceManageSidebar)el.deviceManageSidebar.disabled=!cryptoV2Ready;
   // Do not replace a concrete device-initialization failure with the generic
   // V2 migration notice; the actual cause is needed to recover safely.
   if(cryptoV2InitializationError) return;
@@ -1398,51 +1385,33 @@ function otpInputRow(parent,placeholder,buttonText,handler,fieldKey) {
   row.append(input,button);parent.append(row);
 }
 function renderInvitations(invitations) {
-  const preservedInputs=new Map(Array.from(el.invitations.querySelectorAll("input[data-invitation-field]")).map(input=>[input.dataset.invitationField,input.value]));
   el.invitations.replaceChildren();
   const incoming=invitations.filter(i=>i.invitee_user_id===currentUser.userId);
   const outgoing=invitations.filter(i=>i.inviter_user_id===currentUser.userId);
-  if(!incoming.length&&!outgoing.length){const p=document.createElement("p");p.className="sidebar-empty";p.textContent="進行中の招待はありません。";el.invitations.append(p);return;}
   for(const inv of incoming) {
-    const card=document.createElement("div");card.className="invitation-card";
-    const title=document.createElement("strong");title.textContent="@"+inv.inviter_user_id+" からの招待";
-    card.append(title);
-    if(!inv.invitee_verified_at) {
-      const note=document.createElement("p");note.textContent="相手から受け取った8桁コードを入力して承認します。";card.append(note);
-      otpInputRow(card,"相手の8桁コード","承認",async code=>{
-        await api("/api/contact-invitations/"+inv.id+"/accept",{method:"POST",body:{code}});
-        toast("招待を承認しました。次に確認コードを発行してください。");await refreshSidebar();
-      },"accept:"+inv.id);
-    } else {
-      const note=document.createElement("p");note.textContent="あなたの確認コードを発行し、招待した相手へ共有してください。";card.append(note);
-      const button=document.createElement("button");button.type="button";button.className="invitation-action";button.textContent="確認コードを発行 / 再発行";
-      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/response-code",{method:"POST"});showOtpCode(card,result.code,result.expiresAt,"incoming:"+inv.id);}catch(e){showError(e);}finally{button.disabled=false;}});
-      card.append(button);
-      const savedCode=displayedOtpCodes.get("incoming:"+inv.id);if(savedCode)showOtpCode(card,savedCode.code,savedCode.expiresAt);
-    }
-    el.invitations.append(card);
+    const card=document.createElement("article");card.className="invitation-card";
+    const title=document.createElement("strong");title.textContent="@"+inv.inviter_user_id+" から連絡先招待";
+    const note=document.createElement("p");note.textContent="相手のアカウントから招待されています。承認すると相互連絡先になり、暗号化鍵交換が開始されます。";
+    const approve=document.createElement("button");approve.type="button";approve.className="invitation-action";approve.textContent="連絡先として承認";
+    approve.addEventListener("click",async()=>{
+      approve.disabled=true;
+      try {
+        await api("/api/contact-invitations/"+inv.id+"/accept",{method:"POST",body:{}});
+        toast("連絡先を承認しました。暗号鍵の交換を開始します。");
+        await refreshSidebar();
+        runAutomaticCryptoMaintenance({force:true}).catch(error=>console.warn("SecureChat contact key exchange retry failed:",error?.code||"CRYPTO_AUTO_EXCHANGE_ERROR"));
+      } catch(error) { showError(error);approve.disabled=false; }
+    });
+    card.append(title,note,approve);el.invitations.append(card);
   }
   for(const inv of outgoing) {
-    const card=document.createElement("div");card.className="invitation-card";
+    const card=document.createElement("article");card.className="invitation-card";
     const title=document.createElement("strong");title.textContent="@"+inv.invitee_user_id+" への招待";
-    card.append(title);
-    if(!inv.invitee_verified_at) {
-      const note=document.createElement("p");note.textContent="相手が最初のコードを入力するのを待っています。";card.append(note);
-      const button=document.createElement("button");button.type="button";button.className="invitation-action";button.textContent=inv.inviter_code_expires_at>Date.now()?"コードを再発行":"期限切れ：コードを再発行";
-      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/reissue",{method:"POST"});showOtpCode(card,result.code,result.expiresAt,"outgoing:"+inv.id);}catch(e){showError(e);}finally{button.disabled=false;}});
-      card.append(button);
-      const savedCode=displayedOtpCodes.get("outgoing:"+inv.id);if(savedCode)showOtpCode(card,savedCode.code,savedCode.expiresAt);
-    } else {
-      const note=document.createElement("p");note.textContent="相手側の確認が完了しました。相手から受け取ったコードで最終確認します。";card.append(note);
-      otpInputRow(card,"相手の8桁コード","最終確認",async code=>{
-        const result=await api("/api/contact-invitations/"+inv.id+"/confirm",{method:"POST",body:{code}});
-        toast("@"+result.userId+"との相互確認が完了しました。");await refreshSidebar();
-      },"confirm:"+inv.id);
-    }
-    el.invitations.append(card);
+    const note=document.createElement("p");note.textContent="相手の承認待ちです。承認されると連絡先登録と暗号鍵交換が自動で始まります。";
+    card.append(title,note);el.invitations.append(card);
   }
-  for(const input of el.invitations.querySelectorAll("input[data-invitation-field]")) {
-    if(preservedInputs.has(input.dataset.invitationField))input.value=preservedInputs.get(input.dataset.invitationField);
+  if(!incoming.length&&!outgoing.length) {
+    const empty=document.createElement("p");empty.className="sidebar-empty";empty.textContent="進行中の招待はありません。";el.invitations.append(empty);
   }
 }
 async function refreshSidebar() {
@@ -1690,7 +1659,6 @@ el.search.addEventListener("keydown",e=>{if(e.key==="Enter")searchUsers();});
 el.input.addEventListener("input",()=>{el.input.style.height="auto";el.input.style.height=Math.min(el.input.scrollHeight,125)+"px";updateSend();});
 el.input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendMessage();}});
 el.send.addEventListener("click",sendMessage);
-el.deviceManageSidebar?.addEventListener("click",openSidebarDeviceManagement);
 el.identityRetryButton?.addEventListener("click",retryIdentitySetup);
 window.addEventListener("focus",()=>{
   if(!currentUser)return;
