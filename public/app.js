@@ -544,8 +544,6 @@ async function registerDeviceAcrossAllChats() {
     const unverified=outcomes.filter(item=>item.status==="identity-unverified").length;
     const failed=outcomes.filter(item=>item.status==="error").length;
     const summary="この端末の登録を確認しました。全チャット同期結果: v2準備完了 "+ready+"件、相手待ち "+waiting+"件、本人確認待ち "+unverified+"件、エラー "+failed+"件。";
-    cryptoV2StatusMessage=summary;
-    updateCryptoV2Controls();
     if(failed) toast(summary+" エラーのあるチャットは再試行してください。",9000);
     else toast(summary,8000);
     if(el.cryptoV2Devices && !el.cryptoV2Devices.hidden) await refreshCryptoDeviceList();
