@@ -37,6 +37,8 @@ let identityPrivateKey = null, identityPublicKey = null, identitySigningPublicKe
 let activeConversation = null, activeKey = null, activeProtocolVersion = 1, cryptoV2Module = null, cryptoV2Ready = false, cryptoV2StatusMessage = "", busy = false, refreshTimer = null, mobileView = "list";
 const openingConversationPeers = new Set();
 let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", connectionCheckTick = 0;
+let messagePollTick = 0, lastCryptoInboxSyncAt = 0;
+const CRYPTO_INBOX_SYNC_INTERVAL_MS = 15000;
 const previousUnreadCounts = new Map();
 let originalDocumentTitle = document.title;
 let unreadCountsInitialized = false;
@@ -1124,12 +1126,14 @@ async function signIn(user,password=null) {
       refreshConnectionStatus().catch(()=>{});
     }
     if(foreground && activeConversation && navigator.onLine) {
-      if(activeProtocolVersion!==2 && ++cryptoModeRefreshTick % 5 === 0) {
+      const shouldPollMessages = ++messagePollTick % 3 === 0;
+      const shouldRefreshMode = activeProtocolVersion!==2 && ++cryptoModeRefreshTick % 5 === 0;
+      if(shouldRefreshMode) {
         refreshCryptoConversationMode()
           .then(()=>maybeAutoApproveCryptoV2ForActiveConversation())
           .then(()=>loadMessages(false))
           .catch(()=>{});
-      } else {
+      } else if(shouldPollMessages) {
         loadMessages(false).catch(()=>{});
       }
     }
@@ -1456,8 +1460,10 @@ async function loadMessages(fullSync=false) {
   const id=activeConversation.id,peer=activeConversation.peerUserId;
   try {
     const key=await deriveKey(id,peer);
-    if(activeProtocolVersion===2 && cryptoV2Ready) {
+    if(activeProtocolVersion===2 && cryptoV2Ready &&
+       (fullSync || Date.now()-lastCryptoInboxSyncAt >= CRYPTO_INBOX_SYNC_INTERVAL_MS)) {
       await cryptoV2Module.syncCryptoV2(currentUser.userId);
+      lastCryptoInboxSyncAt = Date.now();
     }
     const cursor=fullSync||!lastMessageCreatedAt?"":("?after="+lastMessageCreatedAt+"&afterId="+encodeURIComponent(lastMessageId));
     const data=await api("/api/conversations/"+id+"/messages"+cursor);
