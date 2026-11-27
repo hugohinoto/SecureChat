@@ -2540,7 +2540,7 @@ export const LOCALIZED_DYNAMIC_ALIASES = {
     "Olmで端末間の鍵を配布し、Megolmのメッセージ鍵ラチェットで暗号化します。未確認端末には鍵を共有しません。": "Olm distribuye claves entre dispositivos y el mecanismo de rotación de claves de mensaje de Megolm cifra los mensajes. No se comparten claves con dispositivos no verificados.",
     "v1 / FSなし": "v1 / Sin FS",
     "E2EE": "Cifrado de extremo a extremo",
-    "RATCHET v2": "RATCHET v2",
+    "RATCHET v2": "Mecanismo Ratchet v2",
     "既存メッセージはv1で復号し、双方の端末登録と相互OTP確認済み連絡先の初回鍵確認後、端末別Olm/Megolm v2へ自動で移行します。": "기존 메시지는 v1로 복호화되며 양쪽 기기 등록 및 OTP 연락처 초기 키 확인 후 기기별 Olm/Megolm v2로 자동 전환됩니다.",
     "現行v1は会話単位の長期鍵を使用し、前方秘匿性はありません。相互OTP確認済み連絡先の初回鍵は自動で信頼され、双方の端末登録後にv2へ移行します。鍵変更時は別経路での指紋照合が必要です。": "현재 v1은 대화별 장기 키를 사용하며 순방향 비밀성이 없습니다. 상호 OTP 확인 연락처의 초기 키는 자동 신뢰되며 양쪽 기기 등록 후 v2로 전환됩니다. 키 변경 시 별도 경로로 지문을 확인해야 합니다.",
     "アカウント招待コードを発行しました。": "계정 초대 코드를 발급했습니다.",
