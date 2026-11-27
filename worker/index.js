@@ -1132,7 +1132,7 @@ async function handleApi(request, env) {
       if (peer.id === me) return json({ error: "SELF_CONVERSATION" }, 400);
       const [pairA, pairB] = orderedPair(me, peer.id);
       const mutualContacts = await env.DB.prepare("SELECT 1 AS ok FROM verified_contact_pairs WHERE user_a_id=? AND user_b_id=?").bind(pairA, pairB).first();
-      if (!mutualContacts) return json({ error: "MUTUAL_OTP_REQUIRED", message: "双方のワンタイムコード確認が完了した相手とだけチャットできます。" }, 403);
+      if (!mutualContacts) return json({ error: "CONTACT_APPROVAL_REQUIRED", message: "相手が連絡先招待を承認したユーザーとだけチャットできます。" }, 403);
       const peerKey = await env.DB.prepare("SELECT user_id FROM user_keys WHERE user_id=?").bind(peer.id).first();
       if (!peerKey) return json({ error: "RECIPIENT_KEY_MISSING" }, 409);
 
