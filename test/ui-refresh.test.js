@@ -29,11 +29,13 @@ test("refreshed UI includes keyboard focus, reduced-motion, and mobile navigatio
   assert.match(refreshCss, /body\.mobile-list/);
 });
 
-test("UI reports forward secrecy per conversation and retains the v1 caution", () => {
+test("UI labels legacy v1 history honestly and blocks new sends during migration", () => {
   const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(html, /暗号化方式は会話ごとに異なります/);
   assert.match(html, /暗号実装は未監査のため/);
-  assert.match(app, /現行v1は会話単位の長期鍵を使用し、前方秘匿性はありません/);
+  assert.match(app, /旧方式 v1 — 履歴の復号専用/);
+  assert.match(app, /v1は会話単位の長期鍵を使用し、前方秘匿性はありません/);
+  assert.match(app, /この会話から新規送信はできません/);
   assert.match(app, /前方秘匿性v2 — 端末別暗号化/);
 });
 
