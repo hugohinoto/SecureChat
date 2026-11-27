@@ -28,7 +28,8 @@ test("first-use trust is limited to mutual OTP contacts and is pinned locally", 
 test("manual V2 approval control is hidden; the verified path performs approval automatically", () => {
   assert.match(app, /el\.cryptoV2Approve\.hidden=true;/);
   assert.match(app, /cryptoV2Module\.approveAndPrepareConversation\(/);
-  assert.match(app, /相互OTP確認済み連絡先の初回鍵を自動で信頼/);
+  assert.match(app, /async function isOtpVerifiedContact\(peerUserId\)/);
+  assert.match(app, /verifiedPeerPins\[peerUserId\]!==peer\.identitySigningPublicKey/);
 });
 
 test("automatic V2 exchange continues to use the Olm/Megolm SDK and one-message session rotation", () => {

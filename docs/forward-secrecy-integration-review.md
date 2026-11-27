@@ -13,15 +13,15 @@ The repository now contains a first integrated v2 implementation behind a server
 - On first use, the client pins an account-root signing key only for a mutual OTP-confirmed contact, removing the separate fingerprint-entry step for normal onboarding. Key changes still stop the connection and require out-of-band fingerprint verification. This relies on the server's contact assertion and does not protect against a malicious server forging that assertion or substituting the initial key.
 - Device listing and revocation endpoints, with rate-limited crypto writes.
 
-**Activation state:** `wrangler.jsonc` intentionally has `SECURECHAT_CRYPTO_V2_ENABLED="false"`. The production path therefore remains v1, and the `forward-secrecy` diagnostic remains Critical. This is deliberate: enabling the code path is not evidence that the security properties are ready for production.
+**Activation state:** the checked-in `wrangler.jsonc` currently has `SECURECHAT_CRYPTO_V2_ENABLED="true"`. This does not prove that the production Worker has this configuration or that the security gates have passed. Confirm deployed configuration separately. Keep the `forward-secrecy` diagnostic Critical until independent review and multi-user/multi-device E2E gates pass.
 
 **Known gap before any real-user activation:** device revocation now queues a per-conversation control event to each surviving registered device. On its next successful crypto sync, the client invalidates the affected Megolm outbound session and marks tracked device lists dirty so the next send can distribute a fresh key without the revoked device. This is asynchronous and still needs browser E2E proof for every surviving device, reliable event delivery/acknowledgement, concurrent send races, and recovery. Until that test passes, do not call device revocation immediate or complete. The integration also still needs independent protocol review, including the exact low-order/all-zero X25519 rejection path in the pinned vodozemac source.
 
-This branch is therefore an implementation candidate, not an announcement that SecureChat is production-approved for forward secrecy. Do not set the feature flag to true on production until every release gate below has passed.
+This is an implementation candidate, not an announcement that SecureChat is production-approved for forward secrecy. Do not treat the checked-in feature flag as approval to claim production security; complete every release gate below first.
 
 
 **Review date:** 2026-11-23  
-**Production decision:** Keep v1 active and the `forward-secrecy` diagnostic critical. A promising browser/WASM foundation has been identified, but the 2022 audit is not sufficient assurance for the current version, bindings, or SecureChat integration.
+**Production decision:** Keep the `forward-secrecy` diagnostic critical until release gates pass. The checked-in flag is enabled, but the 2022 audit is not sufficient assurance for the current version, bindings, or SecureChat integration.
 
 ## Existing production path
 
