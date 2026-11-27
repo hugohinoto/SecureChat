@@ -39,4 +39,5 @@ test("device management is only rendered and operated from user settings", () =>
   assert.match(settingsJs, /\/api\/crypto\/devices/);
   assert.match(settingsJs, /\/revoke/);
   assert.match(settingsJs, /X-SecureChat-Device/);
+  assert.match(settingsJs, /onupgradeneeded=\(\)=>\{request\.transaction\.abort\(\);\}/);
 });
