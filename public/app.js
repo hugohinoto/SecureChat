@@ -36,7 +36,7 @@ let currentUser = null, authMode = "login", toastTimer = null, authTimer = null,
 let identityPrivateKey = null, identityPublicKey = null, identitySigningPublicKey = null;
 let activeConversation = null, activeKey = null, activeProtocolVersion = 1, cryptoV2Module = null, cryptoV2Ready = false, cryptoV2StatusMessage = "", busy = false, refreshTimer = null, mobileView = "list";
 const openingConversationPeers = new Set();
-let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", sidebarRefreshTick = 0;
+let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", connectionCheckTick = 0;
 const displayedOtpCodes = new Map();
 const previousUnreadCounts = new Map();
 let originalDocumentTitle = document.title;
@@ -76,6 +76,23 @@ function state(value, label) {
   el.connection.dataset.state = value;
   el.connectionLabel.textContent = translateText(label);
   updateSend();
+}
+async function refreshConnectionStatus() {
+  if (!navigator.onLine) {
+    state("offline", "オフライン・ローカル表示");
+    return false;
+  }
+  try {
+    const health = await api("/api/health");
+    if (health.status !== "ok" || health.database !== "connected") {
+      throw appError("SERVER_NOT_READY", "サーバーの準備状態を確認できません。");
+    }
+    state("connected", "オンライン");
+    return true;
+  } catch {
+    state("offline", "サーバー未接続・ローカル表示");
+    return false;
+  }
 }
 async function closeCryptoV2Session() {
   try {
@@ -153,7 +170,7 @@ function setMobileView(view) {
 function updateSend() {
   el.count.textContent = Array.from(el.input.value).length + " / " + MAX_MESSAGE_LENGTH;
   el.input.disabled = !currentUser || !activeConversation || busy || (activeProtocolVersion===2 && !cryptoV2Ready);
-  el.send.disabled = !currentUser || !activeConversation || busy ||
+  el.send.disabled = !navigator.onLine || !currentUser || !activeConversation || busy ||
     (activeProtocolVersion===2 && !cryptoV2Ready) ||
     (cryptoV2Required && activeProtocolVersion!==2) || !el.input.value.trim();
 }
@@ -1140,7 +1157,7 @@ async function signIn(user,password=null) {
   el.avatar.textContent=Array.from(user.userId)[0]||"U";
   el.gate.hidden=true;
   el.form.reset();
-  state("connected","準備完了");
+  await refreshConnectionStatus();
   startAuthCheck();
   clearInterval(refreshTimer);
   // Device keys are uploaded during initializeCryptoV2IfEnabled(). Start a
@@ -1158,7 +1175,10 @@ async function signIn(user,password=null) {
         console.warn("SecureChat automatic crypto maintenance failed:", error?.code || "CRYPTO_MAINTENANCE_ERROR");
       });
     }
-    if(foreground && activeConversation) {
+    if(foreground && ++connectionCheckTick % 30 === 0) {
+      refreshConnectionStatus().catch(()=>{});
+    }
+    if(foreground && activeConversation && navigator.onLine) {
       if(activeProtocolVersion!==2 && ++cryptoModeRefreshTick % 5 === 0) {
         refreshCryptoConversationMode()
           .then(()=>maybeAutoApproveCryptoV2ForActiveConversation())
@@ -1167,9 +1187,6 @@ async function signIn(user,password=null) {
       } else {
         loadMessages(false).catch(()=>{});
       }
-    }
-    if(++sidebarRefreshTick % 5 === 0) {
-      refreshSidebar().catch(()=>{});
     }
   },1000);
 }
@@ -1477,10 +1494,9 @@ async function selectConversation(c) {
     el.input.disabled=true;
   }
   updateCryptoV2Controls();
-  await refreshSidebar();
 }
 async function loadMessages(fullSync=false) {
-  if(!activeConversation||messageLoadBusy)return;
+  if(!navigator.onLine || !activeConversation || messageLoadBusy)return;
   messageLoadBusy=true;
   const id=activeConversation.id,peer=activeConversation.peerUserId;
   try {
@@ -1526,6 +1542,10 @@ async function loadMessages(fullSync=false) {
 }
 async function sendMessage() {
   if(busy||!activeConversation)return;
+  if(!navigator.onLine) {
+    toast("オフライン中です。下書きはこの画面に残ります。接続が戻ってから送信してください。", 5000);
+    return;
+  }
   const text=el.input.value.trim();if(!text)return;
   if(Array.from(text).length>MAX_MESSAGE_LENGTH){showError(appError("MESSAGE_LENGTH_EXCEEDED","メッセージは2000文字以内にしてください。"));return;}
   busy=true;updateSend();
@@ -1591,13 +1611,11 @@ el.send.addEventListener("click",sendMessage);
 el.deviceManageSidebar?.addEventListener("click",openSidebarDeviceManagement);
 window.addEventListener("focus",()=>{
   if(!currentUser)return;
-  if(activeConversation)loadMessages(false).catch(()=>{});
-  refreshSidebar().catch(()=>{});
+  if(activeConversation && navigator.onLine)loadMessages(false).catch(()=>{});
 });
 document.addEventListener("visibilitychange",()=>{
   if(!currentUser)return;
-  if(document.visibilityState==="visible" && document.hasFocus() && activeConversation)loadMessages(false).catch(()=>{});
-  refreshSidebar().catch(()=>{});
+  if(document.visibilityState==="visible" && document.hasFocus() && activeConversation && navigator.onLine)loadMessages(false).catch(()=>{});
 });
 
 async function bootstrap() {
@@ -1626,9 +1644,6 @@ document.addEventListener("securechat:localechange", () => {
   updateNotificationButton();
   updateCryptoV2Controls();
   if(!el.cryptoV2Devices?.hidden)refreshCryptoDeviceList().catch(()=>{});
-  if (currentUser) {
-    refreshSidebar().catch(()=>{});
-  }
 });
 
 
@@ -1639,4 +1654,15 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("focus", () => {
   if (currentUser) runAutomaticCryptoMaintenance().catch(() => {});
+});
+window.addEventListener("offline", () => {
+  state("offline", "オフライン・ローカル表示");
+});
+window.addEventListener("online", async () => {
+  if (!currentUser) return;
+  const connected = await refreshConnectionStatus();
+  if (!connected) return;
+  refreshSidebar().catch(() => {});
+  if (activeConversation) loadMessages(true).catch(() => {});
+  runAutomaticCryptoMaintenance().catch(() => {});
 });
