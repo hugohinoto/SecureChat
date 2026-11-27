@@ -881,8 +881,8 @@ function renderPeerFingerprintPanel(peerUserId,ownFingerprint,peerFingerprint,pe
   remote.textContent="@"+peerUserId+": "+peerFingerprint;
   const status=document.createElement("p");
   status.textContent=verified
-    ? "相互OTP確認済み連絡先として信頼済み（このブラウザーのみ）。鍵変更時は再確認が必要です"
-    : "未信頼 — OTP確認済み連絡先の初回鍵を確認できていません。";
+    ? "招待承認済み連絡先として信頼済み（このブラウザーのみ）。鍵変更時は再確認が必要です"
+    : "未信頼 — 承認済み連絡先の初回鍵を確認できていません。";
   const button=document.createElement("button");
   button.type="button";
   button.className="crypto-v2-button";
