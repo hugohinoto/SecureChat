@@ -4,7 +4,7 @@
 
 - Application data encryption supports versioned keys. The diagnostic checks encrypted-row usage by generation and does not treat a staged second key as a completed rotation.
 - Automatic Cloudflare Invocation Logs are disabled in Wrangler configuration. Application logging remains available only through fixed, non-sensitive labels.
-- The production chat default remains protocol v1. The branch now includes an accessible registered-device list and a UI for revoking other devices; a device cannot revoke itself from the current session. A device-scoped Matrix Olm / Megolm v2 implementation, authenticated device registration, one-time-prekey transport, opaque to-device inbox, versioned message storage, and bilateral migration controls have been added behind `SECURECHAT_CRYPTO_V2_ENABLED=false`.
+- The checked-in `wrangler.jsonc` currently sets `SECURECHAT_CRYPTO_V2_ENABLED=true`; this is a configuration state, not proof that the production deployment has been updated or that the security release gates have passed. The code includes a device-scoped Matrix Olm / Megolm v2 implementation, authenticated device registration, one-time-prekey transport, opaque to-device inbox, versioned message storage, and bilateral migration controls. Existing v1 conversations remain readable through the legacy path; when v2 is required, new v1 sends are blocked until migration.
 - The production security diagnostic deliberately keeps `forward-secrecy` at **critical**. Code being present or a feature flag being switched on is not proof that the complete protocol and deployment meet the security gate.
 - Administrator passkey / WebAuthn authentication is not implemented. Administrator authentication remains password-based with the existing recent-login and password-age controls.
 
@@ -12,7 +12,7 @@
 
 The v2 implementation uses the Matrix Rust/WASM crypto state machine. Each browser profile/device receives its own device ID and local encrypted Olm state; the existing account identity backup does not clone live ratchet state. The server stores device public-key records, one-time keys, opaque encrypted to-device events, and versioned opaque Megolm messages. New conversations must be approved by both account owners before the protocol mode can become v2. Once v2 is selected, the legacy v1 message POST is rejected for that conversation; retained v1 messages remain on the v1 decryption path.
 
-The feature flag is intentionally **false** in the checked-in production Wrangler configuration. Do not enable it for real users or claim production forward secrecy until all of the following pass:
+The checked-in Wrangler configuration currently enables the feature flag, but production forward secrecy must not be claimed until all of the following gates pass. Verify the actual deployed Worker configuration before rollout decisions:
 
 1. Build and pin the exact WASM artifacts/dependencies reproducibly and verify the license and supply chain.
 2. Review the exact vodozemac / SDK / WASM source path for X25519 low-order and all-zero DH rejection and add a negative test for the initial Olm handshake.
@@ -22,7 +22,7 @@ The feature flag is intentionally **false** in the checked-in production Wrangle
 6. Verify that old v1 ciphertext remains readable after migration, that v2 never silently downgrades, and that a protocol-mode transition cannot race a concurrent v1 write.
 7. Obtain an independent review of the current SDK versions, compiled WASM artifacts, Worker adapter, D1 schema, local persistence, and transport/recovery logic. The public 2022 vodozemac audit does not cover all of these components.
 
-The production `forward-secrecy` diagnostic remains critical until these gates are met. Do not set `SECURECHAT_CRYPTO_V2_ENABLED=true` merely to clear the diagnostic.
+The `forward-secrecy` diagnostic must remain critical until these gates are met, even if the checked-in feature flag is true. Do not treat the flag or a successful build as proof of production security.
 
 ## Administrator passkey release gate
 
