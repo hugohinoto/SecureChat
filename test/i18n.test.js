@@ -68,7 +68,7 @@ test("Dynamic crypto, admin, and SecureDrop messages switch ja → en → ja", a
   };
   globalThis.NodeFilter = { SHOW_TEXT:4 };
   globalThis.CustomEvent = class { constructor(type, options) { this.type=type;this.detail=options.detail; } };
-  globalThis.navigator = { languages:["ja-JP"], language:"ja-JP" };
+  Object.defineProperty(globalThis, "navigator", { configurable:true, writable:true, value:{ languages:["ja-JP"], language:"ja-JP" } });
   try {
     const i18n = await import("../public/i18n.js?dynamic-locale-test");
     const samples = [
