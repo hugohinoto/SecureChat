@@ -109,3 +109,13 @@ test("MutationObserver translation cannot observe its own attribute writes", asy
   assert.match(source, /observer\.observe\(document\.documentElement, \{ childList:true, characterData:true, subtree:true \}\)/);
   assert.doesNotMatch(source, /observer\.observe\(document\.documentElement, \{[^}]*attributes:true/);
 });
+
+
+test("All keyed UI strings are present in every supported locale", async () => {
+  const { translations, SUPPORTED_LOCALES } = await import("../public/i18n.js?locale-coverage-test");
+  const expected = Object.keys(translations.ja).sort();
+  for (const locale of SUPPORTED_LOCALES) {
+    assert.deepEqual(Object.keys(translations[locale]).sort(), expected,
+      `Locale ${locale} must define every keyed UI translation`);
+  }
+});
