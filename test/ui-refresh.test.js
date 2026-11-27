@@ -80,3 +80,19 @@ test("chat login form stays hidden while the existing session and chat state ini
   assert.match(app, /await signIn\(session\.user\);\s*el\.authLoading\.hidden=true;/);
   assert.match(refreshCss, /\.auth-loading\[hidden\] \{ display: none; \}/);
 });
+
+
+test("sidebar offers one-click account-wide device registration and chat key synchronization", () => {
+  assert.match(html, /id="device-register-all-button"/);
+  assert.match(html, /crypto\.registerAllDevices/);
+  assert.match(app, /async function registerDeviceAcrossAllChats\(\)/);
+  assert.match(app, /runAutomaticCryptoMaintenance\(\{force:true\}\)/);
+  assert.match(app, /el\.deviceRegisterAll\?\.addEventListener\("click",registerDeviceAcrossAllChats\)/);
+  assert.match(app, /status==="identity-unverified"/);
+  assert.match(app, /status==="waiting-for-peer"/);
+});
+
+test("manual account-wide key exchange may run even when automatic V2 enforcement is optional", () => {
+  assert.match(app, /async function runAutomaticCryptoMaintenance\(\{ force = false \} = \{\}\)/);
+  assert.match(app, /\(!cryptoV2Required && !force\)/);
+});
