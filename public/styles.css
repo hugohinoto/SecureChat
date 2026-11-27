@@ -1491,3 +1491,22 @@ body {
   font-size: 12px;
 }
 .device-manage-sidebar-button:disabled { opacity: .45; cursor: not-allowed; }
+
+.auth-language-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  margin: 12px 0 15px;
+  color: #9ba9c7;
+  font-size: 11px;
+}
+.auth-language-control select {
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 1px solid rgba(156,191,255,.2);
+  border-radius: 8px;
+  color: #edf2ff;
+  background: rgba(7,13,27,.58);
+  font: inherit;
+}
