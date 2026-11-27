@@ -232,6 +232,9 @@ async function runZapScan(){
   }else{
    message("セキュリティワークフローが失敗または要確認です。各ステップのログを確認してください。","error");
   }
+  if(result?.found&&result.run.status==="completed"){
+   await Promise.allSettled([runSecurityCheck(),loadLogs()]);
+  }
  }catch(error){
   status.textContent="検査を開始・取得できませんでした："+error.message;status.dataset.status="error";
   message(error.message,"error");
