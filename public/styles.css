@@ -222,6 +222,7 @@ button { color: inherit; }
 .connection-dot { width: 6px; height: 6px; border-radius: 50%; background: #e5b46a; }
 .connection-pill[data-state="connected"] .connection-dot { background: #75dfb8; box-shadow: 0 0 9px rgba(117,223,184,.7); }
 .connection-pill[data-state="disconnected"] .connection-dot { background: #ed8e9b; }
+.connection-pill[data-state="offline"] .connection-dot { background: #e5b46a; box-shadow: 0 0 9px rgba(229,180,106,.45); }
 .prototype-pill { color: #a8b5ff; border-color: rgba(148, 159, 255, .2); background: rgba(129, 139, 237, .08); font-size: 8px; font-weight: 800; letter-spacing: 1px; }
 
 .security-banner {
