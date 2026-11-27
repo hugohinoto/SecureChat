@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function sourceFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
@@ -11,7 +12,7 @@ function sourceFiles(directory) {
 }
 
 test("Worker console output contains only fixed literal labels", () => {
-  const files = sourceFiles(new URL("../worker", import.meta.url).pathname);
+  const files = sourceFiles(fileURLToPath(new URL("../worker", import.meta.url)));
   const findings = [];
   for (const file of files) {
     const source = readFileSync(file, "utf8");

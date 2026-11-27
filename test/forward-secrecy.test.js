@@ -22,7 +22,7 @@ test("new messages require the forward-secrecy protocol when Crypto v2 is enable
   assert.match(api, /forwardSecrecyReady: true/);
   assert.match(api, /sessionRotationMessages: 1/);
   assert.match(app, /cryptoV2Required && activeProtocolVersion!==2/);
-  assert.match(app, /相手の署名鍵指紋を別経路で確認すると、自動でv2へ移行して鍵交換を開始します/);
+  assert.match(app, /相互OTP確認済み連絡先の初回鍵を自動で信頼/);
 });
 
 test("health diagnostics and documentation no longer claim forward secrecy is unimplemented", async () => {

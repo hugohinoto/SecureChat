@@ -4,6 +4,9 @@ import {
   decryptSecureDropFile,
   encryptSecureDropFile
 } from "./secure-drop-crypto.js";
+import { initI18n, t, getLocale, translateText } from "./i18n.js";
+
+initI18n();
 
 const $ = (selector) => document.querySelector(selector);
 const ui = {
@@ -36,25 +39,26 @@ function error(code, message) {
   return result;
 }
 function notify(message, duration = 4500) {
-  ui.toast.textContent = message;
+  ui.toast.textContent = translateText(message);
   ui.toast.classList.add("visible");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => ui.toast.classList.remove("visible"), duration);
 }
 function errorText(value) {
   const code = value?.code || "SECURE_DROP_ERROR";
-  return (value?.message || "処理に失敗しました。") + "\nエラーコード: " + code;
+  return translateText(value?.message || (getLocale()==="ja"?"処理に失敗しました。":"Processing failed.")) + "\n" +
+    (getLocale()==="ja"?"エラーコード: ":"Error code: ") + code;
 }
 function formatSize(bytes) {
   const value = Number(bytes);
-  if (!Number.isFinite(value) || value < 0) return "容量不明";
+  if (!Number.isFinite(value) || value < 0) return getLocale()==="ja"?"容量不明":"Unknown size";
   if (value < 1_000_000) return Math.max(1, Math.round(value / 1000)) + " KB";
   return (value / 1_000_000).toFixed(2) + " MB";
 }
 function formatDate(value) {
   const date = new Date(Number(value));
-  return Number.isNaN(date.getTime()) ? "日時不明" :
-    new Intl.DateTimeFormat("ja-JP", { month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit" }).format(date);
+  return Number.isNaN(date.getTime()) ? (getLocale()==="ja"?"日時不明":"Unknown time") :
+    new Intl.DateTimeFormat(getLocale()==="ja"?"ja-JP":"en-US", { month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit" }).format(date);
 }
 function fromBase64(value) {
   return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
@@ -77,23 +81,24 @@ async function api(path, options = {}) {
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.deleted === false) {
+    const ja = getLocale() === "ja";
     const messages = {
-      UNAUTHENTICATED:"ログインし直してください。",
-      SECURE_DROP_RECIPIENT_NOT_AUTHORIZED:"送信先は相互確認済みの連絡先ではありません。",
-      SECURE_DROP_KEY_ENVELOPE_INVALID:"受信者向け暗号鍵の検証に失敗しました。",
-      INSUFFICIENT_CREDITS:"今月のクレジットが不足しています。",
-      SECURE_DROP_UPLOADS_PAUSED:"専用容量の90%に達したため通常送信を停止しています。優先送信を選択してください。",
-      SECURE_DROP_CAPACITY_REACHED:"専用容量に空きがありません。",
-      UPLOAD_PREEMPTED:"優先容量確保のため予約が取り消されました。端末内の保留データは保持されています。",
-      UPLOAD_FINALIZATION_PENDING:"保存完了を確認できません。保留一覧から再送信してください。",
-      UPLOAD_ID_REUSED:"この予約IDは以前使用されています。",
-      STORED_FILE_TOO_LARGE:"暗号化後のファイルが上限を超えています。",
-      STORED_SIZE_MISMATCH:"転送中にファイル容量が変わりました。",
-      TRANSFER_EXPIRED_OR_NOT_FOUND:"ファイルは期限切れか、削除されています。",
-      DOWNLOAD_LIMIT_REACHED:"ダウンロード上限に達しました。",
-      STORED_FILE_INTEGRITY_MISMATCH:"保存ファイルの整合性を確認できませんでした。",
-      DELETE_PENDING:"削除要求を受け付けました。削除完了をサーバー側で再確認しています。",
-      UPLOAD_ID_CONFLICT:"この保留データは既存の予約と一致しません。再読み込みして確認してください。"
+      UNAUTHENTICATED: ja ? "ログインし直してください。" : "Please log in again.",
+      SECURE_DROP_RECIPIENT_NOT_AUTHORIZED: ja ? "送信先は相互確認済みの連絡先ではありません。" : "Recipient is not a mutually verified contact.",
+      SECURE_DROP_KEY_ENVELOPE_INVALID: ja ? "受信者向け暗号鍵の検証に失敗しました。" : "Failed to verify the recipient's encryption key.",
+      INSUFFICIENT_CREDITS: ja ? "今月のクレジットが不足しています。" : "Insufficient credits this month.",
+      SECURE_DROP_UPLOADS_PAUSED: ja ? "専用容量の90%に達したため通常送信を停止しています。優先送信を選択してください。" : "Normal uploads are paused at 90% dedicated capacity. Choose priority send.",
+      SECURE_DROP_CAPACITY_REACHED: ja ? "専用容量に空きがありません。" : "Dedicated capacity is full.",
+      UPLOAD_PREEMPTED: ja ? "優先容量確保のため予約が取り消されました。端末内の保留データは保持されています。" : "Reservation was cancelled for priority capacity. The pending data remains on this device.",
+      UPLOAD_FINALIZATION_PENDING: ja ? "保存完了を確認できません。保留一覧から再送信してください。" : "Could not confirm saving. Retry from the pending list.",
+      UPLOAD_ID_REUSED: ja ? "この予約IDは以前使用されています。" : "This reservation ID was used previously.",
+      STORED_FILE_TOO_LARGE: ja ? "暗号化後のファイルが上限を超えています。" : "The encrypted file exceeds the limit.",
+      STORED_SIZE_MISMATCH: ja ? "転送中にファイル容量が変わりました。" : "File size changed during transfer.",
+      TRANSFER_EXPIRED_OR_NOT_FOUND: ja ? "ファイルは期限切れか、削除されています。" : "The file has expired or been deleted.",
+      DOWNLOAD_LIMIT_REACHED: ja ? "ダウンロード上限に達しました。" : "Download limit reached.",
+      STORED_FILE_INTEGRITY_MISMATCH: ja ? "保存ファイルの整合性を確認できませんでした。" : "Could not verify stored-file integrity.",
+      DELETE_PENDING: ja ? "削除要求を受け付けました。削除完了をサーバー側で再確認しています。" : "Deletion requested. Confirming deletion with the server.",
+      UPLOAD_ID_CONFLICT: ja ? "この保留データは既存の予約と一致しません。再読み込みして確認してください。" : "This pending data conflicts with an existing reservation. Reload and check."
     };
     const code = typeof data.error === "string" ? data.error : "HTTP_" + response.status;
     throw error(code, messages[code] || data.message || "SecureDropの処理に失敗しました。");
@@ -178,7 +183,7 @@ async function loadContacts() {
   ui.recipient.replaceChildren();
   const first = document.createElement("option");
   first.value = "";
-  first.textContent = contacts.length ? "送信先を選択" : "確認済み連絡先がありません";
+  first.textContent = contacts.length ? (getLocale()==="ja"?"送信先を選択":"Select recipient") : (getLocale()==="ja"?"確認済み連絡先がありません":"No verified contacts");
   ui.recipient.append(first);
   for (const userId of contacts) {
     const option = document.createElement("option");
@@ -200,9 +205,9 @@ function renderCredits(account) {
   const capacity = Number(account.storageCapacityBytes || 2_500_000_000);
   const percent = capacity > 0 ? Math.min(100, used / capacity * 100) : 0;
   ui.meter.style.width = percent.toFixed(1) + "%";
-  ui.storage.textContent = formatSize(used) + " / " + formatSize(capacity) +
+  ui.storage.textContent = translateText(formatSize(used) + " / " + formatSize(capacity) +
     " 使用中（" + percent.toFixed(1) + "%）" +
-    (account.uploadsPaused ? " · 通常送信は一時停止中" : " · 通常送信可能");
+    (account.uploadsPaused ? " · 通常送信は一時停止中" : " · 通常送信可能"));
   updateSendButton();
 }
 function makeFileRow(title, detail) {
@@ -211,9 +216,10 @@ function makeFileRow(title, detail) {
   const copy = document.createElement("div");
   copy.className = "service-file-copy";
   const strong = document.createElement("strong");
+  strong.dataset.userContent = "true";
   strong.textContent = title;
   const span = document.createElement("span");
-  span.textContent = detail;
+  span.textContent = translateText(detail);
   copy.append(strong, span);
   const actions = document.createElement("div");
   actions.className = "service-file-actions";
@@ -301,20 +307,20 @@ function renderPending(items) {
   ui.pendingCard.hidden = items.length === 0;
   for (const pending of items) {
     const { row, actions } = makeFileRow(
-      pending.fileName || "保留中の暗号化ファイル",
+      pending.fileName || (getLocale()==="ja"?"保留中の暗号化ファイル":"Pending encrypted file"),
       "@" + pending.peerUserId + " · " + formatSize(pending.storedSizeBytes) +
       " · " + (pending.priority ? "優先送信" : "通常送信") + " · " + formatDate(pending.createdAt)
     );
     const retry = document.createElement("button");
     retry.type = "button";
-    retry.textContent = "再送信";
+    retry.textContent = t("common.retry");
     retry.disabled = busy;
     retry.addEventListener("click", () => retryPending(pending, retry));
     actions.append(retry);
     if (pending.canChangePriority) {
       const tier = document.createElement("button");
       tier.type = "button";
-      tier.textContent = pending.priority ? "通常で再送信" : "優先で再送信";
+      tier.textContent = pending.priority ? (getLocale()==="ja"?"通常で再送信":"Retry normally") : (getLocale()==="ja"?"優先で再送信":"Retry with priority");
       tier.addEventListener("click", () => retryPending(pending, tier, !pending.priority));
       actions.append(tier);
     }
@@ -326,33 +332,37 @@ function renderFiles(files) {
   if (!files.length) {
     const empty = document.createElement("p");
     empty.className = "service-empty";
-    empty.textContent = "ファイルはありません。";
+    empty.textContent = translateText("ファイルはありません。");
     ui.files.append(empty);
     return;
   }
   for (const file of files) {
     const isReceived = file.direction === "received";
-    const title = isReceived ? "受信ファイル · @" + file.senderUserId : "送信ファイル · @" + file.peerUserId;
+    const title = translateText(isReceived ? "受信ファイル · @" + file.senderUserId : "送信ファイル · @" + file.peerUserId);
     const paidDownload = isReceived && Number(file.downloadCreditsRequired || 0) > 0;
-    const detail = formatSize(file.storedSizeBytes) + " · 残り無料 " + file.downloadsRemaining +
-      " 回" + (paidDownload ? " · 次回以降 " + file.downloadCreditsRequired + " クレジット/回" : "") +
-      " · " + formatDate(file.createdAt) + " · 期限 " + formatDate(file.expiresAt);
+    const detail = getLocale()==="ja"
+      ? formatSize(file.storedSizeBytes) + " · 残り無料 " + file.downloadsRemaining +
+        " 回" + (paidDownload ? " · 次回以降 " + file.downloadCreditsRequired + " クレジット/回" : "") +
+        " · " + formatDate(file.createdAt) + " · 期限 " + formatDate(file.expiresAt)
+      : formatSize(file.storedSizeBytes) + " · " + file.downloadsRemaining + " free downloads remaining" +
+        (paidDownload ? " · " + file.downloadCreditsRequired + " credits per subsequent download" : "") +
+        " · " + formatDate(file.createdAt) + " · Expires " + formatDate(file.expiresAt);
     const { row, actions } = makeFileRow(title, detail);
     if (isReceived) {
       const download = document.createElement("button");
       download.type = "button";
-      download.textContent = "取得・復号";
+      download.textContent = translateText("取得・復号");
       download.disabled = !identity?.privateKey || !file.keyEnvelope;
       download.addEventListener("click", () => downloadFile(file, download));
       actions.append(download);
     } else {
       const sent = document.createElement("span");
-      sent.textContent = "送信済み";
+      sent.textContent = translateText("送信済み");
       sent.style.color = "#91a4bd";
       sent.style.fontSize = "10px";
       const remove = document.createElement("button");
       remove.type = "button";
-      remove.textContent = "削除";
+      remove.textContent = translateText("削除");
       remove.addEventListener("click", () => deleteFile(file, remove));
       actions.append(sent, remove);
     }
@@ -429,7 +439,7 @@ async function uploadSelectedFile() {
   busy = true;
   let pending = null;
   updateSendButton();
-  ui.uploadStatus.textContent = "送信先の署名付き公開鍵と、この端末の照合済み指紋を確認しています…";
+  ui.uploadStatus.textContent = translateText("送信先の署名付き公開鍵と、この端末の照合済み指紋を確認しています…");
   try {
     const peer = await verifiedPeerRoot(peerUserId);
     if (!identity?.signingPrivateKey || !identity.signingPublicKey) {
@@ -458,19 +468,19 @@ async function uploadSelectedFile() {
     };
     await savePending(pending);
     try { await navigator.storage?.persist?.(); } catch {}
-    ui.uploadStatus.textContent = "暗号化データを端末内に保管しました。D1へ送信しています…";
+    ui.uploadStatus.textContent = translateText("暗号化データを端末内に保管しました。D1へ送信しています…");
     const result = await sendPendingUpload(pending);
     notify("暗号化ファイルを送信しました。消費クレジット: " + result.creditsConsumed);
     ui.file.value = "";
     ui.fileName.textContent = "選択されていません（最大25 MB）";
-    ui.uploadStatus.textContent = "送信が完了しました。";
+    ui.uploadStatus.textContent = translateText("送信が完了しました。");
   } catch (failure) {
     if (pending && (failure.code === "UPLOAD_PREEMPTED" || failure.code === "SECURE_DROP_UPLOADS_PAUSED" ||
         failure.code === "SECURE_DROP_CAPACITY_REACHED" || failure.code === "INSUFFICIENT_CREDITS")) {
       pending.canChangePriority = true;
       await savePending(pending).catch(() => {});
     }
-    ui.uploadStatus.textContent = errorText(failure);
+    ui.uploadStatus.textContent = translateText(errorText(failure));
     notify(errorText(failure), 8500);
   } finally {
     busy = false;
@@ -481,10 +491,10 @@ async function uploadSelectedFile() {
 async function downloadFile(file, button) {
   if (!identity?.privateKey || !identity.publicKey) return;
   const paidCredits = Number(file.downloadCreditsRequired || 0);
-  if (paidCredits > 0 && !confirm(
+  if (paidCredits > 0 && !confirm(translateText(
     "無料ダウンロード3回を使い切っています。\n今回の取得で " + paidCredits +
     " クレジットを消費します。続行しますか？"
-  )) return;
+  ))) return;
   button.disabled = true;
   try {
     const response = await fetch(file.downloadPath, { method:"GET", credentials:"same-origin", cache:"no-store" });
@@ -517,7 +527,7 @@ async function downloadFile(file, button) {
   }
 }
 async function deleteFile(file, button) {
-  if (!confirm("このファイルを削除しますか？受信者もダウンロードできなくなります。")) return;
+  if (!confirm(translateText("このファイルを削除しますか？受信者もダウンロードできなくなります。"))) return;
   button.disabled = true;
   try {
     await api("/api/secure-drop/files/" + encodeURIComponent(file.id), { method:"DELETE" });
@@ -609,3 +619,10 @@ if(pendingTab&&pendingCard){const syncPendingTab=()=>{pendingTab.hidden=pendingC
 activateServiceView("service-upload-card");
 
 start();
+
+document.addEventListener("securechat:localechange", () => {
+  if (currentUser) {
+    loadContacts().catch(()=>{});
+    refresh().catch(()=>{});
+  }
+});

@@ -1075,6 +1075,10 @@ button:disabled { cursor: not-allowed !important; }
  .service-workspace-main .service-shell{gap:7px}
 }
 
+.language-control{display:flex;align-items:center;gap:7px;color:#91a4bd;font-size:10px}
+.language-control select{min-height:28px;padding:4px 8px;border:1px solid rgba(151,177,207,.24);border-radius:7px;color:#dce7f5;background:#111c2c;font:inherit}
+.language-control select:focus-visible{outline:2px solid #8ed7e8;outline-offset:2px}
+
 
 /* Keep the login form hidden until the existing session has been checked. */
 .auth-loading {

@@ -14,12 +14,12 @@ The signing private key is generated as a non-extractable WebCrypto key and stor
 
 ## First-contact and key-change checks
 
-Clients pin each peer's signing public key locally on first contact and reject a changed key. Users must still compare the displayed SHA-256 signing-key fingerprints with the peer over an independent trusted channel on first contact and after any key change. A self-signature proves possession of the signing key; by itself it does not prove a real-world identity or protect a first contact from a malicious server.
+Clients pin each peer's signing public key locally on first contact only when the peer is already a mutual OTP-confirmed contact. This lets the client start device-key authorization and the v2 ratchet automatically without a separate fingerprint-entry step. A changed key is never auto-trusted; the client stops and requires an out-of-band fingerprint comparison. A self-signature proves possession of the signing key, but not a real-world identity. Automatic first-use trust relies on the server's mutual-contact status and does not protect against a malicious server that can forge that status or substitute the first key.
 
-If browser storage is cleared or the user changes devices, the local pin set is lost and fingerprints must be compared again.
+If browser storage is cleared or the user changes devices, the local pin set is lost. The first key can be pinned again for an OTP-confirmed contact; compare fingerprints out of band when protection against a malicious server is required.
 
 ## Legacy accounts
 
 Migration `0009_signed_identity_keys.sql` adds nullable proof columns. Existing public keys are not deleted. Each account must sign in using the updated client to publish a proof. Until that happens, the security diagnostic reports the legacy unsigned key count and clients refuse to start a conversation with a legacy key.
 
-This change does not implement X3DH, one-time prekeys, or Double Ratchet. Forward secrecy remains unavailable until a separately reviewed protocol implementation is deployed.
+This account identity layer does not itself implement X3DH, one-time prekeys, or Double Ratchet. Crypto v2 uses the separate Matrix Olm/Megolm SDK integration for device ratchets; see [forward-secrecy-integration-review.md](./forward-secrecy-integration-review.md) for its scope and release caveats.

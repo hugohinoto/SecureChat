@@ -1,7 +1,23 @@
 # Post-quantum implementation readiness review
 
 **Status: investigation in progress — runtime cryptography is unchanged.**
-**Reviewed:** 2026-11-26
+**Reviewed:** 2026-11-27
+
+## Decision after upstream feasibility check
+
+**Do not add post-quantum runtime cryptography in this change.** The current repository's readiness constraints remain open:
+
+- Signal's official `libsignal` README labels use outside Signal unsupported and licenses the project under AGPLv3. Its documented Node package ships native platform libraries; the upstream documentation does not establish a supported browser/WASM distribution or stable external-client integration for SecureChat.
+- The Signal PQXDH and Double Ratchet documents are protocol specifications, not a supported SecureChat browser implementation. PQXDH revision 3 still relies on classical discrete-log assumptions for mutual authentication. Double Ratchet revision 4 specifies SPQR, but a specification alone does not provide a reviewed, persistable browser adapter.
+- Therefore, adopting libsignal requires both a documented legal decision and proof of a supported browser/Electron API before any dependency, key transport, or wire-protocol changes. Do not write a custom PQXDH/SPQR implementation or claim that current Olm/Megolm is quantum resistant.
+
+The selected next step is feasibility work only: resolve the license and platform/API gates, then choose a pinned, independently reviewed implementation. Until then, runtime cryptography and protocol negotiation remain unchanged; current Crypto v2 is classical.
+
+Sources checked:
+- [libsignal upstream README](https://github.com/signalapp/libsignal/blob/main/README.md)
+- [libsignal upstream license](https://github.com/signalapp/libsignal/blob/main/LICENSE)
+- [Signal PQXDH specification, revision 3](https://signal.org/docs/specifications/pqxdh/)
+- [Signal Double Ratchet specification, revision 4](https://signal.org/docs/specifications/doubleratchet/)
 
 This review records the blockers that must be resolved before SecureChat can safely replace or extend its current Matrix Olm/Megolm Crypto Protocol v2 implementation.
 

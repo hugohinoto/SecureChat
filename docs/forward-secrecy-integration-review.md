@@ -10,7 +10,7 @@ The repository now contains a first integrated v2 implementation behind a server
 - Room-key sharing via the SDK with `OnlyTrustedDevices`, one-hour / 100-message session rotation configuration, and a Megolm-encrypted message envelope.
 - Explicit `protocol_version` on stored messages, a bilateral account approval gate for conversation cutover, and a Worker-side prohibition on sending v1 messages once a conversation is v2.
 - Existing v1 decryption path retained for stored v1 messages.
-- Peer account-root fingerprints must be checked out-of-band per local browser before this client accepts a device authorization from that peer.
+- On first use, the client pins an account-root signing key only for a mutual OTP-confirmed contact, removing the separate fingerprint-entry step for normal onboarding. Key changes still stop the connection and require out-of-band fingerprint verification. This relies on the server's contact assertion and does not protect against a malicious server forging that assertion or substituting the initial key.
 - Device listing and revocation endpoints, with rate-limited crypto writes.
 
 **Activation state:** `wrangler.jsonc` intentionally has `SECURECHAT_CRYPTO_V2_ENABLED="false"`. The production path therefore remains v1, and the `forward-secrecy` diagnostic remains Critical. This is deliberate: enabling the code path is not evidence that the security properties are ready for production.

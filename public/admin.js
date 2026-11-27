@@ -1,24 +1,40 @@
+import { initI18n, t, getLocale, translateText } from "./i18n.js";
+
+initI18n();
+
 const $=s=>document.querySelector(s);
 const notice=$("#notice"),consoleRoot=$("#console");
 let page=0,currentAdmin="",lastSecurityCheck=null;
-function message(text,type=""){notice.textContent=text;notice.className="notice "+type;}
+function message(text,type=""){notice.textContent=translateText(text);notice.className="notice "+type;}
 async function api(path,options={}){
  const response=await fetch(path,{method:options.method||"GET",credentials:"same-origin",cache:"no-store",headers:{"Accept":"application/json",...(options.body?{"Content-Type":"application/json"}:{})},...(options.body?{body:JSON.stringify(options.body)}:{})});
  const data=response.status===204?{}:await response.json().catch(()=>({}));
  if(!response.ok){
-  const messages={UNAUTHENTICATED:"ログインが必要です。SecureChatに管理者アカウントでログインしてください。",ADMIN_REQUIRED:"このアカウントには管理者権限がありません。",ADMIN_REAUTH_REQUIRED:"直近15分以内の再ログインが必要です。ログアウトして管理者アカウントで再ログインしてください。",PASSWORD_CHANGE_REQUIRED:"管理者パスワードを変更してからアクセスしてください。",ADMIN_ACCOUNT_PROTECTED:"管理者アカウントはこの画面から削除できません。",CANNOT_DELETE_SELF:"自分自身のアカウントは削除できません。",CONFIRMATION_MISMATCH:"確認用ユーザーIDが一致しません。",DATA_ENCRYPTION_NOT_CONFIGURED:"APP_DATA_ENCRYPTION_KEYが未設定です。CloudflareのWorker Secretsに設定してください。"};
+  const ja=getLocale()==="ja";
+  const messages={
+   UNAUTHENTICATED:ja?"ログインが必要です。SecureChatに管理者アカウントでログインしてください。":"Login required. Log in with a SecureChat administrator account.",
+   ADMIN_REQUIRED:ja?"このアカウントには管理者権限がありません。":"This account does not have administrator privileges.",
+   ADMIN_REAUTH_REQUIRED:ja?"直近15分以内の再ログインが必要です。ログアウトして管理者アカウントで再ログインしてください。":"Re-login within the last 15 minutes is required.",
+   PASSWORD_CHANGE_REQUIRED:ja?"管理者パスワードを変更してからアクセスしてください。":"Change the administrator password before accessing this page.",
+   ADMIN_ACCOUNT_PROTECTED:ja?"管理者アカウントはこの画面から削除できません。":"Administrator accounts cannot be deleted from this page.",
+   CANNOT_DELETE_SELF:ja?"自分自身のアカウントは削除できません。":"You cannot delete your own account.",
+   CONFIRMATION_MISMATCH:ja?"確認用ユーザーIDが一致しません。":"Confirmation user ID does not match.",
+   DATA_ENCRYPTION_NOT_CONFIGURED:ja?"APP_DATA_ENCRYPTION_KEYが未設定です。CloudflareのWorker Secretsに設定してください。":"APP_DATA_ENCRYPTION_KEY is not configured. Set it in Cloudflare Worker Secrets."
+  };
   throw new Error(messages[data.error]||data.message||data.error||("HTTP "+response.status));
  }
  return data;
 }
-function date(value){if(!value)return "—";const d=new Date(Number(value));return Number.isNaN(d.getTime())?"—":new Intl.DateTimeFormat("ja-JP",{dateStyle:"medium",timeStyle:"short"}).format(d);}
-function remaining(value){if(!value)return "期限なし";const ms=Number(value)-Date.now();if(ms<=0)return "期限切れ";const h=Math.ceil(ms/3600000);return h<24?"残り約"+h+"時間":"残り約"+Math.ceil(h/24)+"日";}
+function date(value){if(!value)return "—";const d=new Date(Number(value));return Number.isNaN(d.getTime())?"—":new Intl.DateTimeFormat(getLocale()==="ja"?"ja-JP":"en-US",{dateStyle:"medium",timeStyle:"short"}).format(d);}
+function remaining(value){if(!value)return getLocale()==="ja"?"期限なし":"No expiry";const ms=Number(value)-Date.now();if(ms<=0)return getLocale()==="ja"?"期限切れ":"Expired";const h=Math.ceil(ms/3600000);return h<24?(getLocale()==="ja"?"残り約"+h+"時間":"About "+h+" hours remaining"):(getLocale()==="ja"?"残り約"+Math.ceil(h/24)+"日":"About "+Math.ceil(h/24)+" days remaining");}
 function cell(row,value){const td=document.createElement("td");td.textContent=value??"—";row.append(td);return td;}
 function makeButton(label,fn,cls=""){const b=document.createElement("button");b.type="button";b.textContent=label;if(cls)b.className=cls;b.addEventListener("click",fn);return b;}
 async function loadOverview(){
  const d=await api("/api/admin/overview");
  $("#stat-users").textContent=d.users;$("#stat-admins").textContent=d.administrators;$("#stat-sessions").textContent=d.activeSessions;$("#stat-messages").textContent=d.activeMessages;$("#stat-invites").textContent=d.pendingInvitations;$("#stat-actions").textContent=d.adminActions24h;
- $("#worker-note").textContent=d.workerErrors+" DB確認時刻: "+date(d.checkedAt);
+ $("#worker-note").textContent=getLocale()==="ja"
+  ? d.workerErrors+" DB確認時刻: "+date(d.checkedAt)
+  : d.workerErrors+" DB checked: "+date(d.checkedAt);
 }
 async function loadUsers(){
  const q=$("#user-query").value.trim(),mode=$("#user-search-mode").value,role=$("#user-role-filter").value,sort=$("#user-sort").value;
@@ -30,48 +46,52 @@ async function loadUsers(){
   if(Number(u.is_admin)!==1){const b=makeButton("削除",()=>deleteUser(u),"delete-user");action.append(b);}else action.textContent="保護中";
   body.append(tr);
  }
- $("#page-label").textContent=(page+1)+"ページ / "+Math.max(1,Math.ceil(d.total/d.pageSize))+"ページ · "+d.total+"件";
- $("#user-search-summary").textContent="検索方式："+({prefix:"先頭一致",contains:"部分一致",exact:"完全一致"}[mode])+" · "+({all:"全ユーザー",admin:"管理者のみ",user:"一般ユーザーのみ"}[role])+" · 最大50件ずつ表示";
+ $("#page-label").textContent=getLocale()==="ja"
+  ? (page+1)+"ページ / "+Math.max(1,Math.ceil(d.total/d.pageSize))+"ページ · "+d.total+"件"
+  : "Page "+(page+1)+" / "+Math.max(1,Math.ceil(d.total/d.pageSize))+" · "+d.total+" items";
+ $("#user-search-summary").textContent=getLocale()==="ja"
+  ? "検索方式："+({prefix:"先頭一致",contains:"部分一致",exact:"完全一致"}[mode])+" · "+({all:"全ユーザー",admin:"管理者のみ",user:"一般ユーザーのみ"}[role])+" · 最大50件ずつ表示"
+  : "Search: "+({prefix:"Prefix",contains:"Contains",exact:"Exact"}[mode])+" · "+({all:"All users",admin:"Administrators only",user:"Regular users only"}[role])+" · Up to 50 per page";
  $("#prev-page").disabled=page<=0;$("#next-page").disabled=(page+1)*d.pageSize>=d.total;
 }
 async function deleteUser(u){
- if(!confirm("@"+u.user_id+" を完全に削除します。連絡先・会話・メッセージ・セッションも削除されます。この操作は取り消せません。"))return;
- const typed=prompt("誤操作防止のため、ユーザーID「"+u.user_id+"」をそのまま入力してください。");if(typed===null)return;
- try{await api("/api/admin/users/delete",{method:"POST",body:{userId:u.id,confirmUserId:typed}});message("@"+u.user_id+" を削除しました。","ok");await Promise.all([loadOverview(),loadUsers(),loadLogs()]);}
+ if(!confirm(translateText("@"+u.user_id+(getLocale()==="ja"?" を完全に削除します。連絡先・会話・メッセージ・セッションも削除されます。この操作は取り消せません。":" will be permanently deleted, including contacts, conversations, messages, and sessions. This cannot be undone."))))return;
+ const typed=prompt(getLocale()==="ja"?"誤操作防止のため、ユーザーID「"+u.user_id+"」をそのまま入力してください。":"To prevent mistakes, enter the user ID \""+u.user_id+"\" exactly.");if(typed===null)return;
+ try{await api("/api/admin/users/delete",{method:"POST",body:{userId:u.id,confirmUserId:typed}});message(getLocale()==="ja"?"@"+u.user_id+" を削除しました。":"@"+u.user_id+" was deleted.","ok");await Promise.all([loadOverview(),loadUsers(),loadLogs()]);}
  catch(e){message(e.message,"error");}
 }
 async function loadAnnouncements(){
  const d=await api("/api/admin/announcements"),root=$("#announcements");root.replaceChildren();
  for(const a of d.announcements){
   const card=document.createElement("article");card.className="announcement-item";const copy=document.createElement("div");
-  const h=document.createElement("h3");h.textContent=a.title;const p=document.createElement("p");p.textContent=a.body;
+  const h=document.createElement("h3");h.dataset.userContent="true";h.textContent=a.title;const p=document.createElement("p");p.dataset.userContent="true";p.textContent=a.body;
   const small=document.createElement("small");small.textContent=(Number(a.published)===1?"公開中":"下書き")+" · 作成 "+date(a.created_at)+" · "+(Number(a.published)===1?remaining(a.expires_at):"公開時に期限開始");
   copy.append(h,p,small);const actions=document.createElement("div");actions.className="item-actions";
   actions.append(makeButton(Number(a.published)===1?"非公開":"公開",async()=>{
    try{await api("/api/admin/announcements/"+a.id,{method:"PUT",body:{published:Number(a.published)!==1}});await loadAnnouncements();await loadOverview();message("公開状態を更新しました。","ok");}catch(e){message(e.message,"error");}
   }));
   actions.append(makeButton("編集",async()=>{
-   const title=prompt("タイトル",a.title);if(title===null)return;const body=prompt("本文",a.body);if(body===null)return;
+   const title=prompt(translateText("タイトル"),a.title);if(title===null)return;const body=prompt(translateText("本文"),a.body);if(body===null)return;
    try{await api("/api/admin/announcements/"+a.id,{method:"PUT",body:{title,body,published:Number(a.published)===1}});await loadAnnouncements();message("お知らせを更新しました。","ok");}catch(e){message(e.message,"error");}
   }));
   if(Number(a.published)===1)actions.append(makeButton("期限変更",async()=>{
    const current=Math.max(1,Math.ceil((Number(a.expires_at||Date.now()+48*3600000)-Date.now())/3600000));
-   const value=prompt("公開期限を現在から何時間後にしますか？（1〜720時間）",String(Math.min(720,current)));if(value===null)return;
+   const value=prompt(translateText("公開期限を現在から何時間後にしますか？（1〜720時間）"),String(Math.min(720,current)));if(value===null)return;
    try{await api("/api/admin/announcements/"+a.id,{method:"PUT",body:{expiryHours:Number(value)}});await loadAnnouncements();message("公開期限を更新しました。","ok");}catch(e){message(e.message,"error");}
   }));
-  actions.append(makeButton("削除",async()=>{if(!confirm("このお知らせを完全に削除しますか？"))return;try{await api("/api/admin/announcements/"+a.id,{method:"DELETE"});await loadAnnouncements();await loadOverview();message("お知らせを削除しました。","ok");}catch(e){message(e.message,"error");}},"danger"));
+  actions.append(makeButton("削除",async()=>{if(!confirm(translateText("このお知らせを完全に削除しますか？")))return;try{await api("/api/admin/announcements/"+a.id,{method:"DELETE"});await loadAnnouncements();await loadOverview();message("お知らせを削除しました。","ok");}catch(e){message(e.message,"error");}},"danger"));
   card.append(copy,actions);root.append(card);
  }
  if(!d.announcements.length){const p=document.createElement("p");p.className="muted";p.textContent="お知らせはまだありません。";root.append(p);}
 }
-function statusText(s){return ({open:"未確認",triaged:"調査中",resolved:"解決済み"})[s]||s;}
+function statusText(s){return ({open:getLocale()==="ja"?"未確認":"Open",triaged:getLocale()==="ja"?"調査中":"Under review",resolved:getLocale()==="ja"?"解決済み":"Resolved"})[s]||s;}
 async function loadBugReports(){
  const d=await api("/api/admin/bug-reports"),root=$("#bug-reports");root.replaceChildren();
  for(const item of d.reports){
   const card=document.createElement("article");card.className="announcement-item bug-report-item";
   const copy=document.createElement("div"),h=document.createElement("h3"),p=document.createElement("p"),small=document.createElement("small");
-  h.textContent=({bug:"不具合",security:"セキュリティ",other:"その他"})[item.report.category]+"： "+item.report.title;
-  p.textContent=item.report.description;small.textContent="報告者 @"+item.reporter+" · "+date(item.createdAt)+" · 状態："+statusText(item.status);
+  h.dataset.userContent="true";h.textContent=({bug:"不具合",security:"セキュリティ",other:"その他"})[item.report.category]+"： "+item.report.title;
+  p.dataset.userContent="true";p.textContent=item.report.description;small.textContent="報告者 @"+item.reporter+" · "+date(item.createdAt)+" · 状態："+statusText(item.status);
   const details=document.createElement("details"),summary=document.createElement("summary");summary.textContent="再現手順・補足を表示";const pre=document.createElement("pre");
   pre.textContent=["再現手順：\n"+(item.report.steps||"—"),"期待した動作：\n"+(item.report.expected||"—"),"実際の動作：\n"+(item.report.actual||"—")].join("\n\n");details.append(summary,pre);
   const thread=document.createElement("div");thread.className="bug-report-thread";
@@ -79,7 +99,7 @@ async function loadBugReports(){
   for(const reply of item.replies||[]){
    const entry=document.createElement("article");entry.className="bug-report-reply";
    const meta=document.createElement("small");meta.textContent="管理者 · "+date(reply.createdAt);
-   const text=document.createElement("p");text.textContent=reply.message;entry.append(meta,text);thread.append(entry);
+   const text=document.createElement("p");text.dataset.userContent="true";text.textContent=reply.message;entry.append(meta,text);thread.append(entry);
   }
   if(!(item.replies||[]).length){const empty=document.createElement("p");empty.className="muted";empty.textContent="まだ返信はありません。";thread.append(empty);}
   copy.append(h,p,small,details,thread);
@@ -97,7 +117,7 @@ async function loadBugReports(){
    catch(error){message(error.message,"error");send.disabled=false;}
   });
   const remove=makeButton("報告を削除",async()=>{
-   if(!window.confirm("この不具合報告と返信履歴を完全に削除します。この操作は取り消せません。よろしいですか？"))return;
+   if(!window.confirm(translateText("この不具合報告と返信履歴を完全に削除します。この操作は取り消せません。よろしいですか？")))return;
    remove.disabled=true;
    try{await api("/api/admin/bug-reports/"+item.id,{method:"DELETE"});message("不具合報告と返信履歴を削除しました。","ok");await loadBugReports();}
    catch(error){message(error.message,"error");remove.disabled=false;}
@@ -239,3 +259,6 @@ document.querySelectorAll(".tree-item,.activity-icon").forEach(link=>{
 activateAdminView("stats");
 
 initializeAdminConsole();
+document.addEventListener("securechat:localechange", () => {
+ if (!consoleRoot.hidden) refreshAll().catch(()=>{});
+});
