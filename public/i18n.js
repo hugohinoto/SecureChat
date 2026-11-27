@@ -1987,8 +1987,19 @@ const ENGLISH_TEXT_PARTS = [...REVERSE_TEXT_ALIASES.entries()]
 export function translateText(value, locale = getLocale()) {
   if (typeof value !== "string") return value;
 
+  // Exact Japanese source aliases should be translated before attempting to
+  // normalize an already-localized DOM value. This avoids matching short Japanese
+  // words inside longer Japanese phrases during reverse-fragment processing.
+  const directLocaleAliases = {
+    ...(TEXT_ALIASES[locale] || {}),
+    ...(LOCALIZED_DYNAMIC_ALIASES[locale] || {})
+  };
+  if (locale !== "ja" && Object.hasOwn(directLocaleAliases, value)) {
+    return directLocaleAliases[value];
+  }
+
   // DOM text may already have been translated during an earlier locale change.
-  // Normalize known English aliases back to their Japanese source before applying
+  // Normalize known localized aliases back to their Japanese source before applying
   // the newly selected locale, so switching languages is reversible.
   let source = value;
   const reverseLocaleAliases = new Map();
