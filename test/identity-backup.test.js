@@ -77,3 +77,17 @@ test("identity backup rejects malformed envelopes", async () => {
     error => error.code === "IDENTITY_BACKUP_PASSWORD_MISMATCH"
   );
 });
+
+
+test("identity recovery never silently rotates a non-exportable local root key to create a backup", async () => {
+  const app = await (await import("node:fs/promises")).readFile(
+    new URL("../public/app.js", import.meta.url), "utf8"
+  );
+  const guardStart = app.indexOf("saved.publicKey===remote.identityPublicKey", app.indexOf("async function ensureIdentity"));
+  const guardEnd = app.indexOf("if(remote.identityRegistered && !saved?.privateKey)", guardStart);
+  assert.ok(guardStart > 0 && guardEnd > guardStart);
+  const guard = app.slice(guardStart, guardEnd);
+  assert.match(guard, /saved.signingPublicKey===remote.identitySigningPublicKey/);
+  assert.match(guard, /setIdentityRecord\(saved\)/);
+  assert.match(guard, /Do not silently rotate it/);
+});
