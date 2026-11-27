@@ -38,6 +38,8 @@ test("login screen warns users about impersonation messages", async () => {
 
 test("Worker keeps security headers on redirects and blocks nested frames", async () => {
   const worker = await read("../worker/index.js");
+  assert.match(worker, /url\.protocol === "http:" && !isLocalDevelopmentHost/);
+  assert.match(worker, /url\.hostname === "localhost" \|\| url\.hostname === "127\.0\.0\.1" \|\| url\.hostname === "\[::1\]"/);
   assert.match(worker, /securityHeaders\(Response\.redirect\(url\.toString\(\), 308\), request\)/);
   assert.match(worker, /frame-src 'none'/);
   assert.match(worker, /upgrade-insecure-requests/);
