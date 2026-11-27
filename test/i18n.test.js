@@ -164,6 +164,8 @@ test("Localized UI aliases cover security and dynamic error messages in zh, ko, 
       i18n.translateText("端末一覧を取得できません: timeout", "es"),
       "No se pudo obtener la lista de dispositivos: timeout"
     );
+    const composed = i18n.translateText("端末一覧を取得できません: timeout", "es");
+    assert.equal(i18n.translateText(composed, "ja"), "端末一覧を取得できません: timeout");
   } finally {
     for (const [key, descriptor] of Object.entries(previous)) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
