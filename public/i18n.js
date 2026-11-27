@@ -801,7 +801,9 @@ function applyTextAliases(root) {
   root.querySelectorAll?.("[placeholder],[aria-label],[title],[data-i18n-placeholder],[data-i18n-aria-label],[data-i18n-title]").forEach(element => {
     for (const attribute of ["placeholder","aria-label","title"]) {
       const value = element.getAttribute(attribute);
-      if (value) element.setAttribute(attribute, translateText(value));
+      if (!value) continue;
+      const translated = translateText(value);
+      if (translated !== value) element.setAttribute(attribute, translated);
     }
   });
 }
@@ -846,7 +848,9 @@ export function initI18n({ observe = true } = {}) {
         applyTextAliases(document);
       });
     });
-    observer.observe(document.documentElement, { childList:true, characterData:true, subtree:true, attributes:true });
+    // Attribute writes are deliberately excluded: applyTextAliases updates attributes
+    // itself, so observing them would create a MutationObserver feedback loop.
+    observer.observe(document.documentElement, { childList:true, characterData:true, subtree:true });
   }
   return locale;
 }
