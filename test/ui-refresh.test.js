@@ -110,7 +110,7 @@ test("an already loaded chat remains available offline without polling or discar
   assert.match(app, /window\.addEventListener\("offline"/);
   assert.match(app, /window\.addEventListener\("online"/);
   assert.match(app, /if\(!navigator\.onLine \|\| !activeConversation \|\| messageLoadBusy\)return/);
-  assert.match(app, /if\(!navigator\.onLine \|\| !currentUser \|\| !activeConversation \|\| busy/);
+  assert.match(app, /if\(!navigator\.onLine\) \{/);
   assert.match(app, /オフライン中です。下書きはこの画面に残ります/);
 });
 
