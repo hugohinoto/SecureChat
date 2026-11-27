@@ -129,3 +129,46 @@ test("sidebar is not rebuilt when switching conversations or browser tabs", () =
   assert.doesNotMatch(app.slice(focusStart, focusEnd), /refreshSidebar\(\)/);
   assert.match(app, /window\.addEventListener\("online"[\s\S]*?refreshSidebar\(\)/);
 });
+
+
+test("a valid account login is not rolled back when this device cannot restore its identity key", () => {
+  const signInStart=app.indexOf("async function signIn(user,password=null)");
+  const signInEnd=app.indexOf("function startAuthCheck()",signInStart);
+  const signIn=app.slice(signInStart,signInEnd);
+  assert.match(signIn,/let identitySetupFailure=null/);
+  assert.match(signIn,/await ensureIdentity\(password\)/);
+  assert.match(signIn,/identitySetupFailure=error/);
+  assert.match(signIn,/await refreshSidebar\(\)/);
+  assert.doesNotMatch(signIn,/currentUser=null/);
+  assert.match(signIn,/identitySetupPanel/);
+});
+
+test("missing identity keys lock sending instead of allowing plaintext or legacy fallback", () => {
+  assert.match(app,/el\.input\.disabled = !currentUser \|\| !identityPrivateKey/);
+  assert.match(app,/!identityPrivateKey \|\| \(activeProtocolVersion===2 && !cryptoV2Ready\)/);
+});
+
+test("identity recovery requires the account password and retries automatic device registration", () => {
+  assert.match(html,/id="identity-setup-panel"/);
+  assert.match(html,/id="identity-retry-password"/);
+  assert.match(app,/async function retryIdentitySetup\(\)/);
+  assert.match(app,/await ensureIdentity\(password\)/);
+  assert.match(app,/await runAutomaticCryptoMaintenance\(\{force:true\}\)/);
+  assert.match(app,/async function retryCryptoDeviceInitialization\(\)/);
+  assert.match(app,/window\.addEventListener\("online",[\s\S]*?await retryCryptoDeviceInitialization\(\)/);
+});
+
+test("desktop sidebar stays pinned while the document scrolls, without changing mobile navigation", () => {
+  const css=readFileSync(new URL("../public/styles.css",import.meta.url),"utf8");
+  assert.match(css,/@media\s*\(min-width:\s*681px\)[\s\S]*?\.sidebar\s*\{[^}]*position:\s*sticky;[^}]*top:\s*21px/);
+  assert.match(css,/body\.mobile-chat \.sidebar \{ display: none !important; \}/);
+});
+
+test("sidebar DOM is not rebuilt on tab focus or visibility changes", () => {
+  const focusStart=app.indexOf('window.addEventListener("focus",()=>');
+  const focusEnd=app.indexOf('document.addEventListener("visibilitychange"',focusStart);
+  assert.doesNotMatch(app.slice(focusStart,focusEnd),/refreshSidebar\(\)/);
+  const visibilityStart=app.indexOf('document.addEventListener("visibilitychange",()=>');
+  const visibilityEnd=app.indexOf('async function bootstrap()',visibilityStart);
+  assert.doesNotMatch(app.slice(visibilityStart,visibilityEnd),/refreshSidebar\(\)/);
+});
