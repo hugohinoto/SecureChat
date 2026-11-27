@@ -236,6 +236,7 @@ async function api(path, options={}) {
       ...(options.body?{body:JSON.stringify(options.body)}:{})
     });
   } catch {
+    state("offline", "サーバー未接続・ローカル表示");
     throw appError("NETWORK_ERROR","サーバーに接続できません。通信状態を確認してください。");
   }
   const data=response.status===204?{}:await response.json().catch(()=>({}));
@@ -1193,6 +1194,7 @@ async function signIn(user,password=null) {
 function startAuthCheck() {
   clearInterval(authTimer);
   authTimer=setInterval(async()=>{
+    if(!navigator.onLine)return;
     try { const s=await checkSession(); if(!s.authenticated){await closeCryptoV2Session();currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;showAuth(formatError(appError("SESSION_EXPIRED","セッションの有効期限が切れました。再ログインしてください。")));} }
     catch {showError(appError("AUTH_RECHECK_FAILED","認証サーバーに接続できません。"));}
   },300000);
@@ -1450,6 +1452,10 @@ async function openConversation(peerUserId, triggerButton = null) {
   }
 }
 async function selectConversation(c) {
+  if (!navigator.onLine) {
+    toast("オフライン中は現在表示中の会話を保持します。接続が戻ると切り替えられます。", 5000);
+    return;
+  }
   setMobileView("chat");
   activeConversation={id:c.id,peerUserId:c.peer_user_id};
   activeKey=null;
