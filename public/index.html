@@ -47,9 +47,6 @@
           <span aria-hidden="true">⇧</span><span>SecureDrop</span>
         </a>
       </nav>
-      <div class="sidebar-device-registration" aria-label="端末管理">
-        <button class="device-manage-sidebar-button" id="device-manage-sidebar-button" type="button" disabled>端末管理</button>
-      </div>
       <section class="identity-setup-panel" id="identity-setup-panel" aria-live="polite" hidden>
         <strong>この端末の暗号鍵を準備できません</strong>
         <p id="identity-setup-message"></p>
@@ -69,7 +66,7 @@
         <button class="registration-invite-button" id="registration-invite-button" type="button">新しい招待コードを発行</button>
         <p class="sidebar-empty">コードは24時間有効・1回限りです。有効なコードは最大5件まで発行できます。</p>
       </div>
-      <div class="sidebar-heading"><span>ワンタイムコード招待</span></div>
+      <div class="sidebar-heading"><span>連絡先招待</span></div>
       <div class="invitation-list" id="invitation-list" aria-live="polite"><p class="sidebar-empty">進行中の招待はありません。</p></div>
       <div class="sidebar-heading"><span>連絡先</span><span class="count-pill" id="contact-count">0</span></div>
       <div class="contact-list" id="contact-list"><p class="sidebar-empty">連絡先はまだありません。</p></div>
@@ -77,7 +74,7 @@
       <div class="conversation-list" id="conversation-list"><p class="sidebar-empty">チャットはまだありません。</p></div>
       <div class="sidebar-note">
         <span class="note-icon" aria-hidden="true">ⓘ</span>
-        <p>連絡先の追加には双方の8桁コード確認が必要です。暗号化プロトコル v2（Olm / Megolm）を利用可能です。V2への移行は双方の端末で相手の指紋を確認すると自動で行われます。端末・ブラウザーごとに暗号鍵が管理されます。未監査のため高機密情報の利用は避けてください。</p>
+        <p>連絡先の追加は、招待者のログインと招待された側の明示承認が必要です。承認後、署名付き鍵の検証・端末登録・暗号化プロトコル v2（Olm / Megolm）への移行を自動で進めます。これは実世界の本人確認ではなく、アカウント間の同意確認です。端末・ブラウザーごとに暗号鍵が管理されます。未監査のため高機密情報の利用は避けてください。</p>
       </div>
 
       <div class="sidebar-spacer"></div>
@@ -136,11 +133,6 @@
       <div class="crypto-v2-actions" aria-live="polite">
         <p id="crypto-v2-status">前方秘匿性v2は安全確認中です。</p>
       </div>
-      <section class="crypto-v2-devices" id="crypto-v2-devices" hidden aria-label="暗号化端末一覧">
-        <h2>このアカウントの暗号化端末</h2>
-        <p>端末を失効すると、残存端末は次回同期時に会話用Megolm鍵を更新します。失効端末がオフラインの場合、受信・同期まで反映に時間がかかります。</p>
-        <div id="crypto-v2-device-list" aria-live="polite"></div>
-      </section>
       <details class="public-announcements" id="public-announcements" hidden aria-label="運営からのお知らせ">
         <summary class="public-announcements-toggle">
           <span class="public-announcements-heading">運営からのお知らせ</span>

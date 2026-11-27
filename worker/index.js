@@ -805,36 +805,35 @@ async function handleApi(request, env) {
       if (linked) return json({ error: "ALREADY_CONTACT" }, 409);
       const pending = await env.DB.prepare("SELECT id FROM contact_invitations WHERE expires_at>? AND ((inviter_user_id=? AND invitee_user_id=?) OR (inviter_user_id=? AND invitee_user_id=?)) LIMIT 1").bind(now, me, target.id, target.id, me).first();
       if (pending) return json({ error: "INVITATION_EXISTS" }, 409);
-      const id = crypto.randomUUID(), code = createOtp();
-      let digest;
-      try { digest = await otpDigest(env, id, "inviter", code); }
-      catch { return json({ error: "OTP_NOT_CONFIGURED", message: "OTP用サーバー秘密鍵が未設定です。" }, 503); }
-      await env.DB.prepare("INSERT INTO contact_invitations (id, inviter_user_id, invitee_user_id, inviter_code_hash, inviter_code_expires_at, inviter_attempts, expires_at, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)").bind(id, me, target.id, digest, now + 300000, now + 86400000, now).run();
-      return json({ invitationId: id, code, expiresAt: now + 300000 }, 201);
+      // The invitation itself is authenticated by the inviter's active account session.
+      // The recipient must explicitly approve it from their own authenticated session.
+      // This replaces out-of-band OTP typing without silently adding contacts.
+      const id = crypto.randomUUID();
+      await env.DB.prepare("INSERT INTO contact_invitations (id, inviter_user_id, invitee_user_id, inviter_attempts, invitee_attempts, expires_at, created_at) VALUES (?, ?, ?, 0, 0, ?, ?)").bind(id, me, target.id, now + 86400000, now).run();
+      return json({ invitationId: id, expiresAt: now + 86400000 }, 201);
     }
 
-    const invitationAccept = path.match(/^\/api\/contact-invitations\/([a-f0-9-]+)\/accept$/i);
+    const invitationAccept = path.match(new RegExp("^/api/contact-invitations/([a-f0-9-]+)/accept$", "i"));
     if (invitationAccept && method === "POST") {
-      let body;
-      try { body = await readJson(request); } catch (error) { return json({ error: error.message }, 400); }
-      const code = typeof body?.code === "string" ? body.code.trim() : "";
-      if (!/^\d{8}$/.test(code)) return json({ error: "INVALID_OTP_FORMAT" }, 400);
+      if (!await checkRateLimit(env, request, "contact-approve", 20)) return json({ error: "RATE_LIMITED" }, 429);
+      // Recipient consent is explicit and tied to their authenticated account session.
+      // No OTP is displayed or typed; the server still requires the invited account.
       const inv = await env.DB.prepare("SELECT * FROM contact_invitations WHERE id=? AND invitee_user_id=?").bind(invitationAccept[1], me).first();
       if (!inv || inv.expires_at <= now) return json({ error: "INVITATION_NOT_FOUND" }, 404);
-      if (inv.invitee_verified_at) return json({ error: "INVITATION_ALREADY_VERIFIED" }, 409);
-      if (inv.inviter_attempts >= 5) return json({ error: "OTP_ATTEMPTS_EXCEEDED" }, 429);
-      if (!inv.inviter_code_hash || inv.inviter_code_expires_at <= now) return json({ error: "OTP_EXPIRED" }, 410);
-      let digest;
-      try { digest = await otpDigest(env, inv.id, "inviter", code); } catch { return json({ error: "OTP_NOT_CONFIGURED" }, 503); }
-      if (!constantTimeEqual(encoder.encode(digest), encoder.encode(inv.inviter_code_hash))) {
-        await env.DB.prepare("UPDATE contact_invitations SET inviter_attempts=inviter_attempts+1 WHERE id=? AND inviter_attempts<5").bind(inv.id).run();
-        return json({ error: "OTP_INVALID" }, 400);
-      }
-      await env.DB.prepare("UPDATE contact_invitations SET invitee_verified_at=?, inviter_code_hash=NULL, expires_at=? WHERE id=? AND invitee_user_id=?").bind(now, now + 86400000, inv.id, me).run();
-      return json({ accepted: true, invitationId: inv.id });
+      const [pairA, pairB] = orderedPair(inv.inviter_user_id, inv.invitee_user_id);
+      const statements = [
+        env.DB.prepare("INSERT OR IGNORE INTO contacts (owner_user_id, contact_user_id, created_at) VALUES (?, ?, ?)").bind(inv.inviter_user_id, inv.invitee_user_id, now),
+        env.DB.prepare("INSERT OR IGNORE INTO contacts (owner_user_id, contact_user_id, created_at) VALUES (?, ?, ?)").bind(inv.invitee_user_id, inv.inviter_user_id, now),
+        env.DB.prepare("INSERT OR REPLACE INTO verified_contact_pairs (user_a_id, user_b_id, verified_at) VALUES (?, ?, ?)").bind(pairA, pairB, now),
+        env.DB.prepare("DELETE FROM contact_invitations WHERE id=?").bind(inv.id)
+      ];
+      await env.DB.batch(statements);
+      const peer = await env.DB.prepare("SELECT user_id FROM users WHERE id=?").bind(inv.inviter_user_id).first();
+      return json({ accepted: true, verified: true, invitationId: inv.id, userId: peer?.user_id || "" });
     }
 
-    const responseCodeMatch = path.match(/^\/api\/contact-invitations\/([a-f0-9-]+)\/response-code$/i);
+    // Legacy OTP endpoints remain available for clients holding pre-upgrade invitations.
+    const responseCodeMatch = path.match(new RegExp("^/api/contact-invitations/([a-f0-9-]+)/response-code$", "i"));
     if (responseCodeMatch && method === "POST") {
       const inv = await env.DB.prepare("SELECT * FROM contact_invitations WHERE id=? AND invitee_user_id=?").bind(responseCodeMatch[1], me).first();
       if (!inv || inv.expires_at <= now) return json({ error: "INVITATION_NOT_FOUND" }, 404);
@@ -847,12 +846,12 @@ async function handleApi(request, env) {
       return json({ code, expiresAt: now + 300000 });
     }
 
-    const invitationConfirm = path.match(/^\/api\/contact-invitations\/([a-f0-9-]+)\/confirm$/i);
+    const invitationConfirm = path.match(new RegExp("^/api/contact-invitations/([a-f0-9-]+)/confirm$", "i"));
     if (invitationConfirm && method === "POST") {
       let body;
       try { body = await readJson(request); } catch (error) { return json({ error: error.message }, 400); }
       const code = typeof body?.code === "string" ? body.code.trim() : "";
-      if (!/^\d{8}$/.test(code)) return json({ error: "INVALID_OTP_FORMAT" }, 400);
+      if (!/^[0-9]{8}$/.test(code)) return json({ error: "INVALID_OTP_FORMAT" }, 400);
       const inv = await env.DB.prepare("SELECT * FROM contact_invitations WHERE id=? AND inviter_user_id=?").bind(invitationConfirm[1], me).first();
       if (!inv || inv.expires_at <= now) return json({ error: "INVITATION_NOT_FOUND" }, 404);
       if (!inv.invitee_verified_at) return json({ error: "INVITATION_NOT_ACCEPTED" }, 403);
@@ -865,19 +864,17 @@ async function handleApi(request, env) {
         return json({ error: "OTP_INVALID" }, 400);
       }
       const [pairA, pairB] = orderedPair(inv.inviter_user_id, inv.invitee_user_id);
-      const oldConversations = await env.DB.prepare("SELECT c.id FROM conversations c JOIN conversation_members a ON a.conversation_id=c.id AND a.user_id=? JOIN conversation_members b ON b.conversation_id=c.id AND b.user_id=?").bind(inv.inviter_user_id, inv.invitee_user_id).all();
       await env.DB.batch([
         env.DB.prepare("INSERT OR IGNORE INTO contacts (owner_user_id, contact_user_id, created_at) VALUES (?, ?, ?)").bind(inv.inviter_user_id, inv.invitee_user_id, now),
         env.DB.prepare("INSERT OR IGNORE INTO contacts (owner_user_id, contact_user_id, created_at) VALUES (?, ?, ?)").bind(inv.invitee_user_id, inv.inviter_user_id, now),
         env.DB.prepare("INSERT OR REPLACE INTO verified_contact_pairs (user_a_id, user_b_id, verified_at) VALUES (?, ?, ?)").bind(pairA, pairB, now),
-        ...oldConversations.results.map(row => env.DB.prepare("DELETE FROM conversations WHERE id=?").bind(row.id)),
         env.DB.prepare("DELETE FROM contact_invitations WHERE id=?").bind(inv.id)
       ]);
       const peer = await env.DB.prepare("SELECT user_id FROM users WHERE id=?").bind(inv.invitee_user_id).first();
       return json({ verified: true, userId: peer?.user_id || "" });
     }
 
-    const reissueMatch = path.match(/^\/api\/contact-invitations\/([a-f0-9-]+)\/reissue$/i);
+    const reissueMatch = path.match(new RegExp("^/api/contact-invitations/([a-f0-9-]+)/reissue$", "i"));
     if (reissueMatch && method === "POST") {
       const inv = await env.DB.prepare("SELECT * FROM contact_invitations WHERE id=? AND inviter_user_id=?").bind(reissueMatch[1], me).first();
       if (!inv || inv.expires_at <= now) return json({ error: "INVITATION_NOT_FOUND" }, 404);
@@ -1136,7 +1133,7 @@ async function handleApi(request, env) {
       if (peer.id === me) return json({ error: "SELF_CONVERSATION" }, 400);
       const [pairA, pairB] = orderedPair(me, peer.id);
       const mutualContacts = await env.DB.prepare("SELECT 1 AS ok FROM verified_contact_pairs WHERE user_a_id=? AND user_b_id=?").bind(pairA, pairB).first();
-      if (!mutualContacts) return json({ error: "MUTUAL_OTP_REQUIRED", message: "双方のワンタイムコード確認が完了した相手とだけチャットできます。" }, 403);
+      if (!mutualContacts) return json({ error: "CONTACT_APPROVAL_REQUIRED", message: "相手が連絡先招待を承認したユーザーとだけチャットできます。" }, 403);
       const peerKey = await env.DB.prepare("SELECT user_id FROM user_keys WHERE user_id=?").bind(peer.id).first();
       if (!peerKey) return json({ error: "RECIPIENT_KEY_MISSING" }, 409);
 
@@ -1177,7 +1174,7 @@ async function handleApi(request, env) {
       if (!peerMember) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
       const [pairA, pairB] = orderedPair(me, peerMember.user_id);
       const mutualContacts = await env.DB.prepare("SELECT 1 AS ok FROM verified_contact_pairs WHERE user_a_id=? AND user_b_id=?").bind(pairA, pairB).first();
-      if (!mutualContacts) return json({ error: "CONTACT_PERMISSION_REQUIRED", message: "このユーザーとのOTP確認が解除されています。" }, 403);
+      if (!mutualContacts) return json({ error: "CONTACT_PERMISSION_REQUIRED", message: "このユーザーとの連絡先承認が解除されています。" }, 403);
       if (sub === "key" && method === "GET") {
         const row = await env.DB.prepare("SELECT key_envelope FROM conversation_keys WHERE conversation_id=? AND user_id=?").bind(id, me).first();
         return row ? json({ keyEnvelope: row.key_envelope }) : json({ error: "KEY_ENVELOPE_NOT_FOUND" }, 404);

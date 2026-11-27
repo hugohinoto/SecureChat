@@ -26,8 +26,6 @@ const el = {
   mobileBack: $("#mobile-back-button"),
   unreadTotal: $("#unread-total"), notificationButton: $("#notification-enable-button"),
   cryptoV2Status: $("#crypto-v2-status"),
-  cryptoV2Devices: $("#crypto-v2-devices"), cryptoV2DeviceList: $("#crypto-v2-device-list"),
-  deviceManageSidebar: $("#device-manage-sidebar-button"),
   identitySetupPanel: $("#identity-setup-panel"), identitySetupMessage: $("#identity-setup-message"),
   identityRetryPassword: $("#identity-retry-password"), identityRetryButton: $("#identity-retry-button"),
 };
@@ -39,7 +37,6 @@ let identityPrivateKey = null, identityPublicKey = null, identitySigningPublicKe
 let activeConversation = null, activeKey = null, activeProtocolVersion = 1, cryptoV2Module = null, cryptoV2Ready = false, cryptoV2StatusMessage = "", busy = false, refreshTimer = null, mobileView = "list";
 const openingConversationPeers = new Set();
 let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", connectionCheckTick = 0;
-const displayedOtpCodes = new Map();
 const previousUnreadCounts = new Map();
 let originalDocumentTitle = document.title;
 let unreadCountsInitialized = false;
@@ -246,8 +243,8 @@ async function api(path, options={}) {
     const known={
       USER_NOT_FOUND:"そのユーザーIDは見つかりません。",
       RECIPIENT_KEY_MISSING:"相手がまだ公開鍵を登録していません。相手に一度ログインしてもらってください。",
-      MUTUAL_OTP_REQUIRED:"双方のワンタイムコード確認が完了していません。",
-      CONTACT_PERMISSION_REQUIRED:"OTPによる連絡先確認が解除されたため、このチャットは利用できません。",
+      CONTACT_APPROVAL_REQUIRED:"相手の連絡先招待を承認してください。",
+      CONTACT_PERMISSION_REQUIRED:"連絡先確認が解除されたため、このチャットは利用できません。",
       CONTACT_NOT_FOUND:"このユーザーは連絡先にありません。",
       OTP_INVALID:"コードが正しくありません。",
       OTP_NOT_CONFIGURED:"サーバー側のOTP秘密鍵が未設定です。Cloudflare WorkerのSecretにCONTACT_OTP_PEPPERを登録してください。",
@@ -318,8 +315,8 @@ function deviceAuthorizationMessage(userId,deviceId,curve25519Key,ed25519Key) {
 }
 async function verifiedAccountRoot(userId) {
   if(userId===currentUser.userId)return {identitySigningPublicKey};
-  if(!await isOtpVerifiedContact(userId)) {
-    throw appError("MUTUAL_OTP_REQUIRED","相互OTP確認済みの連絡先ではありません。");
+  if(!await isVerifiedContact(userId)) {
+    throw appError("CONTACT_APPROVAL_REQUIRED","連絡先として承認されていません。");
   }
   const peer=await api("/api/keys/"+encodeURIComponent(userId));
   if(!peer.identitySigningPublicKey || !peer.identityKeySignature) {
@@ -337,7 +334,7 @@ async function verifiedAccountRoot(userId) {
   }
   return peer;
 }
-async function isOtpVerifiedContact(peerUserId) {
+async function isVerifiedContact(peerUserId) {
   const result=await api("/api/contacts");
   return Array.isArray(result.contacts) &&
     result.contacts.some(contact=>contact?.userId===peerUserId);
@@ -391,7 +388,7 @@ async function confirmPeerFingerprint(peerUserId,peer) {
   return true;
 }
 async function isPeerIdentityTrustedForAutomaticCrypto(peerUserId) {
-  // The coordinator only invokes this callback for mutual OTP contacts.
+  // The coordinator only invokes this callback for authenticated, explicitly approved contacts.
   const peer = await api("/api/keys/" + encodeURIComponent(peerUserId));
   if (!peer.identitySigningPublicKey || !peer.identityKeySignature) {
     throw appError("IDENTITY_KEY_LEGACY_FORMAT", "相手の署名付きアカウント鍵がありません。");
@@ -418,7 +415,7 @@ async function isPeerIdentityTrustedForAutomaticCrypto(peerUserId) {
     peerPins[peerUserId] = peer.identitySigningPublicKey;
     changed = true;
   }
-  // Web already uses first-use TOFU for mutual OTP contacts in deriveKey().
+  // Web uses first-use TOFU only for authenticated, explicitly approved contacts.
   // Keep the same local pinning policy here; never overwrite an existing pin.
   if (verifiedPeerPins[peerUserId] !== peer.identitySigningPublicKey) {
     verifiedPeerPins[peerUserId] = peer.identitySigningPublicKey;
@@ -468,7 +465,7 @@ async function runAutomaticCryptoMaintenance({ force = false } = {}) {
       } else {
         cryptoV2StatusMessage = active.mode.approvedByMe
           ? "この端末のV2移行準備は完了しました。相手側の準備を自動で待機しています。"
-          : "相互OTP確認済みの連絡先を確認し、V2鍵交換を自動で準備しています。";
+          : "承認済み連絡先を確認し、V2鍵交換を自動で準備しています。";
       }
       updateCryptoV2Controls();
       updateSend();
@@ -543,20 +540,8 @@ async function retryCryptoDeviceInitialization() {
   updateSend();
   return true;
 }
-async function openSidebarDeviceManagement() {
-  if(!cryptoV2Ready) {
-    toast("端末管理を開くには、この端末の暗号鍵登録を完了してください。");
-    return;
-  }
-  if(el.cryptoV2Devices) {
-    el.cryptoV2Devices.hidden=false;
-    await refreshCryptoDeviceList();
-    el.cryptoV2Devices.scrollIntoView({behavior:"smooth",block:"nearest"});
-  }
-}
 function updateCryptoV2Controls() {
   if(el.cryptoV2Status)el.cryptoV2Status.textContent=translateText(cryptoV2StatusMessage);
-  if(el.deviceManageSidebar)el.deviceManageSidebar.disabled=!cryptoV2Ready;
   // Do not replace a concrete device-initialization failure with the generic
   // V2 migration notice; the actual cause is needed to recover safely.
   if(cryptoV2InitializationError) return;
@@ -568,82 +553,6 @@ function updateCryptoV2Controls() {
         : "この会話はv2への移行待ちです。双方の端末登録と鍵交換が完了するまで新規送信はできません。");
   } else if(el.cryptoV2Status && activeProtocolVersion===2) {
     el.cryptoV2Status.textContent=translateText("前方秘匿性v2有効 — Olm Double Ratchetで鍵配送、Megolm鍵は1メッセージごとに更新");
-  }
-}
-function formatCryptoDeviceTime(value) {
-  if(!Number.isFinite(Number(value)))return "不明";
-  try {
-    return new Intl.DateTimeFormat(getLocale()==="ja"?"ja-JP":"en-US",{dateStyle:"medium",timeStyle:"short"}).format(new Date(Number(value)));
-  } catch {
-    return "不明";
-  }
-}
-async function refreshCryptoDeviceList() {
-  if(!cryptoV2Ready || !cryptoV2Module || !currentUser || !el.cryptoV2DeviceList)return;
-  el.cryptoV2DeviceList.textContent="端末一覧を確認しています…";
-  try {
-    const [result,state]=await Promise.all([
-      cryptoV2Module.listCryptoDevices(currentUser.userId),
-      cryptoV2Module.getCryptoDeviceState(currentUser.userId)
-    ]);
-    const currentDeviceId=state.deviceId;
-    el.cryptoV2DeviceList.replaceChildren();
-    const devices=Array.isArray(result.devices)?result.devices:[];
-    if(!devices.length) {
-      const empty=document.createElement("p");
-      empty.textContent="登録済み端末はありません。";
-      el.cryptoV2DeviceList.append(empty);
-      return;
-    }
-    for(const device of devices) {
-      const row=document.createElement("article");
-      row.className="crypto-v2-device-row";
-      const info=document.createElement("div");
-      info.className="crypto-v2-device-info";
-      const title=document.createElement("strong");
-      const isCurrent=device.deviceId===currentDeviceId;
-      title.textContent=(device.displayName||"SecureChat端末")+" · "+(isCurrent?"この端末":device.deviceId);
-      const meta=document.createElement("span");
-      meta.textContent=device.revokedAt
-        ? "失効済み · "+formatCryptoDeviceTime(device.revokedAt)
-        : "最終確認: "+formatCryptoDeviceTime(device.lastSeenAt);
-      const created=document.createElement("small");
-      created.textContent="登録: "+formatCryptoDeviceTime(device.createdAt);
-      info.append(title,meta,created);
-      row.append(info);
-      if(!isCurrent) {
-        const alreadyRevoked=!!device.revokedAt;
-        const revoke=document.createElement("button");
-        revoke.type="button";
-        revoke.className="crypto-v2-revoke-button";
-        revoke.textContent=alreadyRevoked?"失効通知を再送":"この端末を失効";
-        revoke.addEventListener("click",async()=>{
-          const promptText=alreadyRevoked
-            ? "この端末の失効通知を残存端末へ再送しますか？"
-            : "この端末を失効しますか？次回同期以降、失効端末には新しい会話鍵が共有されません。既に保存・複製されたデータを消去できるわけではありません。";
-          if(!confirm(translateText(promptText)))return;
-          revoke.disabled=true;
-          try {
-            const result=await cryptoV2Module.revokeCryptoDevice(currentUser.userId,device.deviceId);
-            await cryptoV2Module.syncCryptoV2(currentUser.userId);
-            toast("失効通知を "+Number(result.notifiedDevices||0)+" 台の端末へ送信しました。");
-            await refreshCryptoDeviceList();
-          } catch(error) {
-            showError(error,"端末の失効通知を送信できません: ");
-            revoke.disabled=false;
-          }
-        });
-        row.append(revoke);
-      } else if(isCurrent && !device.revokedAt) {
-        const current=document.createElement("span");
-        current.className="crypto-v2-current-device";
-        current.textContent="使用中";
-        row.append(current);
-      }
-      el.cryptoV2DeviceList.append(row);
-    }
-  } catch(error) {
-    el.cryptoV2DeviceList.textContent="端末一覧を取得できません: "+(error.code||"CRYPTO_DEVICE_LIST_ERROR");
   }
 }
 async function refreshCryptoConversationMode() {
@@ -971,8 +880,8 @@ function renderPeerFingerprintPanel(peerUserId,ownFingerprint,peerFingerprint,pe
   remote.textContent="@"+peerUserId+": "+peerFingerprint;
   const status=document.createElement("p");
   status.textContent=verified
-    ? "相互OTP確認済み連絡先として信頼済み（このブラウザーのみ）。鍵変更時は再確認が必要です"
-    : "未信頼 — OTP確認済み連絡先の初回鍵を確認できていません。";
+    ? "招待承認済み連絡先として信頼済み（このブラウザーのみ）。鍵変更時は再確認が必要です"
+    : "未信頼 — 承認済み連絡先の初回鍵を確認できていません。";
   const button=document.createElement("button");
   button.type="button";
   button.className="crypto-v2-button";
@@ -1009,8 +918,8 @@ async function deriveKey(conversationId,peerUserId) {
     identityProofMessage(peerUserId,peer.identityPublicKey)
   );
   if(!proofValid)throw appError("IDENTITY_KEY_SIGNATURE_INVALID","相手の公開鍵署名を検証できません。安全のため接続を中止しました。");
-  if(!await isOtpVerifiedContact(peerUserId)) {
-    throw appError("MUTUAL_OTP_REQUIRED","相互OTP確認済みの連絡先ではありません。");
+  if(!await isVerifiedContact(peerUserId)) {
+    throw appError("CONTACT_APPROVAL_REQUIRED","連絡先として承認されていません。");
   }
   const ownRecord=await storedIdentity(currentUser.userId);
   const peerPins={...(ownRecord?.peerPins||{})};
@@ -1360,89 +1269,53 @@ function userAction(userId,label,fn) {
   const button=document.createElement("button");button.type="button";button.textContent=label;button.addEventListener("click",fn);
   row.append(name,button);return row;
 }
-function showOtpCode(container,code,expiresAt,key="",detailText="5分以内に相手へ共有してください。") {
-  if(key)displayedOtpCodes.set(key,{code,expiresAt});
-  container.querySelectorAll(".otp-code-panel").forEach(panel=>panel.remove());
-  const panel=document.createElement("div");panel.className="otp-code-panel";
-  const value=document.createElement("strong");value.className="otp-code";value.textContent=code;
-  const detail=document.createElement("span");detail.textContent=detailText;
-  const copy=document.createElement("button");copy.type="button";copy.textContent="コードをコピー";
-  copy.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(code);toast("コードをコピーしました。");}catch{showError(appError("CLIPBOARD_COPY_FAILED","コピーできませんでした。コードを手動で共有してください。"));}});
-  panel.append(value,detail,copy);container.append(panel);
-}
 async function searchUsers() {
   const q=el.search.value.trim().toLowerCase();el.results.replaceChildren();
   if(!/^[a-z0-9_]{1,32}$/.test(q)){el.results.textContent=formatError(appError("USER_SEARCH_QUERY_INVALID","1文字以上のユーザーIDを入力してください。"));return;}
   try {
     const data=await api("/api/users/search?q="+encodeURIComponent(q));
     if(!data.users.length){el.results.textContent="ユーザーが見つかりませんでした。";return;}
-    for(const user of data.users)el.results.append(userAction(user.userId,"招待コード発行",async()=>{
+    for(const user of data.users)el.results.append(userAction(user.userId,"連絡先招待を送信",async()=>{
       try {
-        const invite=await api("/api/contact-invitations",{method:"POST",body:{userId:user.userId}});
+        await api("/api/contact-invitations",{method:"POST",body:{userId:user.userId}});
         el.results.replaceChildren();
         const row=document.createElement("div");row.className="user-result";
-        const label=document.createElement("span");label.textContent="@"+user.userId+" への招待コード";
-        row.append(label);el.results.append(row);showOtpCode(el.results,invite.code,invite.expiresAt);
-        toast("招待コードを発行しました。相手に安全な方法で共有してください。");
+        const label=document.createElement("span");label.textContent="@"+user.userId+" へ連絡先招待を送信しました。相手の承認を待っています。";
+        row.append(label);el.results.append(row);
+        toast("招待を送信しました。相手が承認すると暗号鍵交換が自動で始まります。");
         await refreshSidebar();
       } catch(e){showError(e);}
     }));
   } catch(e){el.results.textContent=formatError(e);}
 }
-function otpInputRow(parent,placeholder,buttonText,handler,fieldKey) {
-  const row=document.createElement("div");row.className="otp-input-row";
-  const input=document.createElement("input");input.type="text";input.inputMode="numeric";input.autocomplete="one-time-code";input.maxLength=8;input.placeholder=placeholder;input.dataset.invitationField=fieldKey;
-  input.addEventListener("input",()=>{input.value=input.value.replace(/\D/g,"").slice(0,8);});
-  const button=document.createElement("button");button.type="button";button.textContent=buttonText;
-  button.addEventListener("click",async()=>{button.disabled=true;try{await handler(input.value);}catch(e){showError(e);}finally{button.disabled=false;}});
-  row.append(input,button);parent.append(row);
-}
 function renderInvitations(invitations) {
-  const preservedInputs=new Map(Array.from(el.invitations.querySelectorAll("input[data-invitation-field]")).map(input=>[input.dataset.invitationField,input.value]));
   el.invitations.replaceChildren();
   const incoming=invitations.filter(i=>i.invitee_user_id===currentUser.userId);
   const outgoing=invitations.filter(i=>i.inviter_user_id===currentUser.userId);
-  if(!incoming.length&&!outgoing.length){const p=document.createElement("p");p.className="sidebar-empty";p.textContent="進行中の招待はありません。";el.invitations.append(p);return;}
   for(const inv of incoming) {
-    const card=document.createElement("div");card.className="invitation-card";
-    const title=document.createElement("strong");title.textContent="@"+inv.inviter_user_id+" からの招待";
-    card.append(title);
-    if(!inv.invitee_verified_at) {
-      const note=document.createElement("p");note.textContent="相手から受け取った8桁コードを入力して承認します。";card.append(note);
-      otpInputRow(card,"相手の8桁コード","承認",async code=>{
-        await api("/api/contact-invitations/"+inv.id+"/accept",{method:"POST",body:{code}});
-        toast("招待を承認しました。次に確認コードを発行してください。");await refreshSidebar();
-      },"accept:"+inv.id);
-    } else {
-      const note=document.createElement("p");note.textContent="あなたの確認コードを発行し、招待した相手へ共有してください。";card.append(note);
-      const button=document.createElement("button");button.type="button";button.className="invitation-action";button.textContent="確認コードを発行 / 再発行";
-      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/response-code",{method:"POST"});showOtpCode(card,result.code,result.expiresAt,"incoming:"+inv.id);}catch(e){showError(e);}finally{button.disabled=false;}});
-      card.append(button);
-      const savedCode=displayedOtpCodes.get("incoming:"+inv.id);if(savedCode)showOtpCode(card,savedCode.code,savedCode.expiresAt);
-    }
-    el.invitations.append(card);
+    const card=document.createElement("article");card.className="invitation-card";
+    const title=document.createElement("strong");title.textContent="@"+inv.inviter_user_id+" から連絡先招待";
+    const note=document.createElement("p");note.textContent="相手のアカウントから招待されています。承認すると相互連絡先になり、暗号化鍵交換が開始されます。";
+    const approve=document.createElement("button");approve.type="button";approve.className="invitation-action";approve.textContent="連絡先として承認";
+    approve.addEventListener("click",async()=>{
+      approve.disabled=true;
+      try {
+        await api("/api/contact-invitations/"+inv.id+"/accept",{method:"POST",body:{}});
+        toast("連絡先を承認しました。暗号鍵の交換を開始します。");
+        await refreshSidebar();
+        runAutomaticCryptoMaintenance({force:true}).catch(error=>console.warn("SecureChat contact key exchange retry failed:",error?.code||"CRYPTO_AUTO_EXCHANGE_ERROR"));
+      } catch(error) { showError(error);approve.disabled=false; }
+    });
+    card.append(title,note,approve);el.invitations.append(card);
   }
   for(const inv of outgoing) {
-    const card=document.createElement("div");card.className="invitation-card";
+    const card=document.createElement("article");card.className="invitation-card";
     const title=document.createElement("strong");title.textContent="@"+inv.invitee_user_id+" への招待";
-    card.append(title);
-    if(!inv.invitee_verified_at) {
-      const note=document.createElement("p");note.textContent="相手が最初のコードを入力するのを待っています。";card.append(note);
-      const button=document.createElement("button");button.type="button";button.className="invitation-action";button.textContent=inv.inviter_code_expires_at>Date.now()?"コードを再発行":"期限切れ：コードを再発行";
-      button.addEventListener("click",async()=>{button.disabled=true;try{const result=await api("/api/contact-invitations/"+inv.id+"/reissue",{method:"POST"});showOtpCode(card,result.code,result.expiresAt,"outgoing:"+inv.id);}catch(e){showError(e);}finally{button.disabled=false;}});
-      card.append(button);
-      const savedCode=displayedOtpCodes.get("outgoing:"+inv.id);if(savedCode)showOtpCode(card,savedCode.code,savedCode.expiresAt);
-    } else {
-      const note=document.createElement("p");note.textContent="相手側の確認が完了しました。相手から受け取ったコードで最終確認します。";card.append(note);
-      otpInputRow(card,"相手の8桁コード","最終確認",async code=>{
-        const result=await api("/api/contact-invitations/"+inv.id+"/confirm",{method:"POST",body:{code}});
-        toast("@"+result.userId+"との相互確認が完了しました。");await refreshSidebar();
-      },"confirm:"+inv.id);
-    }
-    el.invitations.append(card);
+    const note=document.createElement("p");note.textContent="相手の承認待ちです。承認されると連絡先登録と暗号鍵交換が自動で始まります。";
+    card.append(title,note);el.invitations.append(card);
   }
-  for(const input of el.invitations.querySelectorAll("input[data-invitation-field]")) {
-    if(preservedInputs.has(input.dataset.invitationField))input.value=preservedInputs.get(input.dataset.invitationField);
+  if(!incoming.length&&!outgoing.length) {
+    const empty=document.createElement("p");empty.className="sidebar-empty";empty.textContent="進行中の招待はありません。";el.invitations.append(empty);
   }
 }
 async function refreshSidebar() {
@@ -1655,7 +1528,7 @@ async function sendMessage() {
           ? "この端末のv2準備は完了しています。相手側でSecureChatを開き、端末登録と連絡先の本人確認を完了してください。"
           : activeCryptoMode.approvedByPeer
             ? "相手側の準備は完了しています。この端末の端末登録と連絡先の本人確認を完了してください。"
-            : "v2移行には双方の端末登録と、相互OTP確認済み連絡先の本人確認が必要です。セキュリティ欄の指紋確認を完了してください。";
+            : "v2移行には双方の端末登録と、承認済み連絡先の署名鍵確認が必要です。鍵変更の警告がある場合は別経路で指紋を照合してください。";
         cryptoV2StatusMessage=message;
         updateCryptoV2Controls();
         throw appError("CRYPTO_V2_NOT_READY",message);
@@ -1690,7 +1563,6 @@ el.search.addEventListener("keydown",e=>{if(e.key==="Enter")searchUsers();});
 el.input.addEventListener("input",()=>{el.input.style.height="auto";el.input.style.height=Math.min(el.input.scrollHeight,125)+"px";updateSend();});
 el.input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendMessage();}});
 el.send.addEventListener("click",sendMessage);
-el.deviceManageSidebar?.addEventListener("click",openSidebarDeviceManagement);
 el.identityRetryButton?.addEventListener("click",retryIdentitySetup);
 window.addEventListener("focus",()=>{
   if(!currentUser)return;
@@ -1727,7 +1599,6 @@ document.addEventListener("securechat:localechange", () => {
   setAuthMode(authMode);
   updateNotificationButton();
   updateCryptoV2Controls();
-  if(!el.cryptoV2Devices?.hidden)refreshCryptoDeviceList().catch(()=>{});
 });
 
 

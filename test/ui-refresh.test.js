@@ -5,6 +5,8 @@ import { readFileSync } from "node:fs";
 const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const refreshCss = readFileSync(new URL("../public/ui-refresh.css", import.meta.url), "utf8");
+const settingsHtml = readFileSync(new URL("../public/settings.html", import.meta.url), "utf8");
+const settingsJs = readFileSync(new URL("../public/settings.js", import.meta.url), "utf8");
 
 test("refreshed UI stylesheet is loaded after the legacy stylesheet", () => {
   const legacy = html.indexOf('href="/styles.css"');
@@ -53,8 +55,9 @@ test("device-scoped crypto vault uses a single IndexedDB readwrite transaction",
 
 test("device revocation controls are present and the current device cannot be revoked", () => {
   const cryptoClient = readFileSync(new URL("../public/crypto-v2.js", import.meta.url), "utf8");
-  assert.match(html, /id="device-manage-sidebar-button"/);
-  assert.match(html, /id="crypto-v2-device-list"/);
+  assert.doesNotMatch(html, /id="device-manage-sidebar-button"|id="crypto-v2-device-list"/);
+  assert.match(settingsHtml, /id="crypto-v2-device-list"/);
+  assert.match(settingsJs, /securechat-crypto-v2-vault/);
   assert.match(cryptoClient, /CRYPTO_CANNOT_REVOKE_CURRENT_DEVICE/);
   assert.ok(cryptoClient.includes("org.securechat.device_revoked"));
 });
@@ -85,7 +88,10 @@ test("chat login form stays hidden while the existing session and chat state ini
 
 
 test("device registration and account-wide sync run automatically after login", () => {
-  assert.match(html, /id="device-manage-sidebar-button"/);
+  assert.doesNotMatch(html, /device-manage-sidebar-button|端末管理/);
+  assert.match(settingsHtml, /id="settings-devices"/);
+  assert.match(settingsJs, /X-SecureChat-Device/);
+  assert.doesNotMatch(app, /openSidebarDeviceManagement|deviceManageSidebar/);
   assert.doesNotMatch(html, /device-register-all-button|crypto-v2-devices-toggle|sidebar-device-status|全チャットを今すぐ同期/);
   assert.match(app, /runAutomaticCryptoMaintenance\(\{force:true\}\)/);
   assert.doesNotMatch(app, /registerDeviceAcrossAllChats|deviceRegisterAll/);

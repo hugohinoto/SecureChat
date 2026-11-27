@@ -15,9 +15,9 @@ test("automatic V2 approval requires a trusted peer account identity", () => {
   assert.match(app, /activeProtocolVersion!==2 && \+\+cryptoModeRefreshTick % 5 === 0/);
 });
 
-test("first-use trust is limited to mutual OTP contacts and is pinned locally", () => {
-  assert.match(app, /async function isOtpVerifiedContact\(peerUserId\)[\s\S]*?api\("\/api\/contacts"\)/);
-  assert.match(app, /if\(!await isOtpVerifiedContact\(peerUserId\)\)/);
+test("first-use trust is limited to authenticated contacts and is pinned locally", () => {
+  assert.match(app, /async function isVerifiedContact\(peerUserId\)[\s\S]*?api\("\/api\/contacts"\)/);
+  assert.match(app, /if\(!await isVerifiedContact\(peerUserId\)\)/);
   const keyHandlingStart = app.indexOf("const keyChanged=");
   const keyHandlingEnd = app.indexOf("activePeerSigningKey=peer.identitySigningPublicKey;", keyHandlingStart);
   const keyHandling = app.slice(keyHandlingStart, keyHandlingEnd);
@@ -28,7 +28,7 @@ test("first-use trust is limited to mutual OTP contacts and is pinned locally", 
 test("obsolete manual V2 approval control is removed; the verified path performs approval automatically", () => {
   assert.doesNotMatch(app, /cryptoV2Approve/);
   assert.match(app, /cryptoV2Module\.approveAndPrepareConversation\(/);
-  assert.match(app, /async function isOtpVerifiedContact\(peerUserId\)/);
+  assert.match(app, /async function isVerifiedContact\(peerUserId\)/);
   assert.match(app, /verifiedPeerPins\[peerUserId\]!==peer\.identitySigningPublicKey/);
 });
 

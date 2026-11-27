@@ -14,9 +14,9 @@ The signing private key is generated as a non-extractable WebCrypto key and stor
 
 ## First-contact and key-change checks
 
-Clients pin each peer's signing public key locally on first contact only when the peer is already a mutual OTP-confirmed contact. This lets the client start device-key authorization and the v2 ratchet automatically without a separate fingerprint-entry step. A changed key is never auto-trusted; the client stops and requires an out-of-band fingerprint comparison. A self-signature proves possession of the signing key, but not a real-world identity. Automatic first-use trust relies on the server's mutual-contact status and does not protect against a malicious server that can forge that status or substitute the first key.
+Clients pin each peer's signing public key locally on first contact only when the peer is already a authenticated contact whose invitation was explicitly approved by the recipient. This lets the client start device-key authorization and the v2 ratchet automatically without a separate fingerprint-entry step. A changed key is never auto-trusted; the client stops and requires an out-of-band fingerprint comparison. A self-signature proves possession of the signing key, but not a real-world identity. Automatic first-use trust relies on the server's mutual-contact status and does not protect against a malicious server that can forge that status or substitute the first key.
 
-If browser storage is cleared or the user changes devices, the local pin set is lost. The first key can be pinned again for an OTP-confirmed contact; compare fingerprints out of band when protection against a malicious server is required.
+If browser storage is cleared or the user changes devices, the local pin set is lost. The first key can be pinned again for an authenticated, explicitly approved contact; compare fingerprints out of band when protection against a malicious server is required.
 
 ## Legacy accounts
 
