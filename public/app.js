@@ -250,7 +250,7 @@ async function api(path, options={}) {
       IDENTITY_BACKUP_INVALID:"暗号化バックアップの形式を確認できません。ページを強制再読み込みして再度ログインしてください。サイトデータは削除しないでください。",
       IDENTITY_BACKUP_PASSWORD_REQUIRED:"暗号鍵を同期するため、パスワードを入力して再ログインしてください。",
       IDENTITY_BACKUP_PASSWORD_MISMATCH:"暗号鍵バックアップを復号できません。パスワードを確認してください。",
-      IDENTITY_BACKUP_SETUP_REQUIRED:"この端末には復元用バックアップがありません。暗号鍵が残っている元の端末で、サイトデータを消さずにパスワードを使って再ログインしてください。元の端末で暗号化バックアップを作成してから、この端末でもう一度ログインしてください。元の端末を使えない場合、この端末だけで秘密鍵を復元することはできません。"
+      IDENTITY_BACKUP_SETUP_REQUIRED:"このアカウントの秘密鍵は元の端末内にだけ保存され、同期バックアップがありません。元の端末とブラウザーのサイトデータを保持してください。現在の旧形式鍵は安全にエクスポートできないため、再ログインだけではバックアップを作成できません。元の端末を使えない場合、この端末だけで秘密鍵を復元することはできません。"
     };
     const code=typeof data.error==="string"&&/^[A-Z][A-Z0-9_]{1,63}$/.test(data.error)
       ? data.error : "HTTP_"+response.status;
@@ -875,6 +875,17 @@ async function ensureIdentity(password=null) {
     const record={...restoredIdentity,peerPins:saved?.peerPins||{},verifiedPeerPins:saved?.verifiedPeerPins||{}};
     await saveIdentity(currentUser.userId,record);
     setIdentityRecord(record);
+    return;
+  }
+
+  if(remote.identityRegistered && saved?.privateKey &&
+     saved.publicKey===remote.identityPublicKey &&
+     remote.identitySigningPublicKey &&
+     saved.signingPublicKey===remote.identitySigningPublicKey) {
+    // This legacy local CryptoKey is non-exportable. Do not silently rotate it
+    // merely to manufacture a backup: v1 conversation keys depend on this root.
+    // Keep the original device usable and require an explicit migration design.
+    setIdentityRecord(saved);
     return;
   }
 
