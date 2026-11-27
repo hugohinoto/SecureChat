@@ -102,6 +102,7 @@ test("connection status reflects a real health check instead of a placeholder re
   assert.match(app, /api\("\/api\/health"\)/);
   assert.match(app, /state\("connected", "オンライン"\)/);
   assert.match(app, /state\("offline", "オフライン・ローカル表示"\)/);
+  assert.match(app, /el\.connection\.dataset\.state !== "connected"/);
   assert.doesNotMatch(app, /準備完了/);
   assert.match(readFileSync(new URL("../public/styles.css", import.meta.url), "utf8"), /data-state="offline"/);
 });
