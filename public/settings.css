@@ -1,0 +1,93 @@
+/* Isolated layout for the account settings page.
+   The shared chat styles lock the viewport and hide body overflow; undo that here. */
+html.settings-document,
+body.settings-page {
+  width: 100% !important;
+  height: auto !important;
+  min-height: 100% !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  position: static !important;
+  inset: auto !important;
+  overscroll-behavior: auto !important;
+}
+body.settings-page {
+  min-width: 320px;
+  margin: 0;
+  padding: 1px 0 max(32px, env(safe-area-inset-bottom));
+}
+.settings-page .settings-shell {
+  width: min(900px, calc(100% - 32px));
+  margin: 32px auto 60px;
+  position: relative;
+  z-index: 1;
+}
+.settings-page .settings-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+.settings-page .settings-top h1 { margin: 0; font-size: 26px; }
+.settings-page .settings-card {
+  padding: 22px;
+  margin: 14px 0;
+  border: 1px solid rgba(148,163,184,.18);
+  border-radius: 18px;
+  background: rgba(15,23,42,.76);
+  color: #e5edf8;
+}
+.settings-page .settings-card h2 { font-size: 16px; margin: 0 0 8px; }
+.settings-page .settings-card p { color: #a9b7ca; line-height: 1.7; margin: 6px 0; }
+.settings-page .settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 0;
+  border-top: 1px solid rgba(148,163,184,.14);
+}
+.settings-page .settings-row:first-of-type { border-top: 0; }
+.settings-page .settings-row label { font-weight: 600; }
+.settings-page .settings-row select { min-width: 150px; }
+.settings-page .settings-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border: 1px solid rgba(125,170,230,.4);
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: #17345b;
+  color: #eef6ff;
+  text-decoration: none;
+  font: inherit;
+  cursor: pointer;
+}
+.settings-page .settings-button.secondary { background: transparent; }
+.settings-page .settings-muted { font-size: 13px; color: #8fa2bb; }
+.settings-page .settings-status { font-size: 13px; color: #9fd5b5; }
+.settings-page .settings-danger { color: #ffb5b5; }
+.settings-page select {
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid rgba(125,170,230,.35);
+  border-radius: 9px;
+  color: #eef6ff;
+  background: #111c2c;
+  font: inherit;
+}
+.settings-page :focus-visible {
+  outline: 2px solid #78e3ef;
+  outline-offset: 3px;
+}
+@media (max-width: 600px) {
+  .settings-page .settings-shell { width: calc(100% - 22px); margin: 18px auto 36px; }
+  .settings-page .settings-top { align-items: flex-start; }
+  .settings-page .settings-top h1 { font-size: 22px; }
+  .settings-page .settings-card { padding: 16px; }
+  .settings-page .settings-row { align-items: stretch; flex-direction: column; gap: 9px; }
+  .settings-page .settings-row select,
+  .settings-page .settings-row .settings-button { width: 100%; }
+}
