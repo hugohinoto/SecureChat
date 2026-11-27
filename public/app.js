@@ -1084,6 +1084,7 @@ function setAuthMode(mode) {
   el.inviteCode.required=registering;
   el.error.textContent="";
 }
+function showAuth(message="") { el.gate.hidden=false; el.error.textContent=message; state("disconnected","ログインが必要です"); }
 async function checkSession() {
   let r;
   try { r=await fetch("/api/auth/me",{credentials:"same-origin",cache:"no-store",headers:{Accept:"application/json"}}); }
