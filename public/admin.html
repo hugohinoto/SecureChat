@@ -56,10 +56,10 @@
           <article class="stat"><span>過去24時間の管理操作</span><strong id="stat-actions">—</strong><small>ADMIN ACTIONS / 24H</small></article>
         </section>
         <section class="panel" id="security-panel">
-          <div class="panel-heading"><div><p class="eyebrow">SECURITY DIAGNOSTICS</p><h2>セキュリティチェック</h2></div><div class="item-actions"><button id="export-security-csv" class="secondary" type="button" disabled>CSVで出力</button><button id="run-security-check" class="secondary" type="button">今すぐ再チェック</button></div></div>
+          <div class="panel-heading"><div><p class="eyebrow">SECURITY DIAGNOSTICS</p><h2>セキュリティチェック</h2></div><div class="item-actions"><button id="export-security-csv" class="secondary" type="button" disabled>CSVで出力</button><button id="run-security-check" class="secondary" type="button">今すぐ再チェック</button><button id="run-zap-scan" class="primary" type="button">ZAP動的検査を実行</button></div></div>
           <div class="security-engine-links"><a href="https://github.com/hugohinoto/SecureChat/actions/workflows/security-scan.yml" target="_blank" rel="noopener noreferrer">外部エンジンの実行履歴を開く ↗</a><span>Semgrep・SQLFluff・OWASP ZAP。未実行・取得不能は安全扱いしません。</span></div>
-          <div id="security-summary" class="security-summary">チェックを実行しています…</div><div id="security-checks" class="security-check-list"></div>
-          <p class="muted">ランタイム・D1構造・マイグレーション・外部エンジンを組み合わせた診断です。最新エンジン結果の照合にはWorker Secret SECURITY_SCAN_GITHUB_TOKEN（Actions: read）が必要です。ZAPは公開面へのパッシブ検査のみで、認証後のAPIやCloudflare内部ログの完全監査を代替するものではありません。</p>
+          <div id="security-summary" class="security-summary">チェックを実行しています…</div><div id="security-checks" class="security-check-list"></div><section class="zap-console" aria-labelledby="zap-console-title"><div class="zap-console-heading"><strong id="zap-console-title">OWASP ZAP 実行コンソール</strong><button id="refresh-zap-scan" class="secondary" type="button">状態を更新</button></div><div id="zap-scan-status" class="security-summary" role="status">未実行</div><div id="zap-scan-debug" class="zap-debug" aria-live="polite">検査を実行すると、ジョブ・各ステップ・レポートの状態をここに表示します。</div></section>
+          <p class="muted">ランタイム・D1構造・マイグレーション・外部エンジンを組み合わせた診断です。最新エンジン結果の照合にはWorker Secret SECURITY_SCAN_GITHUB_TOKEN（Actions: read）が必要です。ZAPは公開面へのパッシブDAST（巡回・受動ルール検査）です。破壊的なアクティブ攻撃は行わず、認証後APIやCloudflare内部ログの完全監査を代替しません。実行にはWorker Secret SECURITY_SCAN_GITHUB_TOKEN（GitHub Actions: read/write）が必要です。</p>
         </section>
         <section class="panel" id="announcements-panel">
           <div class="panel-heading"><div><p class="eyebrow">ANNOUNCEMENTS</p><h2>暗号化お知らせ</h2></div><span class="muted">公開から48時間で自動失効（公開時に変更可能）</span></div>

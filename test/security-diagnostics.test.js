@@ -294,3 +294,82 @@ test("unexpected database objects are visible as a warning", async () => {
   assert.equal(check.status,"warning");
   assert.match(check.detail,/legacy_debug_table/);
 });
+
+
+test("admin can dispatch a ZAP workflow only through the authenticated same-origin route", async () => {
+  const admin = { id:"admin-id", user_id:"admin", is_admin:1, password_changed_at:Date.now(), created_at:Date.now() };
+  const env = { SECURITY_SCAN_GITHUB_TOKEN:"ghp_"+"x".repeat(40) };
+  const originalFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async (url, options) => {
+    called = true;
+    assert.equal(String(url), "https://api.github.com/repos/hugohinoto/SecureChat/actions/workflows/security-scan.yml/dispatches");
+    assert.equal(options.method, "POST");
+    assert.match(options.headers.Authorization, /^Bearer ghp_/);
+    assert.deepEqual(JSON.parse(options.body), { ref:"main" });
+    return new Response(null, { status:204 });
+  };
+  try {
+    const request = new Request("https://securechat.example/api/admin/security-scan", {
+      method:"POST", headers:{ Origin:"https://securechat.example" }
+    });
+    const response = await handleAdminFeatures(request, env, {
+      url:new URL(request.url), sameOrigin:()=>true, getSession:async()=>admin,
+      readCookie:()=>"session", checkRateLimit:async()=>true, writeAdminAudit:async()=>{}
+    });
+    assert.equal(response.status,202);
+    const body = await response.json();
+    assert.equal(body.accepted,true);
+    assert.equal(body.mode,"passive-dast");
+    assert.equal(called,true);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("ZAP scan dispatch fails closed when the GitHub Actions token is absent", async () => {
+  const admin = { id:"admin-id", user_id:"admin", is_admin:1, password_changed_at:Date.now(), created_at:Date.now() };
+  const request = new Request("https://securechat.example/api/admin/security-scan", {
+    method:"POST", headers:{ Origin:"https://securechat.example" }
+  });
+  const response = await handleAdminFeatures(request, {}, {
+    url:new URL(request.url), sameOrigin:()=>true, getSession:async()=>admin,
+    readCookie:()=>"session", checkRateLimit:async()=>true
+  });
+  assert.equal(response.status,503);
+  assert.equal((await response.json()).error,"SECURITY_SCAN_NOT_CONFIGURED");
+});
+
+test("ZAP scan status returns bounded job steps and artifacts for admin debugging", async () => {
+  const admin = { id:"admin-id", user_id:"admin", is_admin:1, password_changed_at:Date.now(), created_at:Date.now() };
+  const env = { SECURITY_SCAN_GITHUB_TOKEN:"ghp_"+"x".repeat(40) };
+  const since = Date.now()-1000;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async url => {
+    const value=String(url);
+    if(value.includes("/actions/workflows/security-scan.yml/runs?")) return Response.json({
+      workflow_runs:[{id:123, event:"workflow_dispatch", created_at:new Date(since+1000).toISOString(),
+        updated_at:new Date().toISOString(), status:"completed", conclusion:"success",
+        html_url:"https://github.com/hugohinoto/SecureChat/actions/runs/123"}]
+    });
+    if(value.endsWith("/actions/runs/123/jobs?per_page=100")) return Response.json({
+      jobs:[{name:"zap · OWASP ZAP passive DAST",status:"completed",conclusion:"success",
+        html_url:"https://github.com/hugohinoto/SecureChat/actions/runs/123/job/456",
+        steps:[{name:"Run OWASP ZAP passive DAST baseline scan",number:1,status:"completed",conclusion:"success"}]}]
+    });
+    if(value.endsWith("/actions/runs/123/artifacts?per_page=20")) return Response.json({
+      artifacts:[{name:"zap-passive-baseline-report",expired:false,size_in_bytes:2048}]
+    });
+    throw new Error("Unexpected GitHub API URL: "+value);
+  };
+  try {
+    const request = new Request("https://securechat.example/api/admin/security-scan?since="+since);
+    const response = await handleAdminFeatures(request, env, {
+      url:new URL(request.url), sameOrigin:()=>true, getSession:async()=>admin,
+      readCookie:()=>"session", checkRateLimit:async()=>true
+    });
+    assert.equal(response.status,200);
+    const body=await response.json();
+    assert.equal(body.found,true);
+    assert.equal(body.run.jobs[0].steps[0].conclusion,"success");
+    assert.equal(body.run.artifacts[0].name,"zap-passive-baseline-report");
+  } finally { globalThis.fetch = originalFetch; }
+});
