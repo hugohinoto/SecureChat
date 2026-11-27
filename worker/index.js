@@ -1174,7 +1174,7 @@ async function handleApi(request, env) {
       if (!peerMember) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
       const [pairA, pairB] = orderedPair(me, peerMember.user_id);
       const mutualContacts = await env.DB.prepare("SELECT 1 AS ok FROM verified_contact_pairs WHERE user_a_id=? AND user_b_id=?").bind(pairA, pairB).first();
-      if (!mutualContacts) return json({ error: "CONTACT_PERMISSION_REQUIRED", message: "このユーザーとのOTP確認が解除されています。" }, 403);
+      if (!mutualContacts) return json({ error: "CONTACT_PERMISSION_REQUIRED", message: "このユーザーとの連絡先承認が解除されています。" }, 403);
       if (sub === "key" && method === "GET") {
         const row = await env.DB.prepare("SELECT key_envelope FROM conversation_keys WHERE conversation_id=? AND user_id=?").bind(id, me).first();
         return row ? json({ keyEnvelope: row.key_envelope }) : json({ error: "KEY_ENVELOPE_NOT_FOUND" }, 404);
