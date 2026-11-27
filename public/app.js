@@ -1252,9 +1252,16 @@ async function signIn(user,password=null) {
   state("connected","準備完了");
   startAuthCheck();
   clearInterval(refreshTimer);
-  void runAutomaticCryptoMaintenance().catch(error => {
-    console.warn("SecureChat automatic crypto maintenance failed:", error?.code || "CRYPTO_MAINTENANCE_ERROR");
-  });
+  // Device keys are uploaded during initializeCryptoV2IfEnabled(). Start a
+  // full account-wide sync immediately after login, even when V2 is optional.
+  // This is safe to retry: it reuses the existing local device vault and never
+  // rotates the account identity or overwrites an existing device key.
+  void runAutomaticCryptoMaintenance({force:true})
+    .then(() => refreshCurrentDeviceRegistrationStatus())
+    .catch(error => {
+      console.warn("SecureChat automatic device registration/sync failed:", error?.code || "CRYPTO_MAINTENANCE_ERROR");
+      void refreshCurrentDeviceRegistrationStatus();
+    });
   refreshTimer=setInterval(()=>{
     const foreground=document.visibilityState==="visible" && document.hasFocus();
     if(foreground && ++cryptoMaintenanceTick % 60 === 0) {
