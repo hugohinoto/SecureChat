@@ -526,8 +526,6 @@ async function openSidebarDeviceManagement() {
 }
 function updateCryptoV2Controls() {
   if(el.cryptoV2Status)el.cryptoV2Status.textContent=translateText(cryptoV2StatusMessage);
-    // OTP-confirmed first-use trust or an explicit key-change check gates V2.
-  }
   if(el.deviceManageSidebar)el.deviceManageSidebar.disabled=!cryptoV2Ready;
   // Do not replace a concrete device-initialization failure with the generic
   // V2 migration notice; the actual cause is needed to recover safely.
