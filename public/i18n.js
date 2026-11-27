@@ -1,5 +1,5 @@
 export const I18N_STORAGE_KEY = "securechat-language";
-export const SUPPORTED_LOCALES = ["ja", "en"];
+export const SUPPORTED_LOCALES = ["ja", "en", "zh", "ko", "es"];
 
 export const translations = {
   ja: {
@@ -109,6 +109,126 @@ export const translations = {
     "admin.required": "This account does not have administrator privileges.",
     "admin.reauthRequired": "Re-login within the last 15 minutes is required.",
     "admin.passwordChangeRequired": "Change the administrator password before accessing this page.",
+  },
+  zh: {
+    "language": "语言",
+    "language.japanese": "日语",
+    "language.english": "英语",
+    "title.chat": "SecureChat — 私密聊天实验室",
+    "title.secureDrop": "SecureDrop — SecureChat",
+    "title.admin": "SecureChat | 管理控制台",
+    "title.bugReport": "SecureChat 问题报告",
+    "meta.description": "SecureChat — 邀请制私人消息服务",
+    "auth.loading": "正在检查登录状态…",
+    "auth.login": "登录",
+    "auth.register": "注册",
+    "auth.welcome": "欢迎使用 SecureChat",
+    "auth.loginDescription": "请登录您的账户。",
+    "auth.registerDescription": "设置新的用户 ID 和密码。",
+    "auth.createAccount": "创建账户",
+    "common.logout": "退出登录",
+    "common.delete": "删除",
+    "common.refresh": "刷新",
+    "common.search": "搜索",
+    "common.send": "发送",
+    "common.cancel": "取消",
+    "common.back": "返回",
+    "common.loading": "加载中…",
+    "common.copy": "复制代码",
+    "common.retry": "重试",
+    "common.remove": "移除",
+    "common.status": "状态",
+    "notifications.unsupported": "此浏览器不支持通知。",
+    "notifications.enabled": "浏览器通知已启用。",
+    "notifications.granted": "已启用新消息浏览器通知。",
+    "notifications.denied": "通知权限未获批准。请在浏览器网站设置中更改。",
+    "notification.enable": "启用浏览器通知",
+    "bug.reportStatus.open": "待处理",
+    "bug.reportStatus.triaged": "调查中",
+    "bug.reportStatus.resolved": "已解决",
+    "bug.loginRequired": "请先登录 SecureChat 再提交报告。",
+    "bug.submitOk": "报告已加密并提交。感谢您的协助。",
+    "admin.required": "此账户没有管理员权限。"
+  },
+  ko: {
+    "language": "언어",
+    "language.japanese": "일본어",
+    "language.english": "영어",
+    "title.chat": "SecureChat — 비공개 채팅 실험실",
+    "title.secureDrop": "SecureDrop — SecureChat",
+    "title.admin": "SecureChat | 관리 콘솔",
+    "title.bugReport": "SecureChat 버그 신고",
+    "meta.description": "SecureChat — 초대 전용 비공개 메시징",
+    "auth.loading": "로그인 상태 확인 중…",
+    "auth.login": "로그인",
+    "auth.register": "가입",
+    "auth.welcome": "SecureChat에 오신 것을 환영합니다",
+    "auth.loginDescription": "계정에 로그인하세요.",
+    "auth.registerDescription": "새 사용자 ID와 비밀번호를 설정하세요.",
+    "auth.createAccount": "계정 만들기",
+    "common.logout": "로그아웃",
+    "common.delete": "삭제",
+    "common.refresh": "새로고침",
+    "common.search": "검색",
+    "common.send": "보내기",
+    "common.cancel": "취소",
+    "common.back": "뒤로",
+    "common.loading": "불러오는 중…",
+    "common.copy": "코드 복사",
+    "common.retry": "재시도",
+    "common.remove": "제거",
+    "common.status": "상태",
+    "notifications.unsupported": "이 브라우저는 알림을 지원하지 않습니다.",
+    "notifications.enabled": "브라우저 알림이 이미 활성화되어 있습니다.",
+    "notifications.granted": "새 메시지 브라우저 알림을 활성화했습니다.",
+    "notifications.denied": "알림이 허용되지 않았습니다. 브라우저 사이트 설정에서 변경할 수 있습니다.",
+    "notification.enable": "브라우저 알림 사용",
+    "bug.reportStatus.open": "미확인",
+    "bug.reportStatus.triaged": "조사 중",
+    "bug.reportStatus.resolved": "해결됨",
+    "bug.loginRequired": "신고하려면 먼저 SecureChat에 로그인하세요.",
+    "bug.submitOk": "신고가 암호화되어 전송되었습니다. 협조해 주셔서 감사합니다.",
+    "admin.required": "이 계정에는 관리자 권한이 없습니다."
+  },
+  es: {
+    "language": "Idioma",
+    "language.japanese": "Japonés",
+    "language.english": "Inglés",
+    "title.chat": "SecureChat — Laboratorio de chat privado",
+    "title.secureDrop": "SecureDrop — SecureChat",
+    "title.admin": "SecureChat | Consola de administración",
+    "title.bugReport": "Informe de errores de SecureChat",
+    "meta.description": "SecureChat — mensajería privada solo por invitación",
+    "auth.loading": "Comprobando el inicio de sesión…",
+    "auth.login": "Iniciar sesión",
+    "auth.register": "Registrarse",
+    "auth.welcome": "Te damos la bienvenida a SecureChat",
+    "auth.loginDescription": "Inicia sesión en tu cuenta.",
+    "auth.registerDescription": "Configura un nuevo ID de usuario y una contraseña.",
+    "auth.createAccount": "Crear cuenta",
+    "common.logout": "Cerrar sesión",
+    "common.delete": "Eliminar",
+    "common.refresh": "Actualizar",
+    "common.search": "Buscar",
+    "common.send": "Enviar",
+    "common.cancel": "Cancelar",
+    "common.back": "Volver",
+    "common.loading": "Cargando…",
+    "common.copy": "Copiar código",
+    "common.retry": "Reintentar",
+    "common.remove": "Quitar",
+    "common.status": "Estado",
+    "notifications.unsupported": "Este navegador no admite notificaciones.",
+    "notifications.enabled": "Las notificaciones del navegador ya están activadas.",
+    "notifications.granted": "Se activaron las notificaciones de nuevos mensajes.",
+    "notifications.denied": "No se permitieron las notificaciones. Puedes cambiarlas en la configuración del sitio del navegador.",
+    "notification.enable": "Activar notificaciones del navegador",
+    "bug.reportStatus.open": "Abierto",
+    "bug.reportStatus.triaged": "En revisión",
+    "bug.reportStatus.resolved": "Resuelto",
+    "bug.loginRequired": "Inicia sesión en SecureChat antes de enviar un informe.",
+    "bug.submitOk": "El informe se cifró y se envió. Gracias por tu colaboración.",
+    "admin.required": "Esta cuenta no tiene permisos de administrador."
   }
 };
 
@@ -133,7 +253,8 @@ export function setLocale(locale) {
 }
 
 export function t(key, variables = {}) {
-  let value = translations[getLocale()]?.[key] ?? translations.ja?.[key] ?? key;
+  const locale = getLocale();
+  let value = translations[locale]?.[key] ?? translations.en?.[key] ?? translations.ja?.[key] ?? key;
   for (const [name, replacement] of Object.entries(variables)) {
     value = value.replaceAll(`{${name}}`, String(replacement));
   }
@@ -365,6 +486,69 @@ const TEXT_ALIASES = {
     "例：メッセージ送信後に表示が更新されない": "Example: Display does not update after sending a message",
     "発生した問題や状況を入力してください": "Describe the issue or situation",
     "パスワード、招待コード、ワンタイムコード、秘密鍵、会話本文などの機密情報は入力しないでください。送信は1 IPあたり15分に3回までです。": "Do not enter passwords, invitation codes, one-time codes, private keys, or conversation text. Submissions are limited to 3 per IP every 15 minutes.",
+  },
+  zh: {
+    "チャット": "聊天",
+    "連絡先": "联系人",
+    "メッセージ": "消息",
+    "ログアウト": "退出登录",
+    "ログイン": "登录",
+    "新規登録": "注册",
+    "ユーザーID": "用户 ID",
+    "パスワード": "密码",
+    "検索": "搜索",
+    "送信": "发送",
+    "キャンセル": "取消",
+    "戻る": "返回",
+    "削除": "删除",
+    "接続中": "连接中",
+    "重要なお知らせ": "重要通知",
+    "暗号化の説明": "加密说明",
+    "運営からのお知らせ": "官方通知",
+    "ファイル送信": "发送文件",
+    "ファイル一覧": "文件列表"
+  },
+  ko: {
+    "チャット": "채팅",
+    "連絡先": "연락처",
+    "メッセージ": "메시지",
+    "ログアウト": "로그아웃",
+    "ログイン": "로그인",
+    "新規登録": "가입",
+    "ユーザーID": "사용자 ID",
+    "パスワード": "비밀번호",
+    "検索": "검색",
+    "送信": "보내기",
+    "キャンセル": "취소",
+    "戻る": "뒤로",
+    "削除": "삭제",
+    "接続中": "연결 중",
+    "重要なお知らせ": "중요 공지",
+    "暗号化の説明": "암호화 안내",
+    "運営からのお知らせ": "공지사항",
+    "ファイル送信": "파일 보내기",
+    "ファイル一覧": "파일 목록"
+  },
+  es: {
+    "チャット": "Chat",
+    "連絡先": "Contactos",
+    "メッセージ": "Mensajes",
+    "ログアウト": "Cerrar sesión",
+    "ログイン": "Iniciar sesión",
+    "新規登録": "Registrarse",
+    "ユーザーID": "ID de usuario",
+    "パスワード": "Contraseña",
+    "検索": "Buscar",
+    "送信": "Enviar",
+    "キャンセル": "Cancelar",
+    "戻る": "Volver",
+    "削除": "Eliminar",
+    "接続中": "Conectando",
+    "重要なお知らせ": "Aviso importante",
+    "暗号化の説明": "Información de cifrado",
+    "運営からのお知らせ": "Anuncios",
+    "ファイル送信": "Enviar archivo",
+    "ファイル一覧": "Archivos"
   }
 };
 
@@ -781,11 +965,14 @@ export function translateText(value, locale = getLocale()) {
     }
     return restored;
   }
+  const localeAliases = TEXT_ALIASES[locale] || {};
+  if (Object.hasOwn(localeAliases, value)) return localeAliases[value];
   if (Object.hasOwn(ALL_TEXT_ALIASES, value)) return ALL_TEXT_ALIASES[value];
   let translated = value;
-  for (const [japanese, english] of JAPANESE_TEXT_PARTS) {
-    translated = translated.split(japanese).join(english);
-  }
+  const localizedParts = Object.entries(localeAliases).filter(([japanese]) => japanese.length >= 2).sort((a,b)=>b[0].length-a[0].length);
+  for (const [japanese, replacement] of localizedParts) translated = translated.split(japanese).join(replacement);
+  if (translated !== value) return translated;
+  for (const [japanese, english] of JAPANESE_TEXT_PARTS) translated = translated.split(japanese).join(english);
   return translated;
 }
 

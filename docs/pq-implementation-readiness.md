@@ -1,6 +1,6 @@
 # Post-quantum implementation readiness review
 
-**Status: investigation in progress — runtime cryptography is unchanged.**
+**Status: blocked for runtime implementation — runtime cryptography is unchanged.**
 **Reviewed:** 2026-11-27
 
 ## Decision after upstream feasibility check
