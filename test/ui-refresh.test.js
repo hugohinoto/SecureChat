@@ -53,7 +53,7 @@ test("device-scoped crypto vault uses a single IndexedDB readwrite transaction",
 
 test("device revocation controls are present and the current device cannot be revoked", () => {
   const cryptoClient = readFileSync(new URL("../public/crypto-v2.js", import.meta.url), "utf8");
-  assert.match(html, /id="crypto-v2-devices-toggle"/);
+  assert.match(html, /id="device-manage-sidebar-button"/);
   assert.match(html, /id="crypto-v2-device-list"/);
   assert.match(cryptoClient, /CRYPTO_CANNOT_REVOKE_CURRENT_DEVICE/);
   assert.ok(cryptoClient.includes("org.securechat.device_revoked"));
@@ -84,17 +84,48 @@ test("chat login form stays hidden while the existing session and chat state ini
 });
 
 
-test("sidebar offers one-click account-wide device registration and chat key synchronization", () => {
-  assert.match(html, /id="device-register-all-button"/);
-  assert.match(html, /crypto\.registerAllDevices/);
-  assert.match(app, /async function registerDeviceAcrossAllChats\(\)/);
+test("device registration and account-wide sync run automatically after login", () => {
+  assert.match(html, /id="device-manage-sidebar-button"/);
+  assert.doesNotMatch(html, /device-register-all-button|crypto-v2-devices-toggle|sidebar-device-status|全チャットを今すぐ同期/);
   assert.match(app, /runAutomaticCryptoMaintenance\(\{force:true\}\)/);
-  assert.match(app, /el\.deviceRegisterAll\?\.addEventListener\("click",registerDeviceAcrossAllChats\)/);
-  assert.match(app, /status==="identity-unverified"/);
-  assert.match(app, /status==="waiting-for-peer"/);
+  assert.doesNotMatch(app, /registerDeviceAcrossAllChats|deviceRegisterAll/);
 });
 
-test("manual account-wide key exchange may run even when automatic V2 enforcement is optional", () => {
+test("automatic account-wide key exchange can run when V2 enforcement is optional", () => {
   assert.match(app, /async function runAutomaticCryptoMaintenance\(\{ force = false \} = \{\}\)/);
   assert.match(app, /\(!cryptoV2Required && !force\)/);
+});
+
+
+test("connection status reflects a real health check instead of a placeholder ready label", () => {
+  assert.match(app, /async function refreshConnectionStatus\(\)/);
+  assert.match(app, /api\("\/api\/health"\)/);
+  assert.match(app, /state\("connected", "オンライン"\)/);
+  assert.match(app, /state\("offline", "オフライン・ローカル表示"\)/);
+  assert.match(app, /el\.connection\.dataset\.state !== "connected"/);
+  assert.doesNotMatch(app, /準備完了/);
+  assert.match(readFileSync(new URL("../public/styles.css", import.meta.url), "utf8"), /data-state="offline"/);
+});
+
+test("an already loaded chat remains available offline without polling or discarding its current view", () => {
+  assert.match(app, /window\.addEventListener\("offline"/);
+  assert.match(app, /window\.addEventListener\("online"/);
+  assert.match(app, /if\(!navigator\.onLine \|\| !activeConversation \|\| messageLoadBusy\)return/);
+  assert.match(app, /if\(!navigator\.onLine\) \{/);
+  assert.match(app, /オフライン中です。下書きはこの画面に残ります/);
+});
+
+test("sidebar is not rebuilt when switching conversations or browser tabs", () => {
+  assert.doesNotMatch(app, /sidebarRefreshTick/);
+  const selectStart = app.indexOf("async function selectConversation(c)");
+  const selectEnd = app.indexOf("async function loadMessages", selectStart);
+  assert.ok(selectStart >= 0 && selectEnd > selectStart);
+  assert.doesNotMatch(app.slice(selectStart, selectEnd), /refreshSidebar\(\)/);
+  assert.match(app, /b\.dataset\.conversationId=String\(c\.id\)/);
+  assert.match(app, /button\.classList\.toggle\("active", button\.dataset\.conversationId === String\(c\.id\)\)/);
+  const focusStart = app.indexOf('window.addEventListener("focus",()=>');
+  const focusEnd = app.indexOf('document.addEventListener("visibilitychange",()=>', focusStart);
+  assert.ok(focusStart >= 0 && focusEnd > focusStart);
+  assert.doesNotMatch(app.slice(focusStart, focusEnd), /refreshSidebar\(\)/);
+  assert.match(app, /window\.addEventListener\("online"[\s\S]*?refreshSidebar\(\)/);
 });

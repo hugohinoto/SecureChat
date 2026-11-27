@@ -25,9 +25,9 @@ const el = {
   composerHint: $("#composer-hint"), fingerprint: $("#key-fingerprint"),
   mobileBack: $("#mobile-back-button"),
   unreadTotal: $("#unread-total"), notificationButton: $("#notification-enable-button"),
-  cryptoV2Approve: $("#crypto-v2-approve-button"), cryptoV2Status: $("#crypto-v2-status"),
-  cryptoV2DevicesToggle: $("#crypto-v2-devices-toggle"), cryptoV2Devices: $("#crypto-v2-devices"), cryptoV2DeviceList: $("#crypto-v2-device-list"),
-  deviceRegisterAll: $("#device-register-all-button"), deviceStatus: $("#sidebar-device-status"), deviceStatusLabel: $("#sidebar-device-status-label"), deviceManageSidebar: $("#device-manage-sidebar-button"),
+  cryptoV2Status: $("#crypto-v2-status"),
+  cryptoV2Devices: $("#crypto-v2-devices"), cryptoV2DeviceList: $("#crypto-v2-device-list"),
+  deviceManageSidebar: $("#device-manage-sidebar-button"),
 };
 const MAX_MESSAGE_LENGTH = 2000;
 const DB_NAME = "securechat-local-keys";
@@ -36,7 +36,7 @@ let currentUser = null, authMode = "login", toastTimer = null, authTimer = null,
 let identityPrivateKey = null, identityPublicKey = null, identitySigningPublicKey = null;
 let activeConversation = null, activeKey = null, activeProtocolVersion = 1, cryptoV2Module = null, cryptoV2Ready = false, cryptoV2StatusMessage = "", busy = false, refreshTimer = null, mobileView = "list";
 const openingConversationPeers = new Set();
-let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", sidebarRefreshTick = 0;
+let messageLoadBusy = false, lastMessageCreatedAt = 0, lastMessageId = "", connectionCheckTick = 0;
 const displayedOtpCodes = new Map();
 const previousUnreadCounts = new Map();
 let originalDocumentTitle = document.title;
@@ -76,6 +76,23 @@ function state(value, label) {
   el.connection.dataset.state = value;
   el.connectionLabel.textContent = translateText(label);
   updateSend();
+}
+async function refreshConnectionStatus() {
+  if (!navigator.onLine) {
+    state("offline", "オフライン・ローカル表示");
+    return false;
+  }
+  try {
+    const health = await api("/api/health");
+    if (health.status !== "ok" || health.database !== "connected") {
+      throw appError("SERVER_NOT_READY", "サーバーの準備状態を確認できません。");
+    }
+    state("connected", "オンライン");
+    return true;
+  } catch {
+    state("offline", "サーバー未接続・ローカル表示");
+    return false;
+  }
 }
 async function closeCryptoV2Session() {
   try {
@@ -153,7 +170,7 @@ function setMobileView(view) {
 function updateSend() {
   el.count.textContent = Array.from(el.input.value).length + " / " + MAX_MESSAGE_LENGTH;
   el.input.disabled = !currentUser || !activeConversation || busy || (activeProtocolVersion===2 && !cryptoV2Ready);
-  el.send.disabled = !currentUser || !activeConversation || busy ||
+  el.send.disabled = !navigator.onLine || el.connection.dataset.state !== "connected" || !currentUser || !activeConversation || busy ||
     (activeProtocolVersion===2 && !cryptoV2Ready) ||
     (cryptoV2Required && activeProtocolVersion!==2) || !el.input.value.trim();
 }
@@ -219,6 +236,7 @@ async function api(path, options={}) {
       ...(options.body?{body:JSON.stringify(options.body)}:{})
     });
   } catch {
+    state("offline", "サーバー未接続・ローカル表示");
     throw appError("NETWORK_ERROR","サーバーに接続できません。通信状態を確認してください。");
   }
   const data=response.status===204?{}:await response.json().catch(()=>({}));
@@ -492,7 +510,6 @@ async function initializeCryptoV2IfEnabled() {
     }
     cryptoV2Ready=true;
     cryptoV2StatusMessage="この端末のv2暗号鍵を準備しました。端末ID: "+deviceState.deviceId;
-    await refreshCurrentDeviceRegistrationStatus();
   } catch(error) {
     if(cryptoV2Module?.closeCryptoV2 && currentUser) {
       try { await cryptoV2Module.closeCryptoV2(currentUser.userId); } catch {}
@@ -514,73 +531,6 @@ async function initializeCryptoV2IfEnabled() {
   }
   updateCryptoV2Controls();
 }
-async function registerDeviceAcrossAllChats() {
-  if(!currentUser) {
-    toast("端末登録にはログインが必要です。");
-    return;
-  }
-  if(cryptoMaintenanceInFlight) {
-    toast("自動鍵交換を実行中です。完了後にもう一度お試しください。");
-    return;
-  }
-  const button=el.deviceRegisterAll;
-  if(button) {
-    button.disabled=true;
-    button.textContent="端末登録・全チャット同期中…";
-  }
-  try {
-    // A device is registered once per browser profile/account, not once per chat.
-    // The subsequent pass provisions Olm sessions for every eligible conversation.
-    if(!cryptoV2Ready) await initializeCryptoV2IfEnabled();
-    if(!cryptoV2Ready || !cryptoV2Module) {
-      const code=cryptoV2InitializationError?.code || "CRYPTO_DEVICE_REGISTRATION_UNAVAILABLE";
-      throw appError(code,cryptoV2InitializationError?.message || "サーバー側で前方秘匿性v2が有効か、端末登録状態を確認してください。");
-    }
-    const outcomes=await runAutomaticCryptoMaintenance({force:true});
-    const ready=outcomes.filter(item=>item.status==="v2-ready").length;
-    const waiting=outcomes.filter(item=>item.status==="waiting-for-peer").length;
-    const unverified=outcomes.filter(item=>item.status==="identity-unverified").length;
-    const failed=outcomes.filter(item=>item.status==="error").length;
-    const summary="この端末の登録を確認しました。全チャット同期結果: v2準備完了 "+ready+"件、相手待ち "+waiting+"件、本人確認待ち "+unverified+"件、エラー "+failed+"件。";
-    if(failed) toast(summary+" エラーのあるチャットは再試行してください。",9000);
-    else toast(summary,8000);
-    await refreshCurrentDeviceRegistrationStatus();
-    if(el.cryptoV2Devices && !el.cryptoV2Devices.hidden) await refreshCryptoDeviceList();
-  } catch(error) {
-    showError(error,"全チャットの端末登録に失敗しました: ");
-  } finally {
-    if(button) {
-      button.disabled=false;
-      button.textContent=t("crypto.registerAllDevices");
-    }
-  }
-}
-async function refreshCurrentDeviceRegistrationStatus() {
-  if(!el.deviceStatus || !el.deviceStatusLabel) return;
-  const setStatus=(state,label)=>{
-    el.deviceStatus.dataset.state=state;
-    el.deviceStatusLabel.textContent=label;
-    if(el.deviceManageSidebar)el.deviceManageSidebar.disabled=state!=="registered";
-  };
-  if(!currentUser) { setStatus("unknown","ログインが必要です"); return; }
-  if(!cryptoV2Ready || !cryptoV2Module) {
-    setStatus(cryptoV2InitializationError?"error":"unregistered",
-      cryptoV2InitializationError ? "未登録 — 初期化エラー" : "未登録 — この端末の登録が必要です");
-    return;
-  }
-  try {
-    const [state,result]=await Promise.all([
-      cryptoV2Module.getCryptoDeviceState(currentUser.userId),
-      cryptoV2Module.listCryptoDevices(currentUser.userId)
-    ]);
-    const deviceId=state?.deviceId;
-    const record=(result.devices||[]).find(device=>device.deviceId===deviceId);
-    if(record && !record.revokedAt) setStatus("registered","登録済み · この端末");
-    else setStatus("unregistered","未登録 — 登録操作が必要です");
-  } catch(error) {
-    setStatus("error","登録状態を確認できません");
-  }
-}
 async function openSidebarDeviceManagement() {
   if(!cryptoV2Ready) {
     toast("端末管理を開くには、この端末の暗号鍵登録を完了してください。");
@@ -588,19 +538,12 @@ async function openSidebarDeviceManagement() {
   }
   if(el.cryptoV2Devices) {
     el.cryptoV2Devices.hidden=false;
-    el.cryptoV2DevicesToggle?.setAttribute("aria-expanded","true");
     await refreshCryptoDeviceList();
     el.cryptoV2Devices.scrollIntoView({behavior:"smooth",block:"nearest"});
   }
 }
 function updateCryptoV2Controls() {
   if(el.cryptoV2Status)el.cryptoV2Status.textContent=translateText(cryptoV2StatusMessage);
-  if(el.cryptoV2Approve) {
-    // OTP-confirmed first-use trust or an explicit key-change check gates V2.
-    el.cryptoV2Approve.hidden=true;
-    el.cryptoV2Approve.disabled=true;
-  }
-  if(el.cryptoV2DevicesToggle)el.cryptoV2DevicesToggle.hidden=!cryptoV2Ready;
   if(el.deviceManageSidebar)el.deviceManageSidebar.disabled=!cryptoV2Ready;
   // Do not replace a concrete device-initialization failure with the generic
   // V2 migration notice; the actual cause is needed to recover safely.
@@ -691,13 +634,6 @@ async function refreshCryptoDeviceList() {
     el.cryptoV2DeviceList.textContent="端末一覧を取得できません: "+(error.code||"CRYPTO_DEVICE_LIST_ERROR");
   }
 }
-async function toggleCryptoDeviceList() {
-  if(!cryptoV2Ready || !el.cryptoV2Devices)return;
-  const opening=el.cryptoV2Devices.hidden;
-  el.cryptoV2Devices.hidden=!opening;
-  el.cryptoV2DevicesToggle?.setAttribute("aria-expanded",String(opening));
-  if(opening)await refreshCryptoDeviceList();
-}
 async function refreshCryptoConversationMode() {
   activeProtocolVersion=1;
   activeCryptoMode={protocolVersion:1,approvedByMe:false,approvedByPeer:false};
@@ -773,32 +709,6 @@ async function maybeAutoApproveCryptoV2ForActiveConversation() {
       updateCryptoV2Controls();
       updateSend();
     }
-  }
-}
-
-async function approveCryptoV2ForActiveConversation() {
-  if(!cryptoV2Ready || !activeConversation)return;
-  if(!activePeerIdentityTrusted) {
-    showError(appError("IDENTITY_FINGERPRINT_NOT_VERIFIED","相互OTP確認済み連絡先の本人確認が必要です。"));
-    return;
-  }
-  el.cryptoV2Approve.disabled=true;
-  try {
-    const result=await cryptoV2Module.approveAndPrepareConversation(
-      currentUser.userId,activeConversation.id,activeConversation.peerUserId
-    );
-    activeCryptoMode=result;
-    activeProtocolVersion=Number(result.protocolVersion||1);
-    if(activeProtocolVersion===2) {
-      cryptoV2StatusMessage="前方秘匿性v2が有効になりました。既存v1メッセージは従来の鍵で復号します。";
-      await loadMessages(true);
-    } else {
-      cryptoV2StatusMessage="この端末の承認を保存しました。相手側の承認を待っています。";
-    }
-  } catch(error) {
-    showError(error,"v2移行を開始できません: ");
-  } finally {
-    updateCryptoV2Controls();
   }
 }
 
@@ -1192,7 +1102,7 @@ function setAuthMode(mode) {
   el.inviteCode.required=registering;
   el.error.textContent="";
 }
-function showAuth(message="") { el.gate.hidden=false; el.error.textContent=message; if(el.deviceRegisterAll)el.deviceRegisterAll.hidden=true; state("disconnected","ログインが必要です"); }
+function showAuth(message="") { el.gate.hidden=false; el.error.textContent=message; state("disconnected","ログインが必要です"); }
 async function checkSession() {
   let r;
   try { r=await fetch("/api/auth/me",{credentials:"same-origin",cache:"no-store",headers:{Accept:"application/json"}}); }
@@ -1246,22 +1156,19 @@ async function signIn(user,password=null) {
   }
   el.profile.textContent=user.userId;
   el.avatar.textContent=Array.from(user.userId)[0]||"U";
-  if(el.deviceRegisterAll)el.deviceRegisterAll.hidden=false;
   el.gate.hidden=true;
   el.form.reset();
-  state("connected","準備完了");
+  await refreshConnectionStatus();
   startAuthCheck();
   clearInterval(refreshTimer);
   // Device keys are uploaded during initializeCryptoV2IfEnabled(). Start a
   // full account-wide sync immediately after login, even when V2 is optional.
   // This is safe to retry: it reuses the existing local device vault and never
   // rotates the account identity or overwrites an existing device key.
-  void runAutomaticCryptoMaintenance({force:true})
-    .then(() => refreshCurrentDeviceRegistrationStatus())
-    .catch(error => {
-      console.warn("SecureChat automatic device registration/sync failed:", error?.code || "CRYPTO_MAINTENANCE_ERROR");
-      void refreshCurrentDeviceRegistrationStatus();
-    });
+  void runAutomaticCryptoMaintenance({force:true}).catch(error => {
+    console.warn("SecureChat automatic device registration/sync failed:", error?.code || "CRYPTO_MAINTENANCE_ERROR");
+    showError(error,"端末の自動登録・同期に失敗しました: ");
+  });
   refreshTimer=setInterval(()=>{
     const foreground=document.visibilityState==="visible" && document.hasFocus();
     if(foreground && ++cryptoMaintenanceTick % 60 === 0) {
@@ -1269,7 +1176,10 @@ async function signIn(user,password=null) {
         console.warn("SecureChat automatic crypto maintenance failed:", error?.code || "CRYPTO_MAINTENANCE_ERROR");
       });
     }
-    if(foreground && activeConversation) {
+    if(foreground && ++connectionCheckTick % 30 === 0) {
+      refreshConnectionStatus().catch(()=>{});
+    }
+    if(foreground && activeConversation && navigator.onLine) {
       if(activeProtocolVersion!==2 && ++cryptoModeRefreshTick % 5 === 0) {
         refreshCryptoConversationMode()
           .then(()=>maybeAutoApproveCryptoV2ForActiveConversation())
@@ -1279,14 +1189,12 @@ async function signIn(user,password=null) {
         loadMessages(false).catch(()=>{});
       }
     }
-    if(++sidebarRefreshTick % 5 === 0) {
-      refreshSidebar().catch(()=>{});
-    }
   },1000);
 }
 function startAuthCheck() {
   clearInterval(authTimer);
   authTimer=setInterval(async()=>{
+    if(!navigator.onLine)return;
     try { const s=await checkSession(); if(!s.authenticated){await closeCryptoV2Session();currentUser=null;identityPrivateKey=null;identityPublicKey=null;identitySigningPublicKey=null;activeConversation=null;activeKey=null;showAuth(formatError(appError("SESSION_EXPIRED","セッションの有効期限が切れました。再ログインしてください。")));} }
     catch {showError(appError("AUTH_RECHECK_FAILED","認証サーバーに接続できません。"));}
   },300000);
@@ -1517,6 +1425,7 @@ async function refreshSidebar() {
   if(!conversations.length){const p=document.createElement("p");p.className="sidebar-empty";p.textContent="チャットはまだありません。";el.conversations.append(p);}
   for(const c of conversations){
     const b=document.createElement("button");b.type="button";b.className="sidebar-user-button";
+    b.dataset.conversationId=String(c.id);
     const label=document.createElement("span");label.textContent=c.peer_user_id;
     const badge=document.createElement("span");badge.className="unread-badge";
     const unread=Number(c.unread_count||0);
@@ -1544,8 +1453,15 @@ async function openConversation(peerUserId, triggerButton = null) {
   }
 }
 async function selectConversation(c) {
+  if (!navigator.onLine) {
+    toast("オフライン中は現在表示中の会話を保持します。接続が戻ると切り替えられます。", 5000);
+    return;
+  }
   setMobileView("chat");
   activeConversation={id:c.id,peerUserId:c.peer_user_id};
+  el.conversations.querySelectorAll("[data-conversation-id]").forEach(button => {
+    button.classList.toggle("active", button.dataset.conversationId === String(c.id));
+  });
   activeKey=null;
   activeProtocolVersion=1;
   activePeerSigningKey=null;
@@ -1588,10 +1504,9 @@ async function selectConversation(c) {
     el.input.disabled=true;
   }
   updateCryptoV2Controls();
-  await refreshSidebar();
 }
 async function loadMessages(fullSync=false) {
-  if(!activeConversation||messageLoadBusy)return;
+  if(!navigator.onLine || !activeConversation || messageLoadBusy)return;
   messageLoadBusy=true;
   const id=activeConversation.id,peer=activeConversation.peerUserId;
   try {
@@ -1637,6 +1552,10 @@ async function loadMessages(fullSync=false) {
 }
 async function sendMessage() {
   if(busy||!activeConversation)return;
+  if(!navigator.onLine) {
+    toast("オフライン中です。下書きはこの画面に残ります。接続が戻ってから送信してください。", 5000);
+    return;
+  }
   const text=el.input.value.trim();if(!text)return;
   if(Array.from(text).length>MAX_MESSAGE_LENGTH){showError(appError("MESSAGE_LENGTH_EXCEEDED","メッセージは2000文字以内にしてください。"));return;}
   busy=true;updateSend();
@@ -1699,19 +1618,14 @@ el.search.addEventListener("keydown",e=>{if(e.key==="Enter")searchUsers();});
 el.input.addEventListener("input",()=>{el.input.style.height="auto";el.input.style.height=Math.min(el.input.scrollHeight,125)+"px";updateSend();});
 el.input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendMessage();}});
 el.send.addEventListener("click",sendMessage);
-el.cryptoV2Approve?.addEventListener("click",approveCryptoV2ForActiveConversation);
-el.cryptoV2DevicesToggle?.addEventListener("click",toggleCryptoDeviceList);
-el.deviceRegisterAll?.addEventListener("click",registerDeviceAcrossAllChats);
 el.deviceManageSidebar?.addEventListener("click",openSidebarDeviceManagement);
 window.addEventListener("focus",()=>{
   if(!currentUser)return;
-  if(activeConversation)loadMessages(false).catch(()=>{});
-  refreshSidebar().catch(()=>{});
+  if(activeConversation && navigator.onLine)loadMessages(false).catch(()=>{});
 });
 document.addEventListener("visibilitychange",()=>{
   if(!currentUser)return;
-  if(document.visibilityState==="visible" && document.hasFocus() && activeConversation)loadMessages(false).catch(()=>{});
-  refreshSidebar().catch(()=>{});
+  if(document.visibilityState==="visible" && document.hasFocus() && activeConversation && navigator.onLine)loadMessages(false).catch(()=>{});
 });
 
 async function bootstrap() {
@@ -1740,10 +1654,6 @@ document.addEventListener("securechat:localechange", () => {
   updateNotificationButton();
   updateCryptoV2Controls();
   if(!el.cryptoV2Devices?.hidden)refreshCryptoDeviceList().catch(()=>{});
-  if (currentUser) {
-    refreshCurrentDeviceRegistrationStatus().catch(()=>{});
-    refreshSidebar().catch(()=>{});
-  }
 });
 
 
@@ -1754,4 +1664,15 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("focus", () => {
   if (currentUser) runAutomaticCryptoMaintenance().catch(() => {});
+});
+window.addEventListener("offline", () => {
+  state("offline", "オフライン・ローカル表示");
+});
+window.addEventListener("online", async () => {
+  if (!currentUser) return;
+  const connected = await refreshConnectionStatus();
+  if (!connected) return;
+  refreshSidebar().catch(() => {});
+  if (activeConversation) loadMessages(true).catch(() => {});
+  runAutomaticCryptoMaintenance().catch(() => {});
 });
