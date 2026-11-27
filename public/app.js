@@ -409,11 +409,8 @@ async function isPeerIdentityTrustedForAutomaticCrypto(peerUserId) {
   if (activeConversation?.peerUserId === peerUserId) {
     activePeerSigningKey = peer.identitySigningPublicKey;
     activePeerIdentityTrusted = true;
-    const [ownFingerprint, peerFingerprint] = await Promise.all([
-      publicKeyFingerprint(identitySigningPublicKey),
-      publicKeyFingerprint(peer.identitySigningPublicKey)
-    ]);
-    renderPeerFingerprintPanel(peerUserId, ownFingerprint, peerFingerprint, peer);
+    // Routine fingerprints and trust labels are intentionally hidden from the chat view.
+    // Key-change verification still appears when a pinned key changes.
   }
   return true;
 }
