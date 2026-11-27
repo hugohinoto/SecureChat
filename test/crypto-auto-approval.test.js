@@ -25,8 +25,8 @@ test("first-use trust is limited to mutual OTP contacts and is pinned locally", 
   assert.match(keyHandling, /if\(verifiedPeerPins\[peerUserId\]!==peer\.identitySigningPublicKey\)/);
 });
 
-test("manual V2 approval control is hidden; the verified path performs approval automatically", () => {
-  assert.match(app, /el\.cryptoV2Approve\.hidden=true;/);
+test("obsolete manual V2 approval control is removed; the verified path performs approval automatically", () => {
+  assert.doesNotMatch(app, /cryptoV2Approve/);
   assert.match(app, /cryptoV2Module\.approveAndPrepareConversation\(/);
   assert.match(app, /async function isOtpVerifiedContact\(peerUserId\)/);
   assert.match(app, /verifiedPeerPins\[peerUserId\]!==peer\.identitySigningPublicKey/);
