@@ -178,7 +178,12 @@ export async function handleAdminFeatures(request, env, deps) {
           item.event === "workflow_dispatch" && Date.parse(item.created_at || "") >= since - 15000
         );
         if (!run) return json({ found: false, status: "queued", workflowUrl: "https://github.com/hugohinoto/SecureChat/actions/workflows/security-scan.yml" });
-        const jobsResponse = await fetch(run.jobs_url, { headers, signal: AbortSignal.timeout(8000) });
+        const runId = Number(run.id);
+        if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error("Invalid GitHub workflow run id");
+        const jobsResponse = await fetch(
+          "https://api.github.com/repos/hugohinoto/SecureChat/actions/runs/" + runId + "/jobs?per_page=100",
+          { headers, signal: AbortSignal.timeout(8000) }
+        );
         if (!jobsResponse.ok) throw new Error("GitHub Actions jobs API HTTP " + jobsResponse.status);
         const jobsPayload = await jobsResponse.json();
         const jobs = (jobsPayload.jobs || []).map(job => ({
@@ -187,7 +192,7 @@ export async function handleAdminFeatures(request, env, deps) {
           conclusion: job.conclusion,
           startedAt: job.started_at,
           completedAt: job.completed_at,
-          url: job.html_url,
+          url: typeof job.html_url === "string" && job.html_url.startsWith("https://github.com/hugohinoto/SecureChat/actions/") ? job.html_url : null,
           steps: (job.steps || []).map(step => ({
             name: String(step.name || "step").slice(0, 120),
             status: step.status,
@@ -197,7 +202,7 @@ export async function handleAdminFeatures(request, env, deps) {
         }));
         let artifacts = [];
         const artifactsResponse = await fetch(
-          "https://api.github.com/repos/hugohinoto/SecureChat/actions/runs/" + Number(run.id) + "/artifacts?per_page=20",
+          "https://api.github.com/repos/hugohinoto/SecureChat/actions/runs/" + runId + "/artifacts?per_page=20",
           { headers, signal: AbortSignal.timeout(8000) }
         );
         if (artifactsResponse.ok) {
@@ -216,7 +221,7 @@ export async function handleAdminFeatures(request, env, deps) {
             conclusion: run.conclusion,
             createdAt: run.created_at,
             updatedAt: run.updated_at,
-            url: run.html_url,
+            url: typeof run.html_url === "string" && run.html_url.startsWith("https://github.com/hugohinoto/SecureChat/actions/") ? run.html_url : "https://github.com/hugohinoto/SecureChat/actions/workflows/security-scan.yml",
             jobs,
             artifacts
           }
