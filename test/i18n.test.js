@@ -88,7 +88,7 @@ test("Dynamic crypto, admin, and SecureDrop messages switch ja → en → ja", a
     assert.equal(i18n.translateText("チャット"), "채팅");
     assert.equal(i18n.translateText("Chat"), "채팅");
     assert.equal(i18n.translateText("채팅", "ja"), "チャット");
-    assert.equal(i18n.translateText("未ログイン"), "로그인하지 않음");
+    assert.equal(i18n.translateText("未ログイン"), "로그아웃 상태");
     assert.equal(i18n.translateText("채팅", "en"), "Chat");
     i18n.setLocale("en");
     assert.equal(i18n.translateText("채팅"), "Chat");
