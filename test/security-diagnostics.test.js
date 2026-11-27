@@ -315,7 +315,7 @@ test("admin can dispatch a ZAP workflow only through the authenticated same-orig
     });
     const response = await handleAdminFeatures(request, env, {
       url:new URL(request.url), sameOrigin:()=>true, getSession:async()=>admin,
-      readCookie:()=>"session", checkRateLimit:async()=>true
+      readCookie:()=>"session", checkRateLimit:async()=>true, writeAdminAudit:async()=>{}
     });
     assert.equal(response.status,202);
     const body = await response.json();
