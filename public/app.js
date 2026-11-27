@@ -26,7 +26,6 @@ const el = {
   mobileBack: $("#mobile-back-button"),
   unreadTotal: $("#unread-total"), notificationButton: $("#notification-enable-button"),
   cryptoV2Status: $("#crypto-v2-status"),
-  cryptoV2Devices: $("#crypto-v2-devices"), cryptoV2DeviceList: $("#crypto-v2-device-list"),
   identitySetupPanel: $("#identity-setup-panel"), identitySetupMessage: $("#identity-setup-message"),
   identityRetryPassword: $("#identity-retry-password"), identityRetryButton: $("#identity-retry-button"),
 };
@@ -555,82 +554,6 @@ function updateCryptoV2Controls() {
         : "この会話はv2への移行待ちです。双方の端末登録と鍵交換が完了するまで新規送信はできません。");
   } else if(el.cryptoV2Status && activeProtocolVersion===2) {
     el.cryptoV2Status.textContent=translateText("前方秘匿性v2有効 — Olm Double Ratchetで鍵配送、Megolm鍵は1メッセージごとに更新");
-  }
-}
-function formatCryptoDeviceTime(value) {
-  if(!Number.isFinite(Number(value)))return "不明";
-  try {
-    return new Intl.DateTimeFormat(getLocale()==="ja"?"ja-JP":"en-US",{dateStyle:"medium",timeStyle:"short"}).format(new Date(Number(value)));
-  } catch {
-    return "不明";
-  }
-}
-async function refreshCryptoDeviceList() {
-  if(!cryptoV2Ready || !cryptoV2Module || !currentUser || !el.cryptoV2DeviceList)return;
-  el.cryptoV2DeviceList.textContent="端末一覧を確認しています…";
-  try {
-    const [result,state]=await Promise.all([
-      cryptoV2Module.listCryptoDevices(currentUser.userId),
-      cryptoV2Module.getCryptoDeviceState(currentUser.userId)
-    ]);
-    const currentDeviceId=state.deviceId;
-    el.cryptoV2DeviceList.replaceChildren();
-    const devices=Array.isArray(result.devices)?result.devices:[];
-    if(!devices.length) {
-      const empty=document.createElement("p");
-      empty.textContent="登録済み端末はありません。";
-      el.cryptoV2DeviceList.append(empty);
-      return;
-    }
-    for(const device of devices) {
-      const row=document.createElement("article");
-      row.className="crypto-v2-device-row";
-      const info=document.createElement("div");
-      info.className="crypto-v2-device-info";
-      const title=document.createElement("strong");
-      const isCurrent=device.deviceId===currentDeviceId;
-      title.textContent=(device.displayName||"SecureChat端末")+" · "+(isCurrent?"この端末":device.deviceId);
-      const meta=document.createElement("span");
-      meta.textContent=device.revokedAt
-        ? "失効済み · "+formatCryptoDeviceTime(device.revokedAt)
-        : "最終確認: "+formatCryptoDeviceTime(device.lastSeenAt);
-      const created=document.createElement("small");
-      created.textContent="登録: "+formatCryptoDeviceTime(device.createdAt);
-      info.append(title,meta,created);
-      row.append(info);
-      if(!isCurrent) {
-        const alreadyRevoked=!!device.revokedAt;
-        const revoke=document.createElement("button");
-        revoke.type="button";
-        revoke.className="crypto-v2-revoke-button";
-        revoke.textContent=alreadyRevoked?"失効通知を再送":"この端末を失効";
-        revoke.addEventListener("click",async()=>{
-          const promptText=alreadyRevoked
-            ? "この端末の失効通知を残存端末へ再送しますか？"
-            : "この端末を失効しますか？次回同期以降、失効端末には新しい会話鍵が共有されません。既に保存・複製されたデータを消去できるわけではありません。";
-          if(!confirm(translateText(promptText)))return;
-          revoke.disabled=true;
-          try {
-            const result=await cryptoV2Module.revokeCryptoDevice(currentUser.userId,device.deviceId);
-            await cryptoV2Module.syncCryptoV2(currentUser.userId);
-            toast("失効通知を "+Number(result.notifiedDevices||0)+" 台の端末へ送信しました。");
-            await refreshCryptoDeviceList();
-          } catch(error) {
-            showError(error,"端末の失効通知を送信できません: ");
-            revoke.disabled=false;
-          }
-        });
-        row.append(revoke);
-      } else if(isCurrent && !device.revokedAt) {
-        const current=document.createElement("span");
-        current.className="crypto-v2-current-device";
-        current.textContent="使用中";
-        row.append(current);
-      }
-      el.cryptoV2DeviceList.append(row);
-    }
-  } catch(error) {
-    el.cryptoV2DeviceList.textContent="端末一覧を取得できません: "+(error.code||"CRYPTO_DEVICE_LIST_ERROR");
   }
 }
 async function refreshCryptoConversationMode() {
@@ -1695,7 +1618,6 @@ document.addEventListener("securechat:localechange", () => {
   setAuthMode(authMode);
   updateNotificationButton();
   updateCryptoV2Controls();
-  if(!el.cryptoV2Devices?.hidden)refreshCryptoDeviceList().catch(()=>{});
 });
 
 
