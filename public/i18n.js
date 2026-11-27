@@ -959,9 +959,17 @@ export function translateText(value, locale = getLocale()) {
   // Normalize known English aliases back to their Japanese source before applying
   // the newly selected locale, so switching languages is reversible.
   let source = value;
-  const reverseLocaleAliases = new Map(
-    Object.entries(TEXT_ALIASES[locale] || {}).map(([japanese, localized]) => [localized, japanese])
-  );
+  const reverseLocaleAliases = new Map();
+  for (const aliases of Object.values(TEXT_ALIASES)) {
+    for (const [japanese, localized] of Object.entries(aliases)) {
+      reverseLocaleAliases.set(localized, japanese);
+    }
+  }
+  for (const [key, japanese] of Object.entries(translations.ja)) {
+    for (const dictionary of Object.values(translations)) {
+      if (dictionary[key]) reverseLocaleAliases.set(dictionary[key], japanese);
+    }
+  }
   if (reverseLocaleAliases.has(source)) {
     source = reverseLocaleAliases.get(source);
   } else {
