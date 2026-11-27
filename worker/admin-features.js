@@ -140,6 +140,7 @@ export async function handleAdminFeatures(request, env, deps) {
           "User-Agent": "SecureChat-Admin-Security-Scan"
         };
         if (method === "POST") {
+          if (!await deps.checkRateLimit(env, request, "admin-security-scan", 2)) return json({ error: "RATE_LIMITED", message: "セキュリティ検査の開始回数が上限に達しました。15分後に再試行してください。" }, 429);
           const requestedAt = Date.now();
           const response = await fetch(
             "https://api.github.com/repos/hugohinoto/SecureChat/actions/workflows/security-scan.yml/dispatches",
@@ -158,6 +159,7 @@ export async function handleAdminFeatures(request, env, deps) {
               diagnostic: detail.slice(0, 500)
             }, 502);
           }
+          await deps.writeAdminAudit(env, admin, "security.zap.dispatch", null, { workflow: "security-scan.yml", mode: "passive-dast" });
           return json({
             accepted: true,
             requestedAt,
