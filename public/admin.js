@@ -4,7 +4,7 @@ initI18n();
 
 const $=s=>document.querySelector(s);
 const notice=$("#notice"),consoleRoot=$("#console");
-let page=0,currentAdmin="",lastSecurityCheck=null;
+let page=0,currentAdmin="",lastSecurityCheck=null,activeZapSince=0,zapScanRunning=false;
 function message(text,type=""){notice.textContent=translateText(text);notice.className="notice "+type;}
 async function api(path,options={}){
  const response=await fetch(path,{method:options.method||"GET",credentials:"same-origin",cache:"no-store",headers:{"Accept":"application/json",...(options.body?{"Content-Type":"application/json"}:{})},...(options.body?{body:JSON.stringify(options.body)}:{})});
@@ -166,6 +166,79 @@ async function runSecurityCheck(){
   }
  }catch(e){summary.textContent="診断に失敗しました："+e.message;summary.dataset.status="error";}
 }
+function renderZapScan(result){
+ const status=$("#zap-scan-status"),debug=$("#zap-scan-debug");
+ debug.replaceChildren();
+ if(!result.found){
+  status.textContent="GitHub Actionsへ登録済み · Runnerの起動待ち";
+  status.dataset.status="warning";
+  return;
+ }
+ const run=result.run;
+ const completed=run.status==="completed";
+ status.textContent="実行状態："+(run.status==="completed"?(run.conclusion==="success"?"成功":"失敗・要確認"):run.status==="in_progress"?"実行中":"待機中")+" · Run #"+run.id+" · "+date(run.createdAt);
+ status.dataset.status=completed?(run.conclusion==="success"?"ok":"critical"):"warning";
+ if(run.url){
+  const link=document.createElement("a");link.href=run.url;link.target="_blank";link.rel="noopener noreferrer";link.textContent="GitHub Actionsで詳細ログを開く";link.className="security-result-link";debug.append(link);
+ }
+ for(const job of run.jobs||[]){
+  const section=document.createElement("section");section.className="zap-debug-job";
+  const heading=document.createElement("strong");heading.textContent=job.name+" · "+(job.status==="completed"?(job.conclusion||"completed"):job.status);
+  section.append(heading);
+  const list=document.createElement("ul");
+  for(const step of job.steps||[]){
+   const item=document.createElement("li");item.textContent="#"+step.number+" "+step.name+" · "+(step.conclusion||step.status);list.append(item);
+  }
+  section.append(list);
+  if(job.url){const link=document.createElement("a");link.href=job.url;link.target="_blank";link.rel="noopener noreferrer";link.textContent="このジョブのログ";section.append(link);}
+  debug.append(section);
+ }
+ if((run.artifacts||[]).length){
+  const heading=document.createElement("strong");heading.textContent="保存された検査レポート";debug.append(heading);
+  const list=document.createElement("ul");
+  for(const artifact of run.artifacts){
+   const item=document.createElement("li");item.textContent=artifact.name+" · "+(artifact.expired?"期限切れ":Math.ceil(artifact.sizeInBytes/1024)+" KB");list.append(item);
+  }
+  debug.append(list);
+ }else if(completed){
+  const note=document.createElement("p");note.textContent="レポートArtifactはまだ登録されていません。GitHub Actionsのジョブログでアップロード工程を確認してください。";debug.append(note);
+ }
+}
+async function refreshZapScan(){
+ if(!activeZapSince){$("#zap-scan-status").textContent="この画面から開始した検査はありません。";return null;}
+ const result=await api("/api/admin/security-scan?since="+encodeURIComponent(String(activeZapSince)));
+ renderZapScan(result);
+ return result;
+}
+async function runZapScan(){
+ if(zapScanRunning)return;
+ const button=$("#run-zap-scan"),status=$("#zap-scan-status");
+ zapScanRunning=true;button.disabled=true;status.textContent="GitHub Actionsへ検査を依頼しています…";status.dataset.status="warning";
+ try{
+  const accepted=await api("/api/admin/security-scan",{method:"POST"});
+  activeZapSince=accepted.requestedAt;
+  status.textContent="検査を受け付けました。GitHub Actionsの起動を待っています…";
+  const deadline=Date.now()+180000;
+  let result=null;
+  do{
+   await new Promise(resolve=>setTimeout(resolve,4000));
+   result=await refreshZapScan();
+  }while(Date.now()<deadline&&(!result?.found||result.run.status!=="completed"));
+  if(!result?.found||result.run.status!=="completed"){
+   status.textContent="検査は継続中です。状態更新で再取得できます。";
+   status.dataset.status="warning";
+  }else if(result.run.conclusion==="success"){
+   message("ZAPを含むセキュリティワークフローが成功しました。ZAPの検出内容も確認してください。","ok");
+  }else{
+   message("セキュリティワークフローが失敗または要確認です。各ステップのログを確認してください。","error");
+  }
+ }catch(error){
+  status.textContent="検査を開始・取得できませんでした："+error.message;status.dataset.status="error";
+  message(error.message,"error");
+ }finally{
+  zapScanRunning=false;button.disabled=false;
+ }
+}
 async function loadLogs(){
  const d=await api("/api/admin/audit-logs"),body=$("#logs");body.replaceChildren();
  for(const log of d.logs){const tr=document.createElement("tr");cell(tr,date(log.created_at));cell(tr,log.admin_user_id||"(削除済み管理者)");cell(tr,log.action);cell(tr,log.target_user_id||"—");let detail=log.details_json||"";try{detail=JSON.stringify(JSON.parse(detail));}catch{}cell(tr,detail);body.append(tr);}
@@ -182,12 +255,14 @@ $("#user-reset").addEventListener("click",async()=>{$("#user-query").value="";$(
 $("#prev-page").addEventListener("click",async()=>{page=Math.max(0,page-1);try{await loadUsers();}catch(e){message(e.message,"error");}});
 $("#next-page").addEventListener("click",async()=>{page++;try{await loadUsers();}catch(e){message(e.message,"error");}});
 $("#run-security-check").addEventListener("click",runSecurityCheck);
+$("#run-zap-scan").addEventListener("click",runZapScan);
+$("#refresh-zap-scan").addEventListener("click",()=>refreshZapScan().catch(e=>message(e.message,"error")));
 $("#export-security-csv").addEventListener("click",exportSecurityCsv);
 $("#refresh-reports").addEventListener("click",()=>loadBugReports().catch(e=>message(e.message,"error")));
 $("#refresh-logs").addEventListener("click",()=>loadLogs().catch(e=>message(e.message,"error")));
 $("#logout").addEventListener("click",async()=>{try{await fetch("/api/auth/logout",{method:"POST",credentials:"same-origin",headers:{"Accept":"application/json"}});}finally{location.href="/";}});
 function clearSensitiveConsole(){
- currentAdmin="";lastSecurityCheck=null;
+ currentAdmin="";lastSecurityCheck=null;activeZapSince=0;zapScanRunning=false;
  consoleRoot.hidden=true;notice.hidden=false;
  $("#admin-identity").textContent="認証確認中";
  for(const selector of ["#stats","#security-checks","#announcements","#users","#bug-reports","#logs"]){
