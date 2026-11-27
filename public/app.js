@@ -1425,6 +1425,7 @@ async function refreshSidebar() {
   if(!conversations.length){const p=document.createElement("p");p.className="sidebar-empty";p.textContent="チャットはまだありません。";el.conversations.append(p);}
   for(const c of conversations){
     const b=document.createElement("button");b.type="button";b.className="sidebar-user-button";
+    b.dataset.conversationId=String(c.id);
     const label=document.createElement("span");label.textContent=c.peer_user_id;
     const badge=document.createElement("span");badge.className="unread-badge";
     const unread=Number(c.unread_count||0);
@@ -1458,6 +1459,9 @@ async function selectConversation(c) {
   }
   setMobileView("chat");
   activeConversation={id:c.id,peerUserId:c.peer_user_id};
+  el.conversations.querySelectorAll("[data-conversation-id]").forEach(button => {
+    button.classList.toggle("active", button.dataset.conversationId === String(c.id));
+  });
   activeKey=null;
   activeProtocolVersion=1;
   activePeerSigningKey=null;
