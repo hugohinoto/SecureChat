@@ -1885,6 +1885,14 @@ export function translateText(value, locale = getLocale()) {
   if (reverseLocaleAliases.has(source)) {
     source = reverseLocaleAliases.get(source);
   } else {
+    // Also reverse translated fragments in composed messages that include
+    // dynamic values such as server details, timestamps, or counts.
+    const reverseLocaleParts = [...reverseLocaleAliases.entries()]
+      .filter(([localized]) => localized.length >= 2)
+      .sort((a, b) => b[0].length - a[0].length);
+    for (const [localized, japanese] of reverseLocaleParts) {
+      source = source.split(localized).join(japanese);
+    }
     for (const [key, localized] of Object.entries(translations[locale] || {})) {
       if (source === localized && translations.ja[key]) {
         source = translations.ja[key];
