@@ -85,3 +85,11 @@ test("Dynamic crypto, admin, and SecureDrop messages switch ja → en → ja", a
     }
   }
 });
+
+
+test("MutationObserver translation cannot observe its own attribute writes", async () => {
+  const source = await readFile(new URL("../public/i18n.js", import.meta.url), "utf8");
+  assert.match(source, /if \(translated !== value\) element\.setAttribute\(attribute, translated\)/);
+  assert.match(source, /observer\.observe\(document\.documentElement, \{ childList:true, characterData:true, subtree:true \}\)/);
+  assert.doesNotMatch(source, /observer\.observe\(document\.documentElement, \{[^}]*attributes:true/);
+});
