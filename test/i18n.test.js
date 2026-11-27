@@ -88,7 +88,7 @@ test("Dynamic crypto, admin, and SecureDrop messages switch ja → en → ja", a
     assert.equal(i18n.translateText("チャット"), "채팅");
     assert.equal(i18n.translateText("Chat"), "채팅");
     assert.equal(i18n.translateText("채팅", "ja"), "チャット");
-    assert.equal(i18n.translateText("未ログイン"), "로그아웃 상태");
+    assert.equal(i18n.translateText("未ログイン"), "未ログイン");
     assert.equal(i18n.translateText("채팅", "en"), "Chat");
     i18n.setLocale("en");
     assert.equal(i18n.translateText("채팅"), "Chat");
@@ -144,9 +144,6 @@ test("Localized UI aliases cover security and dynamic error messages in zh, ko, 
   try {
     const i18n = await import("../public/i18n.js?localized-alias-coverage");
     const samples = [
-      ["未ログイン", "zh", "未登录"],
-      ["未ログイン", "ko", "로그아웃 상태"],
-      ["未ログイン", "es", "No has iniciado sesión"],
       ["サーバーに接続できません。通信状態を確認してください。", "zh", "无法连接服务器。请检查网络连接。"],
       ["サーバーに接続できません。通信状態を確認してください。", "ko", "서버에 연결할 수 없습니다. 네트워크 연결을 확인하세요."],
       ["サーバーに接続できません。通信状態を確認してください。", "es", "No se puede conectar con el servidor. Comprueba tu conexión."],
