@@ -307,7 +307,7 @@ export function t(key, variables = {}) {
   return value;
 }
 
-const TEXT_ALIASES = {
+export const TEXT_ALIASES = {
   ja: {
   },
   zh: {
@@ -1201,7 +1201,7 @@ const TEXT_ALIASES = {
   }
 };
 
-const DYNAMIC_ALIASES = {
+export const DYNAMIC_ALIASES = {
   "から新着メッセージがあります。": " has a new message.",
   "サーバーに接続できません。通信状態を確認してください。": "Could not connect to the server. Check your connection.",
   "そのユーザーIDは見つかりません。": "User ID not found.",
@@ -1588,7 +1588,7 @@ const DYNAMIC_ALIASES = {
   "管理者からの返信": "Administrator reply",
 };
 
-const LOCALIZED_DYNAMIC_ALIASES = {
+export const LOCALIZED_DYNAMIC_ALIASES = {
   zh: {
     "から新着メッセージがあります。": "有一条新消息。",
     "サーバーに接続できません。通信状態を確認してください。": "无法连接服务器。请检查网络连接。",
