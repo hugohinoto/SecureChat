@@ -47,9 +47,11 @@
           <span aria-hidden="true">⇧</span><span>SecureDrop</span>
         </a>
       </nav>
-      <div class="sidebar-device-registration">
+      <div class="sidebar-device-registration" aria-label="端末管理">
+        <div class="sidebar-device-status" id="sidebar-device-status" role="status" aria-live="polite" data-state="checking"><span class="sidebar-device-status-dot" aria-hidden="true"></span><span id="sidebar-device-status-label">端末登録状態を確認しています…</span></div>
         <button class="device-register-all-button" id="device-register-all-button" type="button" data-i18n="crypto.registerAllDevices">この端末を登録して全チャットを同期</button>
-        <p class="sidebar-device-registration-hint">端末登録はこのブラウザーで1回。信頼済みの連絡先すべてで鍵交換を実行します。</p>
+        <button class="device-manage-sidebar-button" id="device-manage-sidebar-button" type="button" disabled>登録端末を管理</button>
+        <p class="sidebar-device-registration-hint">端末登録・失効・言語変更はチャット画面からいつでも操作できます。</p>
       </div>
 
       <div class="sidebar-heading"><span>ユーザーを検索</span></div>
