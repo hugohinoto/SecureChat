@@ -602,7 +602,6 @@ function updateCryptoV2Controls() {
   }
   if(el.cryptoV2DevicesToggle)el.cryptoV2DevicesToggle.hidden=!cryptoV2Ready;
   if(el.deviceManageSidebar)el.deviceManageSidebar.disabled=!cryptoV2Ready;
-  void refreshCurrentDeviceRegistrationStatus();
   // Do not replace a concrete device-initialization failure with the generic
   // V2 migration notice; the actual cause is needed to recover safely.
   if(cryptoV2InitializationError) return;
