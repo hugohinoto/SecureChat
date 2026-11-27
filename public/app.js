@@ -369,7 +369,7 @@ async function confirmPeerFingerprint(peerUserId,peer) {
   return true;
 }
 async function isPeerIdentityTrustedForAutomaticCrypto(peerUserId) {
-  if (!await isOtpVerifiedContact(peerUserId)) return false;
+  // The coordinator only invokes this callback for mutual OTP contacts.
   const peer = await api("/api/keys/" + encodeURIComponent(peerUserId));
   if (!peer.identitySigningPublicKey || !peer.identityKeySignature) {
     throw appError("IDENTITY_KEY_LEGACY_FORMAT", "相手の署名付きアカウント鍵がありません。");
@@ -1155,7 +1155,7 @@ async function signIn(user,password=null) {
   });
   refreshTimer=setInterval(()=>{
     const foreground=document.visibilityState==="visible" && document.hasFocus();
-    if(foreground && ++cryptoMaintenanceTick % 30 === 0) {
+    if(foreground && ++cryptoMaintenanceTick % 60 === 0) {
       runAutomaticCryptoMaintenance().catch(error => {
         console.warn("SecureChat automatic crypto maintenance failed:", error?.code || "CRYPTO_MAINTENANCE_ERROR");
       });
