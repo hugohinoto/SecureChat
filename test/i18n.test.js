@@ -5,7 +5,7 @@ import test from "node:test";
 test("Japanese is the default and English is an available persisted locale", async () => {
   const source = await readFile(new URL("../public/i18n.js", import.meta.url), "utf8");
   assert.match(source, /I18N_STORAGE_KEY\s*=\s*"securechat-language"/);
-  assert.match(source, /SUPPORTED_LOCALES\s*=\s*\["ja", "en"\]/);
+  assert.match(source, /SUPPORTED_LOCALES\s*=\s*\["ja", "en", "zh", "ko", "es"\]/);
   assert.match(source, /return "ja";/);
   assert.match(source, /localStorage\.setItem\(I18N_STORAGE_KEY, next\)/);
 });
@@ -16,7 +16,7 @@ test("All four UI surfaces include a language selector and set document language
     assert.match(html, /<html lang="ja">/);
     assert.match(html, /data-language-selector/);
     assert.match(html, /<option value="ja">日本語<\/option>/);
-    assert.match(html, /<option value="en">English<\/option>/);
+    assert.match(html, /<option value="en">English<\/option>/);\n    assert.match(html, /<option value="zh">简体中文<\/option>/);\n    assert.match(html, /<option value="ko">한국어<\/option>/);\n    assert.match(html, /<option value="es">Español<\/option>/);
   }
   const source = await readFile(new URL("../public/i18n.js", import.meta.url), "utf8");
   assert.match(source, /document\.documentElement\.lang\s*=\s*next/);
