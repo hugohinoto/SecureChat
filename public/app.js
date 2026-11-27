@@ -27,6 +27,7 @@ const el = {
   unreadTotal: $("#unread-total"), notificationButton: $("#notification-enable-button"),
   cryptoV2Approve: $("#crypto-v2-approve-button"), cryptoV2Status: $("#crypto-v2-status"),
   cryptoV2DevicesToggle: $("#crypto-v2-devices-toggle"), cryptoV2Devices: $("#crypto-v2-devices"), cryptoV2DeviceList: $("#crypto-v2-device-list"),
+  deviceRegisterAll: $("#device-register-all-button"),
 };
 const MAX_MESSAGE_LENGTH = 2000;
 const DB_NAME = "securechat-local-keys";
@@ -417,8 +418,8 @@ async function isPeerIdentityTrustedForAutomaticCrypto(peerUserId) {
   return true;
 }
 
-async function runAutomaticCryptoMaintenance() {
-  if (!currentUser || !cryptoV2Ready || !cryptoV2Required || !cryptoV2Module || cryptoMaintenanceInFlight) return [];
+async function runAutomaticCryptoMaintenance({ force = false } = {}) {
+  if (!currentUser || !cryptoV2Ready || (!cryptoV2Required && !force) || !cryptoV2Module || cryptoMaintenanceInFlight) return [];
   cryptoMaintenanceInFlight = true;
   try {
     const [contactsData, conversationsData] = await Promise.all([
@@ -514,6 +515,46 @@ async function initializeCryptoV2IfEnabled() {
     }
   }
   updateCryptoV2Controls();
+}
+async function registerDeviceAcrossAllChats() {
+  if(!currentUser) {
+    toast("端末登録にはログインが必要です。");
+    return;
+  }
+  if(cryptoMaintenanceInFlight) {
+    toast("自動鍵交換を実行中です。完了後にもう一度お試しください。");
+    return;
+  }
+  const button=el.deviceRegisterAll;
+  if(button) {
+    button.disabled=true;
+    button.textContent="端末登録・全チャット同期中…";
+  }
+  try {
+    // A device is registered once per browser profile/account, not once per chat.
+    // The subsequent pass provisions Olm sessions for every eligible conversation.
+    if(!cryptoV2Ready) await initializeCryptoV2IfEnabled();
+    if(!cryptoV2Ready || !cryptoV2Module) {
+      const code=cryptoV2InitializationError?.code || "CRYPTO_DEVICE_REGISTRATION_UNAVAILABLE";
+      throw appError(code,cryptoV2InitializationError?.message || "サーバー側で前方秘匿性v2が有効か、端末登録状態を確認してください。");
+    }
+    const outcomes=await runAutomaticCryptoMaintenance({force:true});
+    const ready=outcomes.filter(item=>item.status==="v2-ready").length;
+    const waiting=outcomes.filter(item=>item.status==="waiting-for-peer").length;
+    const unverified=outcomes.filter(item=>item.status==="identity-unverified").length;
+    const failed=outcomes.filter(item=>item.status==="error").length;
+    const summary="この端末の登録を確認しました。全チャット同期結果: v2準備完了 "+ready+"件、相手待ち "+waiting+"件、本人確認待ち "+unverified+"件、エラー "+failed+"件。";
+    if(failed) toast(summary+" エラーのあるチャットは再試行してください。",9000);
+    else toast(summary,8000);
+    if(el.cryptoV2Devices && !el.cryptoV2Devices.hidden) await refreshCryptoDeviceList();
+  } catch(error) {
+    showError(error,"全チャットの端末登録に失敗しました: ");
+  } finally {
+    if(button) {
+      button.disabled=false;
+      button.textContent=t("crypto.registerAllDevices");
+    }
+  }
 }
 function updateCryptoV2Controls() {
   if(el.cryptoV2Status)el.cryptoV2Status.textContent=translateText(cryptoV2StatusMessage);
@@ -1104,7 +1145,7 @@ function setAuthMode(mode) {
   el.inviteCode.required=registering;
   el.error.textContent="";
 }
-function showAuth(message="") { el.gate.hidden=false; el.error.textContent=message; state("disconnected","ログインが必要です"); }
+function showAuth(message="") { el.gate.hidden=false; el.error.textContent=message; if(el.deviceRegisterAll)el.deviceRegisterAll.hidden=true; state("disconnected","ログインが必要です"); }
 async function checkSession() {
   let r;
   try { r=await fetch("/api/auth/me",{credentials:"same-origin",cache:"no-store",headers:{Accept:"application/json"}}); }
@@ -1158,6 +1199,7 @@ async function signIn(user,password=null) {
   }
   el.profile.textContent=user.userId;
   el.avatar.textContent=Array.from(user.userId)[0]||"U";
+  if(el.deviceRegisterAll)el.deviceRegisterAll.hidden=false;
   el.gate.hidden=true;
   el.form.reset();
   state("connected","準備完了");
@@ -1605,6 +1647,7 @@ el.input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isCo
 el.send.addEventListener("click",sendMessage);
 el.cryptoV2Approve?.addEventListener("click",approveCryptoV2ForActiveConversation);
 el.cryptoV2DevicesToggle?.addEventListener("click",toggleCryptoDeviceList);
+el.deviceRegisterAll?.addEventListener("click",registerDeviceAcrossAllChats);
 window.addEventListener("focus",()=>{
   if(!currentUser)return;
   if(activeConversation)loadMessages(false).catch(()=>{});

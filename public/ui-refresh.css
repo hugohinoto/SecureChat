@@ -1111,3 +1111,39 @@ button:disabled { cursor: not-allowed !important; }
   background: rgba(69,151,177,.15);
   font-weight: 800;
 }
+
+
+/* One-click device registration and account-wide chat key synchronization */
+.sidebar-device-registration {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.device-register-all-button {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid rgba(142,215,232,.34);
+  border-radius: 10px;
+  color: #e2faff;
+  background: linear-gradient(135deg, rgba(69,151,177,.24), rgba(69,151,177,.09));
+  font-size: 11px;
+  line-height: 1.45;
+  font-weight: 750;
+  cursor: pointer;
+}
+.device-register-all-button:hover:not(:disabled) {
+  border-color: rgba(142,215,232,.62);
+  background: rgba(69,151,177,.28);
+}
+.device-register-all-button:disabled {
+  opacity: .62;
+  cursor: progress;
+}
+.sidebar-device-registration-hint {
+  margin: 0 2px;
+  color: var(--sc-dim);
+  font-size: 9px;
+  line-height: 1.5;
+}
+.device-register-all-button[hidden] { display: none; }
